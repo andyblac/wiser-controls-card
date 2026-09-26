@@ -450,52 +450,52 @@ test('legacy features migrate for heating and shutters without losing empty list
   assert.throws(() => card.setConfig({room_options:{'climate.bedroom':{native_features:[{}]}}}));
 });
 
-test('TRV status uses native state display and entity-specific editor fields', () => {
+test('Secondary status uses native state display and entity-specific editor fields', () => {
   const {card, elements, window} = setup();
-  const Feature = elements['wiser-trv-status-feature'];
+  const Feature = elements['wiser-secondary-status-feature'];
   const feature = new Feature();
-  feature.setConfig({type:'custom:wiser-trv-status-feature',entity:'climate.lounge',state_content:['current_temperature','hvac_action']});
+  feature.setConfig({type:'custom:wiser-secondary-status-feature',entity:'climate.lounge',state_content:['current_temperature','hvac_action']});
   feature.context = {entity_id:'climate.bedroom'};
   feature.hass = card._hass;
   assert.equal(feature._display.stateObj.entity_id, 'climate.lounge');
   assert.equal(feature._display.content.join(','), 'current_temperature,hvac_action');
   feature._button.listeners.click({stopPropagation(){}});
   assert.equal(feature.lastEvent.detail.entityId, 'climate.lounge');
-  feature.setConfig({type:'custom:wiser-trv-status-feature'});
+  feature.setConfig({type:'custom:wiser-secondary-status-feature'});
   assert.equal(feature._display.stateObj.entity_id, 'climate.bedroom');
   feature.setConfig({entity:'climate.missing'});
   assert.equal(feature._button.disabled, true);
   assert.equal(feature._display.hidden, true);
-  const editor = new elements['wiser-trv-status-feature-editor']();
-  editor.setConfig({type:'custom:wiser-trv-status-feature'});
+  const editor = new elements['wiser-secondary-status-feature-editor']();
+  editor.setConfig({type:'custom:wiser-secondary-status-feature'});
   editor.context = {entity_id:'climate.bedroom'};
   editor.hass = card._hass;
   assert.equal(editor._form.data.entity, 'climate.bedroom');
   editor._form.listeners['value-changed']({stopPropagation(){},detail:{value:{entity:'climate.lounge',state_content:['state','current_temperature']}}});
   assert.equal(editor.lastEvent.detail.config.entity, 'climate.lounge');
   assert.equal(editor.lastEvent.detail.config.state_content.join(','), 'state,current_temperature');
-  const entry = window.customCardFeatures.find(f => f.type === 'wiser-trv-status-feature');
+  const entry = window.customCardFeatures.find(f => f.type === 'wiser-secondary-status-feature');
   assert.equal(entry.configurable, true);
   assert.equal(entry.isSupported(card._hass,{entity_id:'climate.bedroom'}), true);
   assert.equal(entry.isSupported(card._hass,{entity_id:'cover.office'}), false);
 });
 
-test('TRV status renders under identity only when configured and not as bottom feature', () => {
+test('Secondary status renders under identity only when configured and not as bottom feature', () => {
   const {card} = setup();
-  card.setConfig({entities:['climate.bedroom'], room_options:{'climate.bedroom':{native_features:[{type:'custom:wiser-trv-status-feature'}]}}});
+  card.setConfig({entities:['climate.bedroom'], room_options:{'climate.bedroom':{native_features:[{type:'custom:wiser-secondary-status-feature'}]}}});
   let html = card.shadowRoot.innerHTML;
-  assert.match(html, /class="top has-trv[^"]*"/);
-  assert.match(html, /<span class="status"><state-display[^>]*>[^<]*<\/state-display><\/span><wiser-trv-status-feature/);
+  assert.match(html, /class="top has-secondary[^"]*"/);
+  assert.match(html, /<span class="status"><state-display[^>]*>[^<]*<\/state-display><\/span><wiser-secondary-status-feature/);
   assert.doesNotMatch(html, /<hui-card-features /);
-  const statusHost = {dataset:{trvRoom:'climate.bedroom',trvIndex:'0'},setConfig(config){this.config=config;}};
-  card.shadowRoot.querySelectorAll = selector => selector.startsWith('wiser-trv') ? [statusHost] : [];
+  const statusHost = {dataset:{secondaryRoom:'climate.bedroom',secondaryIndex:'0'},setConfig(config){this.config=config;}};
+  card.shadowRoot.querySelectorAll = selector => selector.startsWith('wiser-secondary') ? [statusHost] : [];
   card._syncNativeFeatures();
   assert.equal(statusHost.context.entity_id, 'climate.bedroom');
-  assert.equal(statusHost.config.type, 'custom:wiser-trv-status-feature');
+  assert.equal(statusHost.config.type, 'custom:wiser-secondary-status-feature');
   card.shadowRoot.querySelectorAll = () => [];
   card.setConfig({entities:['climate.bedroom'],native_features:[]});
   html = card.shadowRoot.innerHTML;
-  assert.doesNotMatch(html, /class="top has-trv"|<wiser-trv-status-feature/);
+  assert.doesNotMatch(html, /class="top has-secondary"|<wiser-secondary-status-feature/);
 });
 
 test('Content options persist per room and change header rendering', () => {

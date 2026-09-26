@@ -221,14 +221,14 @@
       } catch (error) { this._error = `Unable to control ${this._name(room)}: ${error.message || error}`; }
       finally { this._busy = false; this._render(); }
     }
-    _trvFeatures(room) {
-      return nativeFeatures(roomConfig(this._config, room.entity_id), room.entity_id).filter(feature => feature.type === `custom:${TRV_FEATURE}`);
+    _secondaryFeatures(room) {
+      return nativeFeatures(roomConfig(this._config, room.entity_id), room.entity_id).filter(feature => isSecondaryFeature(feature));
     }
-    _trvMarkup(room) {
-      return this._trvFeatures(room).map((_, index) => `<wiser-trv-status-feature data-key="trv-${index}" data-trv-room="${escape(room.entity_id)}" data-trv-index="${index}"></wiser-trv-status-feature>`).join("");
+    _secondaryMarkup(room) {
+      return this._secondaryFeatures(room).map((_, index) => `<wiser-secondary-status-feature data-key="secondary-${index}" data-secondary-room="${escape(room.entity_id)}" data-secondary-index="${index}"></wiser-secondary-status-feature>`).join("");
     }
     _nativeMarkup(room) {
-      return nativeFeatures(roomConfig(this._config, room.entity_id), room.entity_id).some(feature => feature.type !== `custom:${TRV_FEATURE}`)
+      return nativeFeatures(roomConfig(this._config, room.entity_id), room.entity_id).some(feature => !isSecondaryFeature(feature))
         ? `<hui-card-features data-key="features-${escape(room.entity_id)}" data-room-features="${escape(room.entity_id)}" style="margin-top:8px;--feature-height:40px"></hui-card-features>` : "";
     }
     _syncNativeFeatures() {
@@ -237,9 +237,9 @@
         display.hass = this._hass; display.stateObj = this._hass.states[id];
         display.content = roomConfig(this._config, id).state_content ?? this._defaultStateContent(id);
       }
-      for (const element of this.shadowRoot.querySelectorAll?.("wiser-trv-status-feature[data-trv-room]") || []) {
-        const id = element.dataset.trvRoom;
-        const config = this._trvFeatures(this._hass.states[id])[Number(element.dataset.trvIndex)];
+      for (const element of this.shadowRoot.querySelectorAll?.("wiser-secondary-status-feature[data-secondary-room]") || []) {
+        const id = element.dataset.secondaryRoom;
+        const config = this._secondaryFeatures(this._hass.states[id])[Number(element.dataset.secondaryIndex)];
         element.hass = this._hass;
         element.context = {entity_id:id};
         if (element._wiserConfig !== JSON.stringify(config)) {
@@ -249,7 +249,7 @@
       }
       for (const element of this.shadowRoot.querySelectorAll?.("hui-card-features") || []) {
         const id = element.dataset.roomFeatures;
-        const config = nativeFeatures(roomConfig(this._config, id), id).filter(feature => feature.type !== `custom:${TRV_FEATURE}`);
+        const config = nativeFeatures(roomConfig(this._config, id), id).filter(feature => !isSecondaryFeature(feature));
         element.hass = this._hass;
         element.context = {entity_id:id};
         element.stateObj = this._hass.states[id];
@@ -267,8 +267,8 @@
       const position = typeof a.current_position === "number" ? a.current_position : null;
       const color = available(room) ? "var(--state-cover-active-color,var(--primary-color))" : "var(--disabled-text-color)";
       return `<section data-key="${id}" class="room ${preview && this._config[PREVIEW_ROOM] === room.entity_id ? "preview-selected" : ""}" style="--room-state-color:${this._contentColor(room, color)};${featureOrder(options)}"><div class="room-content">
-        <div class="top ${this._trvFeatures(room).length ? "has-trv" : ""} ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" aria-label="Open shutter details">${this._contentIcon(room, room.state === "closed" ? "mdi:window-shutter" : "mdi:window-shutter-open")}</button>
-        <div class="room-heading"><div class="identity"><button class="name" data-entity="${id}"><strong>${escape(this._name(room))}</strong></button><span class="status">${this._contentStatus(room, status)}</span>${this._trvMarkup(room)}</div>
+        <div class="top ${this._secondaryFeatures(room).length ? "has-secondary" : ""} ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" aria-label="Open shutter details">${this._contentIcon(room, room.state === "closed" ? "mdi:window-shutter" : "mdi:window-shutter-open")}</button>
+        <div class="room-heading"><div class="identity"><button class="name" data-entity="${id}"><strong>${escape(this._name(room))}</strong></button><span class="status">${this._contentStatus(room, status)}</span>${this._secondaryMarkup(room)}</div>
         <div class="readings"><div class="temps">${position === null ? "—" : `${position}%`}</div><div class="next">${escape(a.room || "")}</div></div></div></div>
         ${this._nativeReady || options.native_features ? this._nativeMarkup(room) : features(options).some(feature => feature === "modes" || feature === "temperature" && (a.supported_features & 4)) ? `<div class="controls">${features(options).includes("modes") ? `<div class="modes" role="group" aria-label="Shutter controls">${[["open_cover",1,"arrow-up","Open"],["stop_cover",8,"stop","Stop"],["close_cover",2,"arrow-down","Close"]].map(([service,feature,icon,label]) =>
           `<button class="mode" data-action="shutter" data-entity="${id}" data-service="${service}" title="${label}" aria-label="${label}" ${disabled || !(a.supported_features & feature) ? "disabled" : ""}><ha-icon icon="mdi:${icon}"></ha-icon></button>`).join("")}</div>` : ""}
@@ -371,13 +371,13 @@
 
         @container (max-width: 340px){header{padding:12px}.room{padding:10px 12px}.top{column-gap:8px;row-gap:0}.top .temps{font-size:20px}.top .temps small{font-size:16px}.off{padding:8px 10px;font-size:14px}}
         @container room (max-width: 210px){.top .temps{font-size:18px}.top .temps small{font-size:15px}.controls{flex-wrap:wrap}.modes{flex-basis:100%;min-width:0}.controls .mode{min-width:0}.controls input{flex:1 1 64px}}
-      .top.has-trv .identity{display:flex;flex-direction:column;gap:0;grid-column:2 / -1;grid-row:1;min-width:0;align-self:start}
-      .top.has-trv .name{flex:none;line-height:20px}.top.has-trv .status{line-height:16px}
-      .top.has-trv wiser-trv-status-feature{min-width:0;line-height:16px}
-      .top.has-trv .temps{grid-column:2 / -1;grid-row:2}.top.has-trv .next{grid-column:2 / -1;grid-row:3}
-      .top.has-trv.inline-readings .identity{grid-column:2;grid-row:1 / 3}
-      .top.has-trv.inline-readings .temps{grid-column:3;grid-row:1}
-      .top.has-trv.inline-readings .next{grid-column:3;grid-row:2;max-width:100%}
+      .top.has-secondary .identity{display:flex;flex-direction:column;gap:0;grid-column:2 / -1;grid-row:1;min-width:0;align-self:start}
+      .top.has-secondary .name{flex:none;line-height:20px}.top.has-secondary .status{line-height:16px}
+      .top.has-secondary wiser-secondary-status-feature{min-width:0;line-height:16px}
+      .top.has-secondary .temps{grid-column:2 / -1;grid-row:2}.top.has-secondary .next{grid-column:2 / -1;grid-row:3}
+      .top.has-secondary.inline-readings .identity{grid-column:2;grid-row:1 / 3}
+      .top.has-secondary.inline-readings .temps{grid-column:3;grid-row:1}
+      .top.has-secondary.inline-readings .next{grid-column:3;grid-row:2;max-width:100%}
       .top.hide-status .status,.top.hide-temps .temps,.top.hide-next .next{display:none}
       .state-icon img{width:100%;height:100%;object-fit:cover;border-radius:50%}.status state-display{display:inline;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       /* Match native ha-control-select / ha-control-number-buttons backgrounds. */
@@ -420,8 +420,8 @@
           ? `var(--state-climate-${mode}-color,var(--state-climate-${activity}-color,var(--state-${activity}-color,var(--secondary-text-color))))`
           : "var(--state-unavailable-color,var(--disabled-text-color))";
         return `${rowStart}<section data-key="${id}" class="room ${active ? "heating" : ""} ${preview && this._config[PREVIEW_ROOM] === room.entity_id ? "preview-selected" : ""}" style="--room-state-color:${this._contentColor(room, stateColor)};${featureOrder(options)}"><div class="room-content">
-          <div class="top ${this._trvFeatures(room).length ? "has-trv" : ""} ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" title="${escape(status)} — open room controls" aria-label="${escape(this._name(room))}: ${status}">${this._contentIcon(room, icon)}</button>
-          <div class="room-heading"><div class="identity"><button class="name" data-entity="${id}" title="Open room controls"><strong>${escape(this._name(room))}</strong></button><span class="status">${this._contentStatus(room, status + (a.is_boosted ? " · Boost" : a.is_override ? " · Override" : ""))}</span>${this._trvMarkup(room)}</div>
+          <div class="top ${this._secondaryFeatures(room).length ? "has-secondary" : ""} ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" title="${escape(status)} — open room controls" aria-label="${escape(this._name(room))}: ${status}">${this._contentIcon(room, icon)}</button>
+          <div class="room-heading"><div class="identity"><button class="name" data-entity="${id}" title="Open room controls"><strong>${escape(this._name(room))}</strong></button><span class="status">${this._contentStatus(room, status + (a.is_boosted ? " · Boost" : a.is_override ? " · Override" : ""))}</span>${this._secondaryMarkup(room)}</div>
           <div class="readings"><div class="temps" title="Current ${escape(unit)} → target ${escape(unit)}" aria-label="Current ${escape(this._temperature(a.current_temperature))}; Target ${escape(target)}">${options.temperature_focus === "target"
             ? `<small>${escape(this._temperature(a.current_temperature))}</small> ${escape(target)}`
             : `${escape(this._temperature(a.current_temperature))}<small> ${escape(target)}</small>`}</div>
@@ -439,8 +439,9 @@
       this._layoutHeaders();
     }
   }
-  const TRV_FEATURE = "wiser-trv-status-feature";
-  class WiserTrvStatusFeature extends HTMLElement {
+  const SECONDARY_STATUS_FEATURE = "wiser-secondary-status-feature";
+  const isSecondaryFeature = feature => feature.type === `custom:${SECONDARY_STATUS_FEATURE}`;
+  class WiserSecondaryStatusFeature extends HTMLElement {
     constructor() {
       super();
       this.attachShadow({mode:"open"});
@@ -457,8 +458,8 @@
       });
       this.shadowRoot.append(style, this._button);
     }
-    static getStubConfig() { return {type:`custom:${TRV_FEATURE}`, state_content:["state"]}; }
-    static getConfigElement() { return document.createElement("wiser-trv-status-feature-editor"); }
+    static getStubConfig() { return {type:`custom:${SECONDARY_STATUS_FEATURE}`, state_content:["state"]}; }
+    static getConfigElement() { return document.createElement("wiser-secondary-status-feature-editor"); }
     setConfig(config) { this._config = {...config}; this._render(); }
     set hass(value) { this._hass = value; this._render(); }
     set context(value) { this._context = value; this._render(); }
@@ -476,7 +477,7 @@
       this._display.timestampTooltip = true;
     }
   }
-  class WiserTrvStatusFeatureEditor extends HTMLElement {
+  class WiserSecondaryStatusFeatureEditor extends HTMLElement {
     constructor() {
       super();
       this.attachShadow({mode:"open"});
@@ -488,7 +489,7 @@
       ];
       this._form.addEventListener("value-changed", event => {
         event.stopPropagation();
-        this._config = {...this._config, ...event.detail.value, type:`custom:${TRV_FEATURE}`};
+        this._config = {...this._config, ...event.detail.value, type:`custom:${SECONDARY_STATUS_FEATURE}`};
         this.dispatchEvent(new CustomEvent("config-changed", {bubbles:true, composed:true, detail:{config:this._config}}));
       });
       this.shadowRoot.append(this._form);
@@ -506,11 +507,11 @@
       }
     }
   }
-  if (!customElements.get(TRV_FEATURE)) customElements.define(TRV_FEATURE, WiserTrvStatusFeature);
-  if (!customElements.get("wiser-trv-status-feature-editor")) customElements.define("wiser-trv-status-feature-editor", WiserTrvStatusFeatureEditor);
+  if (!customElements.get(SECONDARY_STATUS_FEATURE)) customElements.define(SECONDARY_STATUS_FEATURE, WiserSecondaryStatusFeature);
+  if (!customElements.get("wiser-secondary-status-feature-editor")) customElements.define("wiser-secondary-status-feature-editor", WiserSecondaryStatusFeatureEditor);
   window.customCardFeatures = window.customCardFeatures || [];
-  if (!window.customCardFeatures.some(feature => feature.type === TRV_FEATURE)) window.customCardFeatures.push({
-    type:TRV_FEATURE, name:"Secondary status", configurable:true,
+  if (!window.customCardFeatures.some(feature => feature.type === SECONDARY_STATUS_FEATURE)) window.customCardFeatures.push({
+    type:SECONDARY_STATUS_FEATURE, name:"Secondary status", configurable:true,
     isSupported:(hass, context) => Boolean(context?.entity_id?.startsWith("climate.") && hass.states[context.entity_id]),
   });
   class WiserRoomsCardEditor extends HTMLElement {

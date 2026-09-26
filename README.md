@@ -132,7 +132,7 @@ version. The previous controls remain a loading fallback for legacy configuratio
 
 Choose **Add feature → Secondary status** on a heating room tab. Its native editor
 lets you select an entity and choose/reorder state or attribute fields, as in the
-Hot Water Control TRV status feature. It defaults to the selected room's state.
+Hot Water Control secondary-status feature. It defaults to the selected room's state.
 Clicking the status opens more-info for that entity.
 
 On Wiser Rooms cards, the status appears beneath the normal room status with
@@ -143,7 +143,7 @@ the browser after installing the updated bundle to refresh the feature registry.
 
 ```yaml
 native_features:
-  - type: custom:wiser-trv-status-feature
+  - type: custom:wiser-secondary-status-feature
     entity: climate.lounge
     state_content: [current_temperature, hvac_action]
 ```
