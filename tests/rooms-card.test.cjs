@@ -5,13 +5,14 @@ const vm = require('node:vm');
 const path = require('node:path');
 function setup() {
   let Card, Editor;
+  const elements = {};
   const context = {Intl, setTimeout, window: {},
-    document: {createElement() { return {style:{}, addEventListener() {}}; }},
+    document: {createElement() { return {style:{}, listeners:{}, append(){}, addEventListener(name, listener) { this.listeners[name] = listener; }}; }},
     CustomEvent: class { constructor(type, options) { this.type = type; Object.assign(this, options); } },
     HTMLElement: class {
     attachShadow() { this.shadowRoot = {addEventListener() {}, append() {}, innerHTML: ''}; }
     dispatchEvent(event) { this.lastEvent = event; }
-  }, customElements: {get() {}, define(name, cls) { if (name === "wiser-rooms-card") Card = cls; else Editor = cls; }}};
+  }, customElements: {get() {}, define(name, cls) { elements[name] = cls; if (name === "wiser-rooms-card") Card = cls; else if (name === "wiser-rooms-card-editor") Editor = cls; }}};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../src/wiser-rooms-card.js'), 'utf8'), context);
   const calls = [];
   const state = (id, extra = {}, mode = 'auto') => ({entity_id: id, state: mode, attributes: {name:id, heating_type:'Radiator', current_temperature:20, temperature:21, hvac_modes:['auto','heat','off'], ...extra}});
@@ -29,7 +30,7 @@ function setup() {
   card.setConfig({});
   card._hass = {states, language:'en', config:{unit_system:{temperature:'°C'}}, callService:async (...args) => calls.push(args)};
   card._entries = Object.keys(states).map(entity_id => ({entity_id, platform:entity_id === 'climate.other' ? 'other' : 'wiser'}));
-  return {card, calls, states, Editor};
+  return {card, calls, states, Editor, elements, window:context.window};
 }
 test('master off excludes hot water, other integrations, unavailable and already off rooms', async () => {
   const {card,calls,states} = setup();
@@ -384,72 +385,190 @@ test('additional features independently control room rows and retain legacy defa
   editor._hass = card._hass;
   editor._entries = card._entries;
   editor._selectRoom('climate.bedroom');
-  editor._setFeatures(['modes']);
+  editor._setRoomOptions({features:['modes']});
   card.setConfig(editor.lastEvent.detail.config);
   assert.match(card.shadowRoot.innerHTML, /data-action="mode"/);
   assert.doesNotMatch(card.shadowRoot.innerHTML, /data-field="temperature"/);
 });
 
- test('feature list reorder and removal persist without resetting other options', () => {
-  const {card, Editor} = setup();
-  const editor = new Editor();
-  editor.setConfig({title:'My rooms', room_columns:3});
-  editor._hass = card._hass;
-  editor._entries = card._entries;
-  editor._selectRoom('climate.bedroom');
-  editor._moveFeature(2, 0);
-  assert.equal(JSON.stringify(editor.lastEvent.detail.config.room_options['climate.bedroom'].features), JSON.stringify(['advance','modes','temperature']));
-  assert.equal(editor.lastEvent.detail.config.title, 'My rooms');
-  assert.match(editor._featureList.innerHTML, /ha-sortable/);
-  editor._setFeatures(['temperature']);
-  assert.equal(JSON.stringify(editor.lastEvent.detail.config.room_options['climate.bedroom'].features), JSON.stringify(['temperature']));
-  editor._setFeatures([]);
-  assert.equal(editor.lastEvent.detail.config.room_options['climate.bedroom'].features.length, 0);
-});
 
-test('room tabs keep feature and emphasis settings independent', () => {
+test('native features retain per-room config and accept new feature types', () => {
   const {card, Editor} = setup();
   const editor = new Editor();
   editor._hass = card._hass; editor._entries = card._entries;
-  editor.setConfig({});
+  editor.setConfig({title:'My rooms'});
   editor._selectRoom('climate.bedroom');
-  editor._setFeatures([]);
+  assert.equal(editor._nativeEditor.context.entity_id, 'climate.bedroom');
+  assert.equal(editor._nativeEditor.features.map(f => f.type).join(','), 'climate-hvac-modes,target-temperature,climate-preset-modes');
+  const list = [{type:'target-temperature'}, {type:'climate-hvac-modes',hvac_modes:['auto','off']}, {type:'custom:example-feature',custom_option:42}];
+  editor._nativeEditor.listeners['features-changed']({stopPropagation(){},detail:{features:list}});
   editor._setRoomOptions({temperature_focus:'target'});
   editor._selectRoom('climate.lounge');
   assert.equal(editor._roomForm.data.temperature_focus, 'current');
-  editor._setFeatures(['advance','temperature']);
+  editor._nativeEditor.listeners['features-changed']({stopPropagation(){},detail:{features:[]}});
   editor._selectRoom('climate.bedroom');
   assert.equal(editor._roomForm.data.temperature_focus, 'target');
-  const config = editor.lastEvent.detail.config;
-  assert.equal(config.room_options['climate.bedroom'].features.length, 0);
-  assert.equal(config.room_options['climate.lounge'].features.join(','), 'advance,temperature');
-  card.setConfig(config);
-  const html = card.shadowRoot.innerHTML;
-  const section = id => html.split('data-key="' + id + '"')[1].split('</section>')[0];
-  assert.doesNotMatch(section('climate.bedroom'), /class="controls"/);
-  assert.match(section('climate.bedroom'), /<small>20°C<\/small> 21°C/);
-  assert.match(section('climate.lounge'), /data-action="advance"/);
-  assert.doesNotMatch(section('climate.lounge'), /data-action="mode"/);
-  assert.match(section('climate.lounge'), /--feature-advance:0/);
+  assert.equal(JSON.stringify(editor._nativeEditor.features), JSON.stringify(list));
+  card.setConfig(editor.lastEvent.detail.config);
+  assert.equal(card._config.title, 'My rooms');
+  assert.match(card.shadowRoot.innerHTML, /data-room-features="climate.bedroom"/);
+  assert.doesNotMatch(card.shadowRoot.innerHTML, /data-room-features="climate.lounge"/);
+  const host = {dataset:{roomFeatures:'climate.bedroom'}};
+  card.shadowRoot.querySelectorAll = selector => selector === "hui-card-features" ? [host] : [];
+  card._syncNativeFeatures();
+  assert.equal(host.context.entity_id, 'climate.bedroom');
+  assert.equal(host.hass, card._hass);
+  assert.equal(JSON.stringify(host.features), JSON.stringify(list));
 });
 
-test('feature names and available choices match each room type', () => {
+test('native feature edit callback saves to original room after changing tabs', () => {
   const {card, Editor} = setup();
-  addShutter(card);
   const editor = new Editor();
   editor._hass = card._hass; editor._entries = card._entries;
-  editor.setConfig({});
+  editor.setConfig({}); editor._selectRoom('climate.bedroom');
+  editor._nativeEditor.listeners['edit-detail-element']({stopPropagation(){}, detail:{subElementConfig:{index:0}}});
+  const detail = editor.lastEvent.detail;
+  assert.equal(editor.lastEvent.type, 'edit-sub-element');
+  assert.equal(detail.context.entity_id, 'climate.bedroom');
+  editor._selectRoom('climate.lounge');
+  detail.saveConfig({type:'climate-hvac-modes',hvac_modes:['off']});
+  assert.equal(editor._config.room_options['climate.bedroom'].native_features[0].hvac_modes[0], 'off');
+  assert.equal(editor._config.room_options['climate.lounge'], undefined);
+});
+
+test('legacy features migrate for heating and shutters without losing empty lists', () => {
+  const {card, Editor} = setup(); addShutter(card);
+  const editor = new Editor(); editor._hass = card._hass; editor._entries = card._entries;
+  editor.setConfig({room_options:{'climate.bedroom':{features:[]},'cover.office':{features:['temperature','advance','modes']}}});
+  editor._selectRoom('climate.bedroom'); assert.equal(editor._nativeEditor.features.length, 0);
   editor._selectRoom('cover.office');
-  assert.match(editor._featureList.innerHTML, /Shutter controls/);
-  assert.match(editor._featureList.innerHTML, /Position/);
-  assert.doesNotMatch(editor._featureList.innerHTML, /Advance schedule|Climate HVAC modes|Target temperature/);
-  editor._moveFeature(1,0);
-  assert.equal(editor._config.room_options['cover.office'].features.join(','), 'temperature,modes');
-  editor._setFeatures([]);
-  editor._addingFeature = true; editor._renderFeatures();
-  assert.doesNotMatch(editor._featureList.innerHTML, /Advance schedule/);
+  assert.equal(editor._nativeEditor.features.map(f => f.type).join(','), 'cover-position,cover-open-close');
+  assert.equal(editor._roomForm.hidden, false);
+  editor.setConfig({show_controls:false});
+  assert.equal(editor._nativeEditor.features.length, 0);
+  assert.throws(() => card.setConfig({native_features:['bad']}));
+  assert.throws(() => card.setConfig({room_options:{'climate.bedroom':{native_features:[{}]}}}));
+});
+
+test('TRV status uses native state display and entity-specific editor fields', () => {
+  const {card, elements, window} = setup();
+  const Feature = elements['wiser-trv-status-feature'];
+  const feature = new Feature();
+  feature.setConfig({type:'custom:wiser-trv-status-feature',entity:'climate.lounge',state_content:['current_temperature','hvac_action']});
+  feature.context = {entity_id:'climate.bedroom'};
+  feature.hass = card._hass;
+  assert.equal(feature._display.stateObj.entity_id, 'climate.lounge');
+  assert.equal(feature._display.content.join(','), 'current_temperature,hvac_action');
+  feature._button.listeners.click({stopPropagation(){}});
+  assert.equal(feature.lastEvent.detail.entityId, 'climate.lounge');
+  feature.setConfig({type:'custom:wiser-trv-status-feature'});
+  assert.equal(feature._display.stateObj.entity_id, 'climate.bedroom');
+  feature.setConfig({entity:'climate.missing'});
+  assert.equal(feature._button.disabled, true);
+  assert.equal(feature._display.hidden, true);
+  const editor = new elements['wiser-trv-status-feature-editor']();
+  editor.setConfig({type:'custom:wiser-trv-status-feature'});
+  editor.context = {entity_id:'climate.bedroom'};
+  editor.hass = card._hass;
+  assert.equal(editor._form.data.entity, 'climate.bedroom');
+  editor._form.listeners['value-changed']({stopPropagation(){},detail:{value:{entity:'climate.lounge',state_content:['state','current_temperature']}}});
+  assert.equal(editor.lastEvent.detail.config.entity, 'climate.lounge');
+  assert.equal(editor.lastEvent.detail.config.state_content.join(','), 'state,current_temperature');
+  const entry = window.customCardFeatures.find(f => f.type === 'wiser-trv-status-feature');
+  assert.equal(entry.configurable, true);
+  assert.equal(entry.isSupported(card._hass,{entity_id:'climate.bedroom'}), true);
+  assert.equal(entry.isSupported(card._hass,{entity_id:'cover.office'}), false);
+});
+
+test('TRV status renders under identity only when configured and not as bottom feature', () => {
+  const {card} = setup();
+  card.setConfig({entities:['climate.bedroom'], room_options:{'climate.bedroom':{native_features:[{type:'custom:wiser-trv-status-feature'}]}}});
+  let html = card.shadowRoot.innerHTML;
+  assert.match(html, /class="top has-trv[^"]*"/);
+  assert.match(html, /<span class="status"><state-display[^>]*>[^<]*<\/state-display><\/span><wiser-trv-status-feature/);
+  assert.doesNotMatch(html, /<hui-card-features /);
+  const statusHost = {dataset:{trvRoom:'climate.bedroom',trvIndex:'0'},setConfig(config){this.config=config;}};
+  card.shadowRoot.querySelectorAll = selector => selector.startsWith('wiser-trv') ? [statusHost] : [];
+  card._syncNativeFeatures();
+  assert.equal(statusHost.context.entity_id, 'climate.bedroom');
+  assert.equal(statusHost.config.type, 'custom:wiser-trv-status-feature');
+  card.shadowRoot.querySelectorAll = () => [];
+  card.setConfig({entities:['climate.bedroom'],native_features:[]});
+  html = card.shadowRoot.innerHTML;
+  assert.doesNotMatch(html, /class="top has-trv"|<wiser-trv-status-feature/);
+});
+
+test('Content options persist per room and change header rendering', () => {
+  const {card, Editor} = setup();
+  const editor = new Editor(); editor._hass = card._hass; editor._entries = card._entries;
+  editor.setConfig({}); editor._selectRoom('climate.bedroom');
+  editor._roomForm.listeners['value-changed']({stopPropagation(){}, detail:{value:{...editor._roomForm.data,name:'Bedroom custom',icon:'mdi:bed',color:'blue',hide_state:true,show_temperatures:false,show_next_schedule:false,state_content:['current_temperature']}}});
+  const config = editor.lastEvent.detail.config;
+  card.setConfig(config);
+  assert.match(card.shadowRoot.innerHTML, /Bedroom custom/);
+  assert.match(card.shadowRoot.innerHTML, /icon="mdi:bed"/);
+  assert.match(card.shadowRoot.innerHTML, /hide-status hide-temps hide-next/);
+  assert.match(card.shadowRoot.innerHTML, /--room-state-color:var\(--blue-color\)/);
+  editor._selectRoom('climate.lounge');
+  assert.equal(editor._roomForm.data.hide_state, false);
+  assert.equal(editor._roomForm.data.show_temperatures, true);
+  assert.equal(JSON.stringify(editor._roomForm.data.name), JSON.stringify([{type:'area'}]));
   editor._selectRoom('climate.bedroom');
-  assert.match(editor._featureList.innerHTML, /Climate HVAC modes/);
-  assert.match(editor._featureList.innerHTML, /Target temperature/);
-  assert.match(editor._featureList.innerHTML, /Advance schedule/);
+  assert.equal(editor._roomForm.data.name, 'Bedroom custom');
+  assert.equal(editor._roomForm.data.show_next_schedule, false);
+  const display = {dataset:{roomStatus:'climate.bedroom'}};
+  card.shadowRoot.querySelectorAll = selector => selector === 'state-display[data-room-status]' ? [display] : [];
+  card._syncNativeFeatures();
+  assert.equal(display.stateObj.entity_id, 'climate.bedroom');
+  assert.equal(display.content[0], 'current_temperature');
+});
+
+test('Content supports native composed names and omits the entity-picture option', () => {
+  const {card, Editor} = setup();
+  card._hass.formatEntityName = (state, name) => name[0].type === 'area' ? 'Bedroom area' : state.entity_id;
+  card.setConfig({room_options:{'climate.bedroom':{name:[{type:'area'}]}}});
+  assert.match(card.shadowRoot.innerHTML, /Bedroom area/);
+  const editor = new Editor(); editor._hass = card._hass; editor._entries = card._entries;
+  editor.setConfig({}); editor._selectRoom('climate.bedroom');
+  assert.doesNotMatch(JSON.stringify(editor._roomForm.schema), /show_entity_picture|Show entity picture/);
+  const visibilityRow = editor._roomForm.schema.find(item => item.type === 'grid' && item.schema?.some(field => field.name === 'hide_state'));
+  assert.equal(visibilityRow.schema.map(field => field.name).join(','), 'hide_state,show_temperatures');
+});
+
+test('Content and Features sections start collapsed', () => {
+  const {Editor} = setup();
+  const editor = new Editor();
+  assert.doesNotMatch(editor._contentPanel.innerHTML, /<ha-expansion-panel[^>]*\sexpanded(?:\s|>)/);
+  assert.doesNotMatch(editor._featureList.innerHTML, /<ha-expansion-panel[^>]*\sexpanded(?:\s|>)/);
+});
+
+test('Content name defaults to the room area', () => {
+  const {card, Editor} = setup();
+  const editor = new Editor();
+  editor._hass = card._hass;
+  editor._entries = card._entries;
+  editor.setConfig({});
+  editor._selectRoom('climate.bedroom');
+  assert.equal(JSON.stringify(editor._roomForm.data.name), JSON.stringify([{type:'area'}]));
+  assert.equal(editor._roomForm.data.state_content.join(','), 'hvac_action');
+});
+
+test('editor preview keeps selected room at the configured column width', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/wiser-rooms-card.js'), 'utf8');
+  assert.match(source, /\.preview-row>\.room\.preview-selected\{flex:1 1 0\}/);
+  assert.match(source, /\.preview-row:has\(\.preview-selected\)\{align-items:stretch;flex-wrap:nowrap\}/);
+  assert.doesNotMatch(source, /\.preview-row>\.room\.preview-selected\{flex:0 0/);
+});
+
+test('status renders exactly the configured state content with useful defaults', () => {
+  const {card} = setup();
+  card.setConfig({entities:['climate.bedroom']});
+  assert.match(card.shadowRoot.innerHTML, /<span class="status"><state-display data-room-status="climate.bedroom">Heating<\/state-display><\/span>/);
+  const display = {dataset:{roomStatus:'climate.bedroom'}};
+  card.shadowRoot.querySelectorAll = selector => selector === 'state-display[data-room-status]' ? [display] : [];
+  card._syncNativeFeatures();
+  assert.equal(display.content.join(','), 'hvac_action');
+  card.setConfig({entities:['climate.bedroom'],room_options:{'climate.bedroom':{state_content:['hvac_action']}}});
+  card._syncNativeFeatures();
+  assert.equal(display.content.join(','), 'hvac_action');
 });

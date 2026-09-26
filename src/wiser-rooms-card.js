@@ -4,6 +4,28 @@
   const roomConfig = (config, id) => ({...config, ...config.room_options?.[id]});
   const featureOrder = config => FEATURES.map(value => `--feature-${value}:${features(config).indexOf(value)}`).join(";");
   const features = config => config.features ?? (config.show_controls === false ? [] : FEATURES);
+  const nativeFeatures = (config, id) => config.native_features ?? features(config).flatMap(value => {
+    const cover = id.startsWith("cover.");
+    if (value === "modes") return [{type: cover ? "cover-open-close" : "climate-hvac-modes"}];
+    if (value === "temperature") return [{type: cover ? "cover-position" : "target-temperature"}];
+    return cover ? [] : [{type: "climate-preset-modes", preset_modes: ["Advance Schedule"]}];
+  });
+  const validNativeFeatures = value => Array.isArray(value) && value.every(feature => feature && typeof feature === "object" && typeof feature.type === "string" && feature.type.length);
+  let nativeLoading;
+  const loadNativeFeatures = () => {
+    if (!nativeLoading) nativeLoading = (async () => {
+      if (!customElements.get("hui-tile-card")) {
+        if (!window.loadCardHelpers) throw new Error("Home Assistant card helpers are unavailable");
+        const helpers = await window.loadCardHelpers();
+        await helpers.createCardElement({type: "tile", entity: "climate.wiser_feature_loader"});
+        await customElements.whenDefined("hui-tile-card");
+      }
+      const Tile = customElements.get("hui-tile-card");
+      await Tile.getConfigElement();
+      if (!customElements.get("hui-card-features-editor") || !customElements.get("hui-card-features")) throw new Error("Native Tile features are unavailable in this Home Assistant version");
+    })().catch(error => { nativeLoading = undefined; throw error; });
+    return nativeLoading;
+  };
   const PREVIEW_ROOM = Symbol.for("wiser-rooms-card-preview-room");
   const escape = (value) => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   const available = state => state && !["unknown", "unavailable"].includes(state.state);
@@ -55,8 +77,8 @@
         const temps = header.querySelector(".temps");
         const gap = parseFloat(getComputedStyle(header).columnGap) || 0;
         const status = header.querySelector(".status");
-        header.style.setProperty("--status-width", `${status.scrollWidth}px`);
-        const needed = 38 + gap * 2 + name.scrollWidth + temps.scrollWidth;
+        header.style.setProperty("--status-width", `${(getComputedStyle(status).display === "none" ? 0 : status.scrollWidth)}px`);
+        const needed = 38 + gap * 2 + name.scrollWidth + (getComputedStyle(temps).display === "none" ? 0 : temps.scrollWidth);
         header.classList.toggle("inline-readings", needed <= header.clientWidth);
       }
       this._observedHeaders = headers;
@@ -82,19 +104,27 @@
         if (!config.room_options || typeof config.room_options !== "object" || Array.isArray(config.room_options)) throw new Error("room_options must be an entity settings map");
         for (const [id, options] of Object.entries(config.room_options)) {
           if (!/^(climate|cover)\./.test(id) || !options || typeof options !== "object" || Array.isArray(options)) throw new Error("Invalid room options");
+          if (options.native_features !== undefined && !validNativeFeatures(options.native_features)) throw new Error("Invalid room native_features");
           if (options.features !== undefined && (!Array.isArray(options.features) || options.features.some(value => !FEATURES.includes(value)))) throw new Error("Invalid room features");
           if (options.temperature_focus !== undefined && !["current", "target"].includes(options.temperature_focus)) throw new Error("Invalid room temperature emphasis");
         }
       }
+      if (config.native_features !== undefined && !validNativeFeatures(config.native_features)) throw new Error("Invalid native_features");
       this._config = {show_controls: true, title: "Wiser rooms", room_columns: 1, room_type: "all", temperature_focus: "current", ...config};
       this._render();
     }
     static getStubConfig() { return {type: "custom:wiser-rooms-card", title: "Wiser rooms"}; }
-    static getConfigElement() { return document.createElement("wiser-rooms-card-editor"); }
+    static async getConfigElement() { await loadNativeFeatures(); return document.createElement("wiser-rooms-card-editor"); }
     getCardSize() { return 2 + Math.ceil(this._rooms().length / (this._config?.room_columns || 1)) * 1.6; }
     getGridOptions() { return {columns: 9, min_columns: 9}; }
     set hass(hass) {
       this._hass = hass;
+      if (!this._nativeReady && !this._nativePending) {
+        this._nativePending = true;
+        loadNativeFeatures().then(() => { this._nativeReady = true; this._render(); })
+          .catch(error => { this._error = error.message; this._render(); })
+          .finally(() => { this._nativePending = false; });
+      }
       if (!this._entries && !this._loading && !this._discoveryFailed) this._discover();
       this._render();
     }
@@ -115,7 +145,31 @@
       if (this._config?.entities?.length) return this._config.entities.map(id => rooms.find(room => room.entity_id === id)).filter(Boolean);
       return orderRooms(rooms, this._config?.room_order);
     }
-    _name(room) { return room.attributes.name || room.attributes.friendly_name || room.entity_id; }
+    _name(room) {
+      const name = roomConfig(this._config || {}, room.entity_id).name;
+      if (typeof name === "string") return name;
+      if (name && this._hass?.formatEntityName) return this._hass.formatEntityName(room, name);
+      return room.attributes.name || room.attributes.friendly_name || room.entity_id;
+    }
+    _contentClass(options) {
+      return `${options.hide_state ? "hide-status" : ""} ${options.show_temperatures === false ? "hide-temps" : ""} ${options.show_next_schedule === false ? "hide-next" : ""}`;
+    }
+    _contentIcon(room, fallback) {
+      const options = roomConfig(this._config, room.entity_id);
+      return `<ha-icon icon="${escape(options.icon || fallback)}"></ha-icon>`;
+    }
+    _contentStatus(room, fallback) {
+      return `<state-display data-room-status="${escape(room.entity_id)}">${escape(fallback)}</state-display>`;
+    }
+    _defaultStateContent(id) {
+      return id.startsWith("cover.") ? ["state"] : ["hvac_action"];
+    }
+    _contentColor(room, fallback) {
+      const color = roomConfig(this._config, room.entity_id).color;
+      if (!available(room) || ["off","closed"].includes(room.state) || !color || color === "state") return fallback;
+      if (/^#[0-9a-f]{3,8}$/i.test(color)) return color;
+      return /^[a-z][a-z0-9-]*$/i.test(color) ? `var(--${color}-color)` : fallback;
+    }
     _temperature(value) {
       return typeof value === "number" && Number.isFinite(value) ? `${new Intl.NumberFormat(this._hass.locale?.language || this._hass.language, {maximumFractionDigits: 1}).format(value)}${this._hass.config?.unit_system?.temperature || "°C"}` : "—";
     }
@@ -167,6 +221,44 @@
       } catch (error) { this._error = `Unable to control ${this._name(room)}: ${error.message || error}`; }
       finally { this._busy = false; this._render(); }
     }
+    _trvFeatures(room) {
+      return nativeFeatures(roomConfig(this._config, room.entity_id), room.entity_id).filter(feature => feature.type === `custom:${TRV_FEATURE}`);
+    }
+    _trvMarkup(room) {
+      return this._trvFeatures(room).map((_, index) => `<wiser-trv-status-feature data-key="trv-${index}" data-trv-room="${escape(room.entity_id)}" data-trv-index="${index}"></wiser-trv-status-feature>`).join("");
+    }
+    _nativeMarkup(room) {
+      return nativeFeatures(roomConfig(this._config, room.entity_id), room.entity_id).some(feature => feature.type !== `custom:${TRV_FEATURE}`)
+        ? `<hui-card-features data-key="features-${escape(room.entity_id)}" data-room-features="${escape(room.entity_id)}" style="margin-top:8px;--feature-height:40px"></hui-card-features>` : "";
+    }
+    _syncNativeFeatures() {
+      for (const display of this.shadowRoot.querySelectorAll?.("state-display[data-room-status]") || []) {
+        const id = display.dataset.roomStatus;
+        display.hass = this._hass; display.stateObj = this._hass.states[id];
+        display.content = roomConfig(this._config, id).state_content ?? this._defaultStateContent(id);
+      }
+      for (const element of this.shadowRoot.querySelectorAll?.("wiser-trv-status-feature[data-trv-room]") || []) {
+        const id = element.dataset.trvRoom;
+        const config = this._trvFeatures(this._hass.states[id])[Number(element.dataset.trvIndex)];
+        element.hass = this._hass;
+        element.context = {entity_id:id};
+        if (element._wiserConfig !== JSON.stringify(config)) {
+          element.setConfig(config);
+          element._wiserConfig = JSON.stringify(config);
+        }
+      }
+      for (const element of this.shadowRoot.querySelectorAll?.("hui-card-features") || []) {
+        const id = element.dataset.roomFeatures;
+        const config = nativeFeatures(roomConfig(this._config, id), id).filter(feature => feature.type !== `custom:${TRV_FEATURE}`);
+        element.hass = this._hass;
+        element.context = {entity_id:id};
+        element.stateObj = this._hass.states[id];
+        if (element._wiserConfig !== JSON.stringify(config)) {
+          element.features = config;
+          element._wiserConfig = JSON.stringify(config);
+        }
+      }
+    }
     _renderShutter(room, preview) {
       const options = roomConfig(this._config, room.entity_id);
       const id = escape(room.entity_id), a = room.attributes;
@@ -174,11 +266,11 @@
       const disabled = this._busy || !available(room);
       const position = typeof a.current_position === "number" ? a.current_position : null;
       const color = available(room) ? "var(--state-cover-active-color,var(--primary-color))" : "var(--disabled-text-color)";
-      return `<section data-key="${id}" class="room ${preview && this._config[PREVIEW_ROOM] === room.entity_id ? "preview-selected" : ""}" style="--room-state-color:${color};${featureOrder(options)}"><div class="room-content">
-        <div class="top"><button class="state-icon" data-entity="${id}" aria-label="Open shutter details"><ha-icon icon="mdi:${room.state === "closed" ? "window-shutter" : "window-shutter-open"}"></ha-icon></button>
-        <div class="room-heading"><div class="identity"><button class="name" data-entity="${id}"><strong>${escape(this._name(room))}</strong></button><span class="status">${escape(status)}</span></div>
+      return `<section data-key="${id}" class="room ${preview && this._config[PREVIEW_ROOM] === room.entity_id ? "preview-selected" : ""}" style="--room-state-color:${this._contentColor(room, color)};${featureOrder(options)}"><div class="room-content">
+        <div class="top ${this._trvFeatures(room).length ? "has-trv" : ""} ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" aria-label="Open shutter details">${this._contentIcon(room, room.state === "closed" ? "mdi:window-shutter" : "mdi:window-shutter-open")}</button>
+        <div class="room-heading"><div class="identity"><button class="name" data-entity="${id}"><strong>${escape(this._name(room))}</strong></button><span class="status">${this._contentStatus(room, status)}</span>${this._trvMarkup(room)}</div>
         <div class="readings"><div class="temps">${position === null ? "—" : `${position}%`}</div><div class="next">${escape(a.room || "")}</div></div></div></div>
-        ${features(options).some(feature => feature === "modes" || feature === "temperature" && (a.supported_features & 4)) ? `<div class="controls">${features(options).includes("modes") ? `<div class="modes" role="group" aria-label="Shutter controls">${[["open_cover",1,"arrow-up","Open"],["stop_cover",8,"stop","Stop"],["close_cover",2,"arrow-down","Close"]].map(([service,feature,icon,label]) =>
+        ${this._nativeReady || options.native_features ? this._nativeMarkup(room) : features(options).some(feature => feature === "modes" || feature === "temperature" && (a.supported_features & 4)) ? `<div class="controls">${features(options).includes("modes") ? `<div class="modes" role="group" aria-label="Shutter controls">${[["open_cover",1,"arrow-up","Open"],["stop_cover",8,"stop","Stop"],["close_cover",2,"arrow-down","Close"]].map(([service,feature,icon,label]) =>
           `<button class="mode" data-action="shutter" data-entity="${id}" data-service="${service}" title="${label}" aria-label="${label}" ${disabled || !(a.supported_features & feature) ? "disabled" : ""}><ha-icon icon="mdi:${icon}"></ha-icon></button>`).join("")}</div>` : ""}
         ${features(options).includes("temperature") && a.supported_features & 4 ? `<input type="number" data-entity="${id}" data-field="position" aria-label="${escape(this._name(room))} position percent" title="Position (0% closed, 100% open)" value="${position ?? ""}" min="0" max="100" step="1" ${disabled ? "disabled" : ""}>` : ""}</div>` : ""}</div></section>`;
     }
@@ -275,17 +367,26 @@
       // Orbit expands a selected item to its normal grid width (six of twelve by default).
       const expandPreview = preview && this._config.room_columns > 2;
       const markup = `<style data-key="style">
-        :host{display:block;container-type:inline-size}ha-card{overflow:hidden}.section-title{font-size:14px;font-weight:500;margin:0;padding:12px 16px 8px;border-top:1px solid var(--divider-color)}.rooms{display:grid;grid-template-columns:repeat(var(--room-columns),minmax(0,1fr))}.room{min-width:0}.room-content{container-type:inline-size;container-name:room}.room.preview-selected{isolation:isolate;position:relative}.room.preview-selected::before{border:2px solid var(--primary-color);border-radius:inherit;box-sizing:border-box;content:"";inset:0;pointer-events:none;position:absolute;z-index:100}.rooms.preview-rows{display:block}.preview-row{display:flex;width:100%}.preview-row>.room{flex:1 1 0;box-sizing:border-box;overflow:hidden}.preview-row>.room.preview-selected{flex:0 0 min(100%,max(50%,280px))}.preview-row:has(.preview-selected){align-items:flex-start;flex-wrap:wrap}.preview-spacer{flex:1 1 0;min-width:0}header{padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:8px}h2{font-size:18px;font-weight:500;margin:0 0 3px}p{margin:0;color:var(--secondary-text-color);font-size:12px}button,input{font:inherit;color:var(--primary-text-color);box-sizing:border-box}button{cursor:pointer;border:0;border-radius:10px;min-height:36px;padding:6px;background:var(--secondary-background-color)}button:disabled,input:disabled{opacity:.45;cursor:default}button:focus-visible,input:focus-visible{outline:2px solid var(--primary-color);outline-offset:2px}.off{color:var(--error-color);display:flex;align-items:center;gap:8px;font-size:16px;min-height:48px;padding:10px 16px;border-radius:14px;flex-shrink:0}.off ha-icon{--mdc-icon-size:26px}.room{padding:10px 16px;border-top:1px solid var(--divider-color)}.top{display:grid;grid-template-columns:38px auto minmax(0,1fr);align-items:center;column-gap:10px;row-gap:0}.room-heading,.identity,.readings{display:contents}.top .state-icon{grid-column:1;grid-row:1 / 3}.top .name{grid-column:2 / -1;grid-row:1;min-height:0;line-height:24px}.identity>.status{grid-column:2;grid-row:2;justify-self:start;margin-top:0;line-height:18px}.top .temps{grid-column:3;grid-row:2;line-height:24px;justify-self:end;text-align:right}.readings .next{grid-column:2 / -1;grid-row:3;justify-self:end;max-width:100%;white-space:normal;min-width:0;margin-top:2px;line-height:18px}.top.inline-readings .name{grid-column:2}.top.inline-readings .temps{grid-row:1}.top.inline-readings .next{grid-row:2;max-width:calc(100% - var(--status-width,40px) - 10px)}.state-icon{border-radius:50%;height:38px;width:38px;min-width:38px;display:grid;place-items:center;color:var(--room-state-color);background:color-mix(in srgb,var(--room-state-color) 20%,transparent)}ha-icon{--mdc-icon-size:24px;pointer-events:none}.controls button{display:grid;place-items:center}.controls ha-icon{width:22px;height:22px;--mdc-icon-size:22px}.name{flex:1;min-width:0;padding:0;background:none;text-align:left}.name strong{display:inline-block;max-width:100%;vertical-align:middle;font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.status{display:block;font-size:12px;color:var(--secondary-text-color);margin-top:3px}.temps{font-size:22px;white-space:nowrap;font-variant-numeric:tabular-nums}.temps small{font-size:18px;color:var(--secondary-text-color)}.controls>.modes{order:var(--feature-modes)}.controls>input,.controls>button:not([data-action='advance']){order:var(--feature-temperature)}.controls>button[data-action='advance']{order:var(--feature-advance)}.controls{display:flex;gap:4px;align-items:center;margin-top:8px}input{min-width:0;min-height:36px;border:0;border-radius:8px;padding:6px;background:var(--secondary-background-color);font-size:13px}input{flex:0 1 76px;min-width:64px;width:76px;height:40px;min-height:40px;font-size:18px;font-variant-numeric:tabular-nums;text-align:right}.controls button{width:40px;height:40px;min-height:40px;flex-shrink:0}.modes{display:flex;flex:1 1 120px;min-width:108px;border-radius:10px;background:var(--secondary-background-color);overflow:hidden}.controls .mode{flex:1 1 40px;min-width:36px;width:40px;border-radius:10px;background:transparent}.controls .mode.active{color:var(--text-primary-color,#fff);background:var(--room-state-color)}.next{min-width:0;margin-top:2px;text-align:right;font-size:12px;color:var(--secondary-text-color);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.message{padding:12px 16px;line-height:1.5}.error{color:var(--error-color)}
+        :host{display:block;container-type:inline-size}ha-card{overflow:hidden}.section-title{font-size:14px;font-weight:500;margin:0;padding:12px 16px 8px;border-top:1px solid var(--divider-color)}.rooms{display:grid;grid-template-columns:repeat(var(--room-columns),minmax(0,1fr))}.room{min-width:0}.room-content{container-type:inline-size;container-name:room}.room.preview-selected{isolation:isolate;position:relative}.room.preview-selected::before{border:2px solid var(--primary-color);border-radius:inherit;box-sizing:border-box;content:"";inset:0;pointer-events:none;position:absolute;z-index:100}.rooms.preview-rows{display:block}.preview-row{display:flex;width:100%}.preview-row>.room{flex:1 1 0;box-sizing:border-box;overflow:hidden}.preview-row>.room.preview-selected{flex:1 1 0}.preview-row:has(.preview-selected){align-items:stretch;flex-wrap:nowrap}.preview-spacer{flex:1 1 0;min-width:0}header{padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:8px}h2{font-size:18px;font-weight:500;margin:0 0 3px}p{margin:0;color:var(--secondary-text-color);font-size:12px}button,input{font:inherit;color:var(--primary-text-color);box-sizing:border-box}button{cursor:pointer;border:0;border-radius:10px;min-height:36px;padding:6px;background:var(--secondary-background-color)}button:disabled,input:disabled{opacity:.45;cursor:default}button:focus-visible,input:focus-visible{outline:2px solid var(--primary-color);outline-offset:2px}.off{color:var(--error-color);display:flex;align-items:center;gap:8px;font-size:16px;min-height:48px;padding:10px 16px;border-radius:14px;flex-shrink:0}.off ha-icon{--mdc-icon-size:26px}.room{padding:10px 16px;border-top:1px solid var(--divider-color)}.top{display:grid;grid-template-columns:38px auto minmax(0,1fr);align-items:center;column-gap:10px;row-gap:0}.room-heading,.identity,.readings{display:contents}.top .state-icon{grid-column:1;grid-row:1 / 3}.top .name{grid-column:2 / -1;grid-row:1;min-height:0;line-height:24px}.identity>.status{grid-column:2;grid-row:2;justify-self:start;margin-top:0;line-height:18px}.top .temps{grid-column:3;grid-row:2;line-height:24px;justify-self:end;text-align:right}.readings .next{grid-column:2 / -1;grid-row:3;justify-self:end;max-width:100%;white-space:normal;min-width:0;margin-top:2px;line-height:18px}.top.inline-readings .name{grid-column:2}.top.inline-readings .temps{grid-row:1}.top.inline-readings .next{grid-row:2;max-width:calc(100% - var(--status-width,40px) - 10px)}.state-icon{border-radius:50%;height:38px;width:38px;min-width:38px;display:grid;place-items:center;color:var(--room-state-color);background:color-mix(in srgb,var(--room-state-color) 20%,transparent)}ha-icon{--mdc-icon-size:24px;pointer-events:none}.controls button{display:grid;place-items:center}.controls ha-icon{width:22px;height:22px;--mdc-icon-size:22px}.name{flex:1;min-width:0;padding:0;background:none;text-align:left}.name strong{display:inline-block;max-width:100%;vertical-align:middle;font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.status{display:block;font-size:12px;color:var(--secondary-text-color);margin-top:3px}.temps{font-size:22px;white-space:nowrap;font-variant-numeric:tabular-nums}.temps small{font-size:18px;color:var(--secondary-text-color)}.controls>.modes{order:var(--feature-modes)}.controls>input,.controls>button:not([data-action='advance']){order:var(--feature-temperature)}.controls>button[data-action='advance']{order:var(--feature-advance)}.controls{display:flex;gap:4px;align-items:center;margin-top:8px}input{min-width:0;min-height:36px;border:0;border-radius:8px;padding:6px;background:var(--secondary-background-color);font-size:13px}input{flex:0 1 76px;min-width:64px;width:76px;height:40px;min-height:40px;font-size:18px;font-variant-numeric:tabular-nums;text-align:right}.controls button{width:40px;height:40px;min-height:40px;flex-shrink:0}.modes{display:flex;flex:1 1 120px;min-width:108px;border-radius:10px;background:var(--secondary-background-color);overflow:hidden}.controls .mode{flex:1 1 40px;min-width:36px;width:40px;border-radius:10px;background:transparent}.controls .mode.active{color:var(--text-primary-color,#fff);background:var(--room-state-color)}.next{min-width:0;margin-top:2px;text-align:right;font-size:12px;color:var(--secondary-text-color);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.message{padding:12px 16px;line-height:1.5}.error{color:var(--error-color)}
 
         @container (max-width: 340px){header{padding:12px}.room{padding:10px 12px}.top{column-gap:8px;row-gap:0}.top .temps{font-size:20px}.top .temps small{font-size:16px}.off{padding:8px 10px;font-size:14px}}
         @container room (max-width: 210px){.top .temps{font-size:18px}.top .temps small{font-size:15px}.controls{flex-wrap:wrap}.modes{flex-basis:100%;min-width:0}.controls .mode{min-width:0}.controls input{flex:1 1 64px}}
+      .top.has-trv .identity{display:flex;flex-direction:column;gap:0;grid-column:2 / -1;grid-row:1;min-width:0;align-self:start}
+      .top.has-trv .name{flex:none;line-height:20px}.top.has-trv .status{line-height:16px}
+      .top.has-trv wiser-trv-status-feature{min-width:0;line-height:16px}
+      .top.has-trv .temps{grid-column:2 / -1;grid-row:2}.top.has-trv .next{grid-column:2 / -1;grid-row:3}
+      .top.has-trv.inline-readings .identity{grid-column:2;grid-row:1 / 3}
+      .top.has-trv.inline-readings .temps{grid-column:3;grid-row:1}
+      .top.has-trv.inline-readings .next{grid-column:3;grid-row:2;max-width:100%}
+      .top.hide-status .status,.top.hide-temps .temps,.top.hide-next .next{display:none}
+      .state-icon img{width:100%;height:100%;object-fit:cover;border-radius:50%}.status state-display{display:inline;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       /* Match native ha-control-select / ha-control-number-buttons backgrounds. */
       .controls{--wiser-control-background:color-mix(in srgb,var(--disabled-color) 20%,transparent)}
       .controls .modes,.controls>button,.controls>input{background:var(--wiser-control-background)}
       .controls button:disabled,.controls input:disabled{opacity:1;color:var(--disabled-color);-webkit-text-fill-color:var(--disabled-color)}
       .controls input[data-field='temperature']:disabled{color:var(--secondary-text-color);-webkit-text-fill-color:var(--secondary-text-color)}
       .controls .mode.active:disabled{background:var(--disabled-color);color:white;-webkit-text-fill-color:white}
-      .editor-preview .room{padding:8px 4px}.editor-preview .preview-placeholder{display:flex;align-items:center;justify-content:center;gap:6px;min-height:64px;color:var(--secondary-text-color);font-size:12px;text-align:center;overflow-wrap:anywhere}.preview-placeholder ha-icon{flex-shrink:0;--mdc-icon-size:18px}.preview-placeholder span{min-width:0}.editor-preview .room.preview-selected{padding:10px 12px}
+      .editor-preview .room{padding:8px 4px}.editor-preview .preview-placeholder{display:flex;align-items:center;justify-content:center;gap:6px;min-height:64px;color:var(--secondary-text-color);font-size:12px;text-align:center;overflow-wrap:anywhere}.preview-placeholder ha-icon{flex-shrink:0;--mdc-icon-size:18px}.preview-placeholder span{min-width:0}.editor-preview .room.preview-selected{padding:10px 16px}
       </style><ha-card data-key="card" class="${preview ? "editor-preview" : ""}"><header data-key="header"><div><h2>${escape(this._config.title)}</h2><p>${heating} of ${rooms.filter(room => !isShutter(room)).length} rooms heating${rooms.some(isShutter) ? ` · ${rooms.filter(isShutter).length} shutters` : ""}${unavailable ? ` · ${unavailable} unavailable` : ""}</p></div><button class="off" data-action="all-off" ${this._busy || !canOff ? "disabled" : ""} title="Turn all heating off" aria-label="Turn all heating off"><ha-icon icon="mdi:power"></ha-icon>All off</button></header>
       ${this._error ? `<div data-key="error" class="message error" role="alert">${escape(this._error)}${this._discoveryFailed ? '<button data-action="retry">Retry</button>' : ""}</div>` : ""}
       ${!rooms.length ? `<p data-key="empty" class="message">${this._loading ? "Finding Wiser rooms…" : "No matching Wiser rooms or shutters found."}</p>` : groups.map(group => `${grouped ? `<h3 class="section-title" data-key="heading-${group.key}">${group.title}</h3>` : ""}<div class="rooms ${expandPreview ? "preview-rows" : ""}" data-key="rooms-${group.key}" style="--room-columns:${this._config.room_columns}">${group.rooms.map((room, index) => {
@@ -318,14 +419,14 @@
         const stateColor = available(room)
           ? `var(--state-climate-${mode}-color,var(--state-climate-${activity}-color,var(--state-${activity}-color,var(--secondary-text-color))))`
           : "var(--state-unavailable-color,var(--disabled-text-color))";
-        return `${rowStart}<section data-key="${id}" class="room ${active ? "heating" : ""} ${preview && this._config[PREVIEW_ROOM] === room.entity_id ? "preview-selected" : ""}" style="--room-state-color:${stateColor};${featureOrder(options)}"><div class="room-content">
-          <div class="top"><button class="state-icon" data-entity="${id}" title="${escape(status)} — open room controls" aria-label="${escape(this._name(room))}: ${status}"><ha-icon icon="${icon}"></ha-icon></button>
-          <div class="room-heading"><div class="identity"><button class="name" data-entity="${id}" title="Open room controls"><strong>${escape(this._name(room))}</strong></button><span class="status">${status}${a.is_boosted ? " · Boost" : a.is_override ? " · Override" : ""}</span></div>
+        return `${rowStart}<section data-key="${id}" class="room ${active ? "heating" : ""} ${preview && this._config[PREVIEW_ROOM] === room.entity_id ? "preview-selected" : ""}" style="--room-state-color:${this._contentColor(room, stateColor)};${featureOrder(options)}"><div class="room-content">
+          <div class="top ${this._trvFeatures(room).length ? "has-trv" : ""} ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" title="${escape(status)} — open room controls" aria-label="${escape(this._name(room))}: ${status}">${this._contentIcon(room, icon)}</button>
+          <div class="room-heading"><div class="identity"><button class="name" data-entity="${id}" title="Open room controls"><strong>${escape(this._name(room))}</strong></button><span class="status">${this._contentStatus(room, status + (a.is_boosted ? " · Boost" : a.is_override ? " · Override" : ""))}</span>${this._trvMarkup(room)}</div>
           <div class="readings"><div class="temps" title="Current ${escape(unit)} → target ${escape(unit)}" aria-label="Current ${escape(this._temperature(a.current_temperature))}; Target ${escape(target)}">${options.temperature_focus === "target"
             ? `<small>${escape(this._temperature(a.current_temperature))}</small> ${escape(target)}`
             : `${escape(this._temperature(a.current_temperature))}<small> ${escape(target)}</small>`}</div>
           <div class="next" title="${escape(a.schedule_name || "")}">${escape(next)}</div></div></div></div>
-          ${features(options).length ? `<div class="controls">${features(options).includes("modes") ? `<div class="modes" role="group" aria-label="${escape(this._name(room))} mode">${["auto", "heat", "off"].filter(mode => a.hvac_modes?.includes(mode)).map(mode => {
+          ${this._nativeReady || options.native_features ? this._nativeMarkup(room) : features(options).length ? `<div class="controls">${features(options).includes("modes") ? `<div class="modes" role="group" aria-label="${escape(this._name(room))} mode">${["auto", "heat", "off"].filter(mode => a.hvac_modes?.includes(mode)).map(mode => {
             const label = {auto:"Schedule",heat:"Manual",off:"Off"}[mode];
             const modeIcon = {auto:"mdi:thermostat-auto",heat:"mdi:fire",off:"mdi:power"}[mode];
             return `<button class="mode ${mode === room.state ? "active" : ""}" data-action="mode" data-entity="${id}" data-mode="${mode}" aria-pressed="${mode === room.state}" aria-label="${label}" title="${label}" ${disabled || mode === "auto" && !scheduled ? "disabled" : ""}><ha-icon icon="${modeIcon}"></ha-icon></button>`;
@@ -334,9 +435,84 @@
           ${features(options).includes("advance") ? `<button data-action="advance" data-entity="${id}" aria-label="Advance schedule for ${escape(this._name(room))}" title="Advance to next schedule period" ${disabled || !scheduled || room.state !== "auto" || !a.preset_modes?.includes("Advance Schedule") ? "disabled" : ""}><ha-icon icon="mdi:calendar-arrow-right"></ha-icon></button>` : ""}</div>` : ""}</div></section>${rowEnd}`;
       }).join("")}</div>`).join("")}</ha-card>`;
       this._updateDOM(markup);
+      this._syncNativeFeatures();
       this._layoutHeaders();
     }
   }
+  const TRV_FEATURE = "wiser-trv-status-feature";
+  class WiserTrvStatusFeature extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({mode:"open"});
+      const style = document.createElement("style");
+      style.textContent = `:host{display:block;pointer-events:auto;min-width:0}button{display:block;width:100%;padding:0;border:0;background:none;color:var(--secondary-text-color);font:inherit;font-size:12px;text-align:start;cursor:pointer}button:focus-visible{outline:2px solid var(--primary-color)}state-display{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}`;
+      this._button = document.createElement("button");
+      this._button.type = "button";
+      this._display = document.createElement("state-display");
+      this._button.append(this._display);
+      this._button.addEventListener("click", event => {
+        event.stopPropagation();
+        const id = this._config?.entity || this._context?.entity_id || this._stateObj?.entity_id;
+        if (id && this._hass?.states[id]) this.dispatchEvent(new CustomEvent("hass-more-info", {bubbles:true, composed:true, detail:{entityId:id}}));
+      });
+      this.shadowRoot.append(style, this._button);
+    }
+    static getStubConfig() { return {type:`custom:${TRV_FEATURE}`, state_content:["state"]}; }
+    static getConfigElement() { return document.createElement("wiser-trv-status-feature-editor"); }
+    setConfig(config) { this._config = {...config}; this._render(); }
+    set hass(value) { this._hass = value; this._render(); }
+    set context(value) { this._context = value; this._render(); }
+    set stateObj(value) { this._stateObj = value; this._render(); }
+    _render() {
+      if (!this._hass || !this._config) return;
+      const id = this._config.entity || this._context?.entity_id || this._stateObj?.entity_id;
+      const state = this._hass.states[id];
+      this._button.disabled = !state;
+      this._display.hidden = !state;
+      this._button.title = state?.attributes?.friendly_name || id || "Secondary status";
+      this._display.hass = this._hass;
+      this._display.stateObj = state;
+      this._display.content = this._config.state_content?.length ? this._config.state_content : ["state"];
+      this._display.timestampTooltip = true;
+    }
+  }
+  class WiserTrvStatusFeatureEditor extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({mode:"open"});
+      this._form = document.createElement("ha-form");
+      this._form.computeLabel = schema => schema.name === "entity" ? "Entity" : "State content";
+      this._form.schema = [
+        {name:"entity", required:true, selector:{entity:{}}},
+        {name:"state_content", selector:{ui_state_content:{allow_context:true}}, context:{filter_entity:"entity"}},
+      ];
+      this._form.addEventListener("value-changed", event => {
+        event.stopPropagation();
+        this._config = {...this._config, ...event.detail.value, type:`custom:${TRV_FEATURE}`};
+        this.dispatchEvent(new CustomEvent("config-changed", {bubbles:true, composed:true, detail:{config:this._config}}));
+      });
+      this.shadowRoot.append(this._form);
+    }
+    setConfig(config) { this._config = {...config}; this._render(); }
+    set hass(value) { this._hass = value; this._render(); }
+    set context(value) { this._context = value; this._render(); }
+    _render() {
+      if (!this._hass || !this._config) return;
+      this._form.hass = this._hass;
+      const data = {entity:this._config.entity || this._context?.entity_id || "", state_content:this._config.state_content?.length ? this._config.state_content : ["state"]};
+      if (JSON.stringify(data) !== this._signature) {
+        this._form.data = data;
+        this._signature = JSON.stringify(data);
+      }
+    }
+  }
+  if (!customElements.get(TRV_FEATURE)) customElements.define(TRV_FEATURE, WiserTrvStatusFeature);
+  if (!customElements.get("wiser-trv-status-feature-editor")) customElements.define("wiser-trv-status-feature-editor", WiserTrvStatusFeatureEditor);
+  window.customCardFeatures = window.customCardFeatures || [];
+  if (!window.customCardFeatures.some(feature => feature.type === TRV_FEATURE)) window.customCardFeatures.push({
+    type:TRV_FEATURE, name:"Secondary status", configurable:true,
+    isSupported:(hass, context) => Boolean(context?.entity_id?.startsWith("climate.") && hass.states[context.entity_id]),
+  });
   class WiserRoomsCardEditor extends HTMLElement {
     constructor() {
       super();
@@ -347,30 +523,38 @@
       this._typeForm.computeLabel = schema => schema.label;
       this._typeForm.addEventListener("value-changed", event => this._changed({stopPropagation: () => event.stopPropagation(), detail: {value: {...this._form.data, ...event.detail.value}}}));
       this._roomForm = document.createElement("ha-form");
+      this._contentPanel = document.createElement("div");
+      this._contentPanel.innerHTML = '<ha-expansion-panel outlined><ha-icon slot="leading-icon" icon="mdi:text-short"></ha-icon><h3 slot="header">Content</h3><div class="native-feature-content"></div></ha-expansion-panel>';
+      this._contentPanel.querySelector?.(".native-feature-content")?.append(this._roomForm);
       this._roomForm.computeLabel = schema => schema.label;
       this._roomForm.addEventListener("value-changed", event => {
         event.stopPropagation();
-        this._setRoomOptions({temperature_focus: event.detail.value.temperature_focus});
+        const value = event.detail.value;
+        const options = {};
+        for (const key of ["name", "icon", "color", "hide_state", "state_content", "temperature_focus", "show_temperatures", "show_next_schedule"]) options[key] = value[key];
+        this._setRoomOptions(options);
       });
       this._featureList = document.createElement("div");
-      this._featureList.addEventListener("click", event => {
-        const button = event.target.closest("button");
-        if (!button) return;
-        if (button.dataset.removeFeature) this._setFeatures(this._selectedFeatures().filter(value => value !== button.dataset.removeFeature));
-        else if (button.dataset.addFeature) { this._addingFeature = !this._addingFeature; this._renderFeatures(); }
-        else if (button.dataset.feature) { this._addingFeature = false; this._setFeatures([...this._selectedFeatures(), button.dataset.feature]); }
-      });
-      this._featureList.addEventListener("item-moved", event => {
+      this._featureList.innerHTML = '<ha-expansion-panel outlined><ha-icon slot="leading-icon" icon="mdi:list-box"></ha-icon><h3 slot="header">Features</h3><div class="native-feature-content"></div></ha-expansion-panel>';
+      this._nativeEditor = document.createElement("hui-card-features-editor");
+      this._featureList.querySelector?.(".native-feature-content")?.append(this._nativeEditor);
+      this._nativeEditor.addEventListener("features-changed", event => {
         event.stopPropagation();
-        this._moveFeature(event.detail.oldIndex, event.detail.newIndex);
+        this._setRoomOptions({native_features:event.detail.features});
       });
-      this._featureList.addEventListener("keydown", event => {
-        const handle = event.target.closest("[data-feature-handle]");
-        if (!handle || !["ArrowUp", "ArrowDown"].includes(event.key)) return;
-        event.preventDefault();
-        const index = this._selectedFeatures().indexOf(handle.dataset.featureHandle);
-        this._moveFeature(index, index + (event.key === "ArrowUp" ? -1 : 1));
-        this._featureList.querySelector(`[data-feature-handle="${handle.dataset.featureHandle}"]`)?.focus();
+      this._nativeEditor.addEventListener("edit-detail-element", event => {
+        event.stopPropagation();
+        const id = this._selectedRoom;
+        const index = event.detail.subElementConfig.index;
+        const config = nativeFeatures(roomConfig(this._config, id), id)[index];
+        this.dispatchEvent(new CustomEvent("edit-sub-element", {bubbles:true, composed:true, detail:{
+          type:"feature", config, context:{entity_id:id},
+          saveConfig: newConfig => {
+            const list = [...nativeFeatures(roomConfig(this._config, id), id)];
+            list[index] = newConfig;
+            this._saveNativeFeatures(id, list);
+          },
+        }}));
       });
       this._message = document.createElement("p");
       this._message.style.cssText = "color:var(--secondary-text-color);font-size:14px";
@@ -404,15 +588,9 @@
         .room-tools{display:flex;flex-wrap:nowrap;gap:4px;margin-left:auto;flex-shrink:0}
         .room-tools button{display:flex;align-items:center;justify-content:center;width:34px;height:34px;padding:0;border:1px solid var(--divider-color);border-radius:var(--ha-border-radius-lg,12px);background:var(--secondary-background-color)}
         button:disabled{opacity:.35;cursor:default}ha-icon{--mdc-icon-size:20px;pointer-events:none}
-        .features-panel{border:1px solid var(--divider-color);border-radius:12px;margin-top:20px;overflow:hidden}
-        .features-panel summary{display:flex;align-items:center;gap:12px;padding:16px;background:var(--secondary-background-color);cursor:pointer;font-weight:500;list-style:none}
-        .features-panel summary::-webkit-details-marker{display:none}.features-panel summary .chevron{margin-left:auto}.features-panel[open] .chevron{transform:rotate(180deg)}
-        .feature-body{padding:8px 12px 16px}.feature-row{display:flex;align-items:center;gap:12px;min-height:56px}.feature-label{flex:1;min-width:0}
-        .feature-row button{background:none;border:0;min-width:36px;min-height:40px;padding:6px;color:var(--secondary-text-color)}.feature-handle{cursor:grab!important}
-        .feature-add{display:flex;align-items:center;gap:8px;border:0;border-radius:24px;padding:8px 14px;margin-top:10px;background:var(--primary-color);color:var(--text-primary-color)!important}
-        .feature-options{display:flex;flex-direction:column;gap:4px;margin-top:8px}.feature-options button{text-align:left;padding:10px;border:1px solid var(--divider-color);border-radius:8px;background:var(--secondary-background-color)}
+        ha-expansion-panel{display:block;margin-top:20px}h3{margin:0;font-size:16px;font-weight:500}.native-feature-content{padding:12px}
       `;
-      this.shadowRoot.append(style, this._form, this._typeForm, this._tabs, this._roomForm, this._featureList, this._message);
+      this.shadowRoot.append(style, this._form, this._typeForm, this._tabs, this._contentPanel, this._featureList, this._message);
       this._form.computeLabel = schema => schema.label || "Title";
       this._form.addEventListener("value-changed", event => this._changed(event));
     }
@@ -467,7 +645,7 @@
       if (signature !== this._schemaSignature) {
         this._form.schema = schema.slice(0, 2);
         this._typeForm.schema = schema.slice(2, 3);
-        this._roomForm.schema = schema.slice(3);
+
         this._schemaSignature = signature;
       }
       const data = {title: this._config.title ?? "Wiser rooms", room_columns: this._config.room_columns ?? 1, room_type: this._config.room_type ?? "all"};
@@ -476,8 +654,26 @@
       this._renderTabs(rooms);
       const selectedOptions = roomConfig(this._config, this._selectedRoom);
       this._roomForm.hass = this._hass;
-      this._roomForm.data = {temperature_focus: selectedOptions.temperature_focus ?? "current"};
-      this._roomForm.hidden = !this._selectedRoom || this._selectedRoom.startsWith("cover.");
+      const shutter = this._selectedRoom?.startsWith("cover.");
+      const contentSchema = [
+        {name:"name", label:"Name", selector:{entity_name:{}}, context:{entity:"entity"}},
+        {name:"", type:"grid", schema:[
+          {name:"icon", label:"Icon", selector:{icon:{}}, context:{icon_entity:"entity"}},
+          {name:"color", label:"Colour", selector:{ui_color:{default_color:"state",include_state:true}}},
+        ]},
+        {name:"", type:"grid", schema:[
+          {name:"hide_state",label:"Hide state",selector:{boolean:{}}},
+          {name:"show_temperatures",label:shutter ? "Show position" : "Show current / target temperature",selector:{boolean:{}}},
+        ]},
+        {name:"state_content",label:"State content",visible:{field:"hide_state",operator:"not_eq",value:true},selector:{ui_state_content:{allow_context:true}},context:{filter_entity:"entity"}},
+        ...(!shutter ? [schema[3],{name:"show_next_schedule",label:"Show next schedule",selector:{boolean:{}}}] : []),
+      ];
+      const contentSignature = JSON.stringify(contentSchema);
+      if (contentSignature !== this._contentSchema) { this._roomForm.schema = contentSchema; this._contentSchema = contentSignature; }
+      const contentData = {entity:this._selectedRoom,name:selectedOptions.name ?? [{type:"area"}],icon:selectedOptions.icon,color:selectedOptions.color || "state",hide_state:selectedOptions.hide_state ?? false,state_content:selectedOptions.state_content ?? [shutter ? "state" : "hvac_action"],temperature_focus:selectedOptions.temperature_focus ?? "current",show_temperatures:selectedOptions.show_temperatures ?? true,show_next_schedule:selectedOptions.show_next_schedule ?? true};
+      if (JSON.stringify(contentData) !== JSON.stringify(this._roomForm.data)) this._roomForm.data = contentData;
+      this._contentPanel.hidden = !this._selectedRoom;
+      this._roomForm.hidden = !this._selectedRoom;
       this._featureList.hidden = !this._selectedRoom;
       this._renderFeatures();
       this._message.textContent = this._failed ? "Unable to detect rooms. Close and reopen the editor to retry."
@@ -486,15 +682,6 @@
         : "";
       this._message.hidden = !this._message.textContent;
     }
-    _availableFeatures() {
-      return this._selectedRoom?.startsWith("cover.") ? ["modes", "temperature"] : FEATURES;
-    }
-    _selectedFeatures() {
-      return features(roomConfig(this._config, this._selectedRoom)).filter(value => this._availableFeatures().includes(value));
-    }
-    _setFeatures(values) {
-      this._setRoomOptions({features: [...new Set(values)].filter(value => this._availableFeatures().includes(value))});
-    }
     _setRoomOptions(options) {
       if (!this._selectedRoom) return;
       this._config = {...this._config, room_options: {...this._config.room_options,
@@ -502,24 +689,24 @@
       this._render();
       this._dispatchConfig();
     }
-    _moveFeature(from, to) {
-      const values = [...this._selectedFeatures()];
-      if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < 0 || from >= values.length || to >= values.length) return;
-      values.splice(to, 0, values.splice(from, 1)[0]);
-      this._setFeatures(values);
+    _saveNativeFeatures(id, list) {
+      if (!id || !validNativeFeatures(list)) return;
+      this._config = {...this._config, room_options:{...this._config.room_options,
+        [id]:{...this._config.room_options?.[id], native_features:list}}};
+      this._render();
+      this._dispatchConfig();
     }
     _renderFeatures() {
-      const shutter = this._selectedRoom?.startsWith("cover.");
-      const labels = {modes: shutter ? "Shutter controls" : "Climate HVAC modes", temperature: shutter ? "Position" : "Target temperature", advance: "Advance schedule"};
-      const selected = this._selectedFeatures();
-      const missing = this._availableFeatures().filter(value => !selected.includes(value));
-      const open = this._featureList.querySelector?.("details")?.open ?? true;
-      const markup = `<details class="features-panel" ${open ? "open" : ""}><summary><ha-icon icon="mdi:list-box"></ha-icon>Features<ha-icon class="chevron" icon="mdi:chevron-down"></ha-icon></summary><div class="feature-body">
-        <ha-sortable handle-selector=".feature-handle" draggable-selector=".feature-row"><div>${selected.map(value => `<div class="feature-row"><button class="feature-handle" data-feature-handle="${value}" aria-label="Move ${labels[value]}" title="Drag to reorder, or use arrow keys"><ha-icon icon="mdi:drag-horizontal"></ha-icon></button><span class="feature-label">${labels[value]}</span><button data-remove-feature="${value}" aria-label="Remove ${labels[value]}"><ha-icon icon="mdi:delete"></ha-icon></button></div>`).join("")}</div></ha-sortable>
-        <button class="feature-add" data-add-feature="true" ${missing.length ? "" : "disabled"}><ha-icon icon="mdi:plus"></ha-icon>Add feature</button>
-        ${this._addingFeature && missing.length ? `<div class="feature-options">${missing.map(value => `<button data-feature="${value}">${labels[value]}</button>`).join("")}</div>` : ""}
-      </div></details>`;
-      if (markup !== this._featureMarkup) { this._featureList.innerHTML = markup; this._featureMarkup = markup; }
+      if (!this._selectedRoom) return;
+      this._nativeEditor.hass = this._hass;
+      this._nativeEditor.context = {entity_id:this._selectedRoom};
+      this._nativeEditor.stateObj = this._hass.states[this._selectedRoom];
+      const list = nativeFeatures(roomConfig(this._config, this._selectedRoom), this._selectedRoom);
+      const signature = this._selectedRoom + JSON.stringify(list);
+      if (signature !== this._nativeEditorSignature) {
+        this._nativeEditor.features = list;
+        this._nativeEditorSignature = signature;
+      }
     }
     _renderTabs(rooms) {
       if (!rooms.some(room => room.entity_id === this._selectedRoom)) this._selectedRoom = rooms[0]?.entity_id;

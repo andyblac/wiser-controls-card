@@ -96,17 +96,62 @@ stays current then target. The YAML option is `temperature_focus: target`.
 
 Room details and the header All off button remain available when additional features are hidden.
 
-**Additional features** in the visual editor independently enables mode/shutter buttons, temperature/position adjustment, and advance schedule. All are enabled by default. YAML: `features: [modes, temperature, advance]`; use `features: []` to hide all three. Existing `show_controls: false` configurations remain supported when `features` is omitted.
+The **Features** panel uses Home Assistant's native Tile feature editor and renderer.
+It provides the native add, remove, reorder and edit actions, with available features
+filtered by the selected room entity. Installed custom Tile features can also be
+selected when compatible. Native controls use Home Assistant's layout and styling.
 
-The **Features** panel provides drag handles to reorder controls, remove buttons, and **Add feature** to restore a removed control. Focus a drag handle and use Up/Down for keyboard reordering.
-
-Features and temperature emphasis are edited below the room tabs and apply only to the selected room. They are saved in `room_options`, keyed by entity ID. Existing top-level settings remain defaults for rooms without overrides.
+Features and temperature emphasis are edited below the room tabs and apply only to
+the selected room. Feature configurations are stored in `room_options` as
+`native_features`, with Home Assistant's standard feature objects preserved intact.
 
 ```yaml
 room_options:
   climate.lounge:
     temperature_focus: target
-    features: [temperature, modes, advance]
+    native_features:
+      - type: target-temperature
+      - type: climate-hvac-modes
+        hvac_modes: [auto, heat, off]
   climate.bedroom:
-    features: []
+    native_features: []
 ```
+
+Existing `features: [modes, temperature, advance]` settings remain supported and
+are translated to native features. An empty feature list or `show_controls: false`
+still hides controls. Advance schedule becomes the native climate preset feature
+configured with `preset_modes: [Advance Schedule]`. Native features perform their
+normal Home Assistant actions; Wiser-specific mode override cancellation used by
+the earlier custom buttons is not added to native controls.
+
+The native frontend components are loaded through Home Assistant's Tile card.
+Their availability and compatible features depend on the installed Home Assistant
+version. The previous controls remain a loading fallback for legacy configurations.
+
+### Secondary status
+
+Choose **Add feature → Secondary status** on a heating room tab. Its native editor
+lets you select an entity and choose/reorder state or attribute fields, as in the
+Hot Water Control TRV status feature. It defaults to the selected room's state.
+Clicking the status opens more-info for that entity.
+
+On Wiser Rooms cards, the status appears beneath the normal room status with
+compact header spacing, only when configured. It does not consume a bottom feature
+row. On native Tile cards it renders in the feature area. It works without Hot Water Control being
+installed and can also be used as a custom feature on native Tile cards. Reload
+the browser after installing the updated bundle to refresh the feature registry.
+
+```yaml
+native_features:
+  - type: custom:wiser-trv-status-feature
+    entity: climate.lounge
+    state_content: [current_temperature, hvac_action]
+```
+
+### Room content
+
+Each room tab has a **Content** panel with native composed/custom name, icon,
+colour, hide-state and state-content selectors. Wiser options
+control the current/target temperature (or shutter position), temperature emphasis,
+and next schedule visibility. These settings are stored per entity in
+`room_options`. Defaults retain the existing header layout.
