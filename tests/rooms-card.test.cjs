@@ -553,11 +553,10 @@ test('Content name defaults to the room area', () => {
   assert.equal(editor._roomForm.data.state_content.join(','), 'hvac_action');
 });
 
-test('editor preview keeps selected room at the configured column width', () => {
+test('editor preview expands the selected room to a readable card width', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/wiser-rooms-card.js'), 'utf8');
-  assert.match(source, /\.preview-row>\.room\.preview-selected\{flex:1 1 0\}/);
-  assert.match(source, /\.preview-row:has\(\.preview-selected\)\{align-items:stretch;flex-wrap:nowrap\}/);
-  assert.doesNotMatch(source, /\.preview-row>\.room\.preview-selected\{flex:0 0/);
+  assert.match(source, /\.editor-preview \.preview-row>\.room\.preview-selected\{flex:0 0 min\(100%,max\(50%,280px\)\)\}/);
+  assert.match(source, /\.editor-preview \.preview-row:has\(\.preview-selected\)\{align-items:flex-start;flex-wrap:wrap\}/);
 });
 
 test('status renders exactly the configured state content with useful defaults', () => {
