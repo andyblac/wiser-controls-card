@@ -1,1 +1,0 @@
-# wiser-rooms-card
