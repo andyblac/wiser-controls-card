@@ -553,9 +553,11 @@ test('Content name defaults to the room area', () => {
   assert.equal(editor._roomForm.data.state_content.join(','), 'hvac_action');
 });
 
-test('editor preview expands the selected room to a readable card width', () => {
+test('editor preview uses the measured dashboard room width with a readable fallback', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/wiser-rooms-card.js'), 'utf8');
-  assert.match(source, /\.editor-preview \.preview-row>\.room\.preview-selected\{flex:0 0 min\(100%,max\(50%,280px\)\)\}/);
+  assert.match(source, /roomSizeCache\.set\(sizeKey, \{width:bounds\.width, height:bounds\.height\}\)/);
+  assert.match(source, /--preview-room-width.*measured\.width/);
+  assert.match(source, /\.editor-preview \.preview-row>\.room\.preview-selected\{flex:0 0 var\(--preview-room-width,50%\);max-width:100%\}/);
   assert.match(source, /\.editor-preview \.preview-row:has\(\.preview-selected\)\{align-items:flex-start;flex-wrap:wrap\}/);
 });
 

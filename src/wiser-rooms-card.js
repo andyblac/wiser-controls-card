@@ -27,6 +27,8 @@
     return nativeLoading;
   };
   const PREVIEW_ROOM = Symbol.for("wiser-rooms-card-preview-room");
+  const ROOM_SIZE_CACHE = Symbol.for("wiser-rooms-card-room-size-cache");
+  const roomSizeCache = window[ROOM_SIZE_CACHE] ||= new Map();
   const escape = (value) => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   const available = state => state && !["unknown", "unavailable"].includes(state.state);
   const isShutter = state => state?.entity_id.startsWith("cover.") && Object.hasOwn(state.attributes, "shutter_id");
@@ -66,9 +68,18 @@
     disconnectedCallback() { this._headerObserver?.disconnect(); this._observedHeaders.clear(); }
     _layoutHeaders() {
       const headers = new Set(this.shadowRoot.querySelectorAll?.(".top") || []);
+      const preview = isEditorPreview(this);
       for (const header of this._observedHeaders) if (!headers.has(header)) this._headerObserver?.unobserve(header.closest(".room"));
       for (const header of headers) {
         const room = header.closest(".room");
+        const roomId = room?.getAttribute("data-key");
+        const sizeKey = `${this._config?.room_columns || 1}:${roomId}`;
+        const bounds = room?.getBoundingClientRect?.();
+        if (!preview && bounds?.width > 0 && bounds?.height > 0) roomSizeCache.set(sizeKey, {width:bounds.width, height:bounds.height});
+        if (preview && room?.classList.contains("preview-selected")) {
+          const measured = roomSizeCache.get(sizeKey);
+          if (measured?.width) room.style.setProperty("--preview-room-width", `${measured.width}px`);
+        }
         if (!this._observedHeaders.has(header)) this._headerObserver?.observe(room);
         const content = room.querySelector(".room-content");
         // Selected previews use the same text and control sizes as the dashboard.
@@ -386,7 +397,7 @@
       .controls button:disabled,.controls input:disabled{opacity:1;color:var(--disabled-color);-webkit-text-fill-color:var(--disabled-color)}
       .controls input[data-field='temperature']:disabled{color:var(--secondary-text-color);-webkit-text-fill-color:var(--secondary-text-color)}
       .controls .mode.active:disabled{background:var(--disabled-color);color:white;-webkit-text-fill-color:white}
-      .editor-preview .room{padding:8px 4px}.editor-preview .preview-placeholder{display:flex;align-items:center;justify-content:center;gap:6px;min-height:64px;color:var(--secondary-text-color);font-size:12px;text-align:center;overflow-wrap:anywhere}.preview-placeholder ha-icon{flex-shrink:0;--mdc-icon-size:18px}.preview-placeholder span{min-width:0}.editor-preview .room.preview-selected{padding:10px 16px}.editor-preview .preview-row>.room.preview-selected{flex:0 0 min(100%,max(50%,280px))}.editor-preview .preview-row:has(.preview-selected){align-items:flex-start;flex-wrap:wrap}
+      .editor-preview .room{padding:8px 4px}.editor-preview .preview-placeholder{display:flex;align-items:center;justify-content:center;gap:6px;min-height:64px;color:var(--secondary-text-color);font-size:12px;text-align:center;overflow-wrap:anywhere}.preview-placeholder ha-icon{flex-shrink:0;--mdc-icon-size:18px}.preview-placeholder span{min-width:0}.editor-preview .room.preview-selected{padding:10px 16px}.editor-preview .preview-row>.room.preview-selected{flex:0 0 var(--preview-room-width,50%);max-width:100%}.editor-preview .preview-row:has(.preview-selected){align-items:flex-start;flex-wrap:wrap}
       </style><ha-card data-key="card" class="${preview ? "editor-preview" : ""}"><header data-key="header"><div><h2>${escape(this._config.title)}</h2><p>${heating} of ${rooms.filter(room => !isShutter(room)).length} rooms heating${rooms.some(isShutter) ? ` · ${rooms.filter(isShutter).length} shutters` : ""}${unavailable ? ` · ${unavailable} unavailable` : ""}</p></div><button class="off" data-action="all-off" ${this._busy || !canOff ? "disabled" : ""} title="Turn all heating off" aria-label="Turn all heating off"><ha-icon icon="mdi:power"></ha-icon>All off</button></header>
       ${this._error ? `<div data-key="error" class="message error" role="alert">${escape(this._error)}${this._discoveryFailed ? '<button data-action="retry">Retry</button>' : ""}</div>` : ""}
       ${!rooms.length ? `<p data-key="empty" class="message">${this._loading ? "Finding Wiser rooms…" : "No matching Wiser rooms or shutters found."}</p>` : groups.map(group => `${grouped ? `<h3 class="section-title" data-key="heading-${group.key}">${group.title}</h3>` : ""}<div class="rooms ${expandPreview ? "preview-rows" : ""}" data-key="rooms-${group.key}" style="--room-columns:${this._config.room_columns}">${group.rooms.map((room, index) => {
