@@ -560,10 +560,11 @@ test('Secondary status renders under identity only when configured and not as bo
 
 test('Secondary status keeps next schedule beside the primary status', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/wiser-rooms-card.js'), 'utf8');
+  const compact = source.replace(/\s+/g, '');
   assert.match(source, /class="secondary-primary-line"><span class="status">.*<div class="next"/);
-  assert.match(source, /\.secondary-heading-line,\.secondary-primary-line\{display:flex;align-items:baseline;justify-content:space-between;gap:10px;min-width:0\}/);
-  assert.match(source, /\.secondary-primary-line \.next\{flex:1 1 auto;min-width:0;max-width:none;margin:0;line-height:18px;white-space:normal;overflow:visible;text-overflow:clip;text-align:right\}/);
-  assert.match(source, /\.secondary-layout wiser-secondary-status-feature\{min-width:0;line-height:16px\}/);
+  assert.match(compact, /\.secondary-heading-line,\.secondary-primary-line\{display:flex;align-items:baseline;justify-content:space-between;gap:10px;min-width:0\}/);
+  assert.match(compact, /\.secondary-primary-line\.next\{flex:11auto;min-width:0;max-width:none;margin:0;line-height:18px;white-space:normal;overflow:visible;text-overflow:clip;text-align:right\}/);
+  assert.match(compact, /\.secondary-layoutwiser-secondary-status-feature\{min-width:0;line-height:16px\}/);
 });
 
 test('Content options persist per room and change header rendering', () => {
@@ -623,10 +624,11 @@ test('Content name defaults to the room area', () => {
 
 test('editor preview uses the measured dashboard room width with a readable fallback', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/wiser-rooms-card.js'), 'utf8');
+  const compact = source.replace(/\s+/g, '');
   assert.match(source, /roomSizeCache\.set\(sizeKey, \{width:bounds\.width, height:bounds\.height\}\)/);
   assert.match(source, /--preview-room-width.*measured\.width/);
-  assert.match(source, /\.editor-preview \.preview-row>\.room\.preview-selected\{flex:0 0 var\(--preview-room-width,50%\);max-width:100%\}/);
-  assert.match(source, /\.editor-preview \.preview-row:has\(\.preview-selected\)\{align-items:flex-start;flex-wrap:wrap\}/);
+  assert.match(compact, /\.editor-preview\.preview-row>\.room\.preview-selected\{flex:00var\(--preview-room-width,50%\);max-width:100%\}/);
+  assert.match(compact, /\.editor-preview\.preview-row:has\(\.preview-selected\)\{align-items:flex-start;flex-wrap:wrap\}/);
 });
 
 test('status renders exactly the configured state content with useful defaults', () => {

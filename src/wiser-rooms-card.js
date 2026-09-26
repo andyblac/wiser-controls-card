@@ -395,34 +395,505 @@
       // Orbit expands a selected item to its normal grid width (six of twelve by default).
       const expandPreview = preview && this._config.room_columns > 2;
       const markup = `<style data-key="style">
-        :host{display:block;container-type:inline-size}ha-card{overflow:hidden}.section-title{font-size:14px;font-weight:500;margin:0;padding:12px 16px 8px;border-top:1px solid var(--divider-color)}.rooms{display:grid;grid-template-columns:repeat(var(--room-columns),minmax(0,1fr))}.room{min-width:0}.room-content{container-type:inline-size;container-name:room}.room.preview-selected{isolation:isolate;position:relative}.room.preview-selected::before{border:2px solid var(--primary-color);border-radius:inherit;box-sizing:border-box;content:"";inset:0;pointer-events:none;position:absolute;z-index:100}.rooms.preview-rows{display:block}.preview-row{display:flex;width:100%}.preview-row>.room{flex:1 1 0;box-sizing:border-box;overflow:hidden}.preview-row>.room.preview-selected{flex:1 1 0}.preview-row:has(.preview-selected){align-items:stretch;flex-wrap:nowrap}.preview-spacer{flex:1 1 0;min-width:0}header{padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:8px}h2{font-size:18px;font-weight:500;margin:0 0 3px}p{margin:0;color:var(--secondary-text-color);font-size:12px}button,input{font:inherit;color:var(--primary-text-color);box-sizing:border-box}button{cursor:pointer;border:0;border-radius:10px;min-height:36px;padding:6px;background:var(--secondary-background-color)}button:disabled,input:disabled{opacity:.45;cursor:default}button:focus-visible,input:focus-visible{outline:2px solid var(--primary-color);outline-offset:2px}.off{color:var(--error-color);display:flex;align-items:center;gap:8px;font-size:16px;min-height:48px;padding:10px 16px;border-radius:14px;flex-shrink:0}.off ha-icon{--mdc-icon-size:26px}.room{padding:10px 16px;border-top:1px solid var(--divider-color)}.top{display:grid;grid-template-columns:38px auto minmax(0,1fr);align-items:center;column-gap:10px;row-gap:0}.room-heading,.identity,.readings{display:contents}.top .state-icon{grid-column:1;grid-row:1 / 3}.top .name{grid-column:2 / -1;grid-row:1;min-height:0;line-height:24px}.identity>.status{grid-column:2;grid-row:2;justify-self:start;margin-top:0;line-height:18px}.top .temps{grid-column:3;grid-row:2;line-height:24px;justify-self:end;text-align:right}.readings .next{grid-column:2 / -1;grid-row:3;justify-self:end;max-width:100%;white-space:normal;min-width:0;margin-top:2px;line-height:18px}.top.inline-readings .name{grid-column:2}.top.inline-readings .temps{grid-row:1}.top.inline-readings .next{grid-row:2;max-width:calc(100% - var(--status-width,40px) - 10px)}.state-icon{border-radius:50%;height:38px;width:38px;min-width:38px;display:grid;place-items:center;color:var(--room-state-color);background:color-mix(in srgb,var(--room-state-color) 20%,transparent)}ha-icon{--mdc-icon-size:24px;pointer-events:none}.controls button{display:grid;place-items:center}.controls ha-icon{width:22px;height:22px;--mdc-icon-size:22px}.name{flex:1;min-width:0;padding:0;background:none;text-align:left}.name strong{display:inline-block;max-width:100%;vertical-align:middle;font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.status{display:block;font-size:12px;color:var(--secondary-text-color);margin-top:3px}.temps{font-size:22px;white-space:nowrap;font-variant-numeric:tabular-nums}.temps small{font-size:18px;color:var(--secondary-text-color)}.controls>.modes{order:var(--feature-modes)}.controls>input,.controls>button:not([data-action='advance']){order:var(--feature-temperature)}.controls>button[data-action='advance']{order:var(--feature-advance)}.controls{display:flex;gap:4px;align-items:center;margin-top:8px}input{min-width:0;min-height:36px;border:0;border-radius:8px;padding:6px;background:var(--secondary-background-color);font-size:13px}input{flex:0 1 76px;min-width:64px;width:76px;height:40px;min-height:40px;font-size:18px;font-variant-numeric:tabular-nums;text-align:right}.controls button{width:40px;height:40px;min-height:40px;flex-shrink:0}.modes{display:flex;flex:1 1 120px;min-width:108px;border-radius:10px;background:var(--secondary-background-color);overflow:hidden}.controls .mode{flex:1 1 40px;min-width:36px;width:40px;border-radius:10px;background:transparent}.controls .mode.active{color:var(--text-primary-color,#fff);background:var(--room-state-color)}.next{min-width:0;margin-top:2px;text-align:right;font-size:12px;color:var(--secondary-text-color);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.message{padding:12px 16px;line-height:1.5}.error{color:var(--error-color)}
-
-        @container (max-width: 340px){header{padding:12px}.room{padding:10px 12px}.top{column-gap:8px;row-gap:0}.top .temps{font-size:20px}.top .temps small{font-size:16px}.off{padding:8px 10px;font-size:14px}}
-        @container room (max-width: 210px){.top .temps{font-size:18px}.top .temps small{font-size:15px}.controls{flex-wrap:wrap}.modes{flex-basis:100%;min-width:0}.controls .mode{min-width:0}.controls input{flex:1 1 64px}}
-      .top.has-secondary{grid-template-columns:38px minmax(0,1fr);align-items:start}
-      .top.has-secondary .state-icon{grid-column:1;grid-row:1 / 4}
-      .secondary-layout{grid-column:2;min-width:0}
-      .secondary-heading-line,.secondary-primary-line{display:flex;align-items:baseline;justify-content:space-between;gap:10px;min-width:0}
-      .secondary-heading-line .name{min-width:0;line-height:20px}.secondary-heading-line .temps{flex:0 0 auto;line-height:24px;text-align:right}
-      .secondary-primary-line .status{flex:0 0 auto;margin:0;line-height:18px}
-      .secondary-primary-line .next{flex:1 1 auto;min-width:0;max-width:none;margin:0;line-height:18px;white-space:normal;overflow:visible;text-overflow:clip;text-align:right}
-      .secondary-layout wiser-secondary-status-feature{min-width:0;line-height:16px}
-      hui-card-features.features-bottom{display:block;margin-top:8px}
-      .features-bottom-row{display:flex;align-items:stretch;gap:4px;margin-top:8px;min-width:0}
-      .features-bottom-row>hui-card-features{display:block;flex:1 1 0;min-width:0;margin-top:0}
-      .features-bottom-row>hui-card-features.feature-icon-only{flex:0 0 var(--feature-height,40px)}
-      .features-inline-row{display:flex;align-items:stretch;gap:4px;margin-top:8px;min-width:0}
-      .features-inline-row>hui-card-features{display:block;flex:1 1 0;min-width:0}
-      .features-inline-row>hui-card-features.feature-icon-only{flex:0 0 var(--feature-height,40px)}
-      .top.hide-status .status,.top.hide-temps .temps,.top.hide-next .next{display:none}
-      .state-icon img{width:100%;height:100%;object-fit:cover;border-radius:50%}.status state-display{display:inline;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-      /* Match native ha-control-select / ha-control-number-buttons backgrounds. */
-      .controls{--wiser-control-background:color-mix(in srgb,var(--disabled-color) 20%,transparent)}
-      .controls .modes,.controls>button,.controls>input{background:var(--wiser-control-background)}
-      .controls button:disabled,.controls input:disabled{opacity:1;color:var(--disabled-color);-webkit-text-fill-color:var(--disabled-color)}
-      .controls input[data-field='temperature']:disabled{color:var(--secondary-text-color);-webkit-text-fill-color:var(--secondary-text-color)}
-      .controls .mode.active:disabled{background:var(--disabled-color);color:white;-webkit-text-fill-color:white}
-      .editor-preview .room{padding:8px 4px}.editor-preview .preview-placeholder{display:flex;align-items:center;justify-content:center;gap:6px;min-height:64px;color:var(--secondary-text-color);font-size:12px;text-align:center;overflow-wrap:anywhere}.preview-placeholder ha-icon{flex-shrink:0;--mdc-icon-size:18px}.preview-placeholder span{min-width:0}.editor-preview .room.preview-selected{padding:10px 16px}.editor-preview .preview-row>.room.preview-selected{flex:0 0 var(--preview-room-width,50%);max-width:100%}.editor-preview .preview-row:has(.preview-selected){align-items:flex-start;flex-wrap:wrap}
+        :host {
+          display:block;
+          container-type:inline-size
+        }
+        ha-card {
+          overflow:hidden
+        }
+        .section-title {
+          font-size:14px;
+          font-weight:500;
+          margin:0;
+          padding:12px 16px 8px;
+          border-top:1px solid var(--divider-color)
+        }
+        .rooms {
+          display:grid;
+          grid-template-columns:repeat(var(--room-columns),minmax(0,1fr))
+        }
+        .room {
+          min-width:0
+        }
+        .room-content {
+          container-type:inline-size;
+          container-name:room
+        }
+        .room.preview-selected {
+          isolation:isolate;
+          position:relative
+        }
+        .room.preview-selected::before {
+          border:2px solid var(--primary-color);
+          border-radius:inherit;
+          box-sizing:border-box;
+          content:"";
+          inset:0;
+          pointer-events:none;
+          position:absolute;
+          z-index:100
+        }
+        .rooms.preview-rows {
+          display:block
+        }
+        .preview-row {
+          display:flex;
+          width:100%
+        }
+        .preview-row>.room {
+          flex:1 1 0;
+          box-sizing:border-box;
+          overflow:hidden
+        }
+        .preview-row>.room.preview-selected {
+          flex:1 1 0
+        }
+        .preview-row:has(.preview-selected) {
+          align-items:stretch;
+          flex-wrap:nowrap
+        }
+        .preview-spacer {
+          flex:1 1 0;
+          min-width:0
+        }
+        header {
+          padding:14px 16px;
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          gap:8px
+        }
+        h2 {
+          font-size:18px;
+          font-weight:500;
+          margin:0 0 3px
+        }
+        p {
+          margin:0;
+          color:var(--secondary-text-color);
+          font-size:12px
+        }
+        button,input {
+          font:inherit;
+          color:var(--primary-text-color);
+          box-sizing:border-box
+        }
+        button {
+          cursor:pointer;
+          border:0;
+          border-radius:10px;
+          min-height:36px;
+          padding:6px;
+          background:var(--secondary-background-color)
+        }
+        button:disabled,input:disabled {
+          opacity:.45;
+          cursor:default
+        }
+        button:focus-visible,input:focus-visible {
+          outline:2px solid var(--primary-color);
+          outline-offset:2px
+        }
+        .off {
+          color:var(--error-color);
+          display:flex;
+          align-items:center;
+          gap:8px;
+          font-size:16px;
+          min-height:48px;
+          padding:10px 16px;
+          border-radius:14px;
+          flex-shrink:0
+        }
+        .off ha-icon {
+          --mdc-icon-size:26px
+        }
+        .room {
+          padding:10px 16px;
+          border-top:1px solid var(--divider-color)
+        }
+        .top {
+          display:grid;
+          grid-template-columns:38px auto minmax(0,1fr);
+          align-items:center;
+          column-gap:10px;
+          row-gap:0
+        }
+        .room-heading,.identity,.readings {
+          display:contents
+        }
+        .top .state-icon {
+          grid-column:1;
+          grid-row:1 / 3;
+          transform:translateY(8px)
+        }
+        .top .name {
+          grid-column:2 / -1;
+          grid-row:1;
+          min-height:0;
+          line-height:24px
+        }
+        .identity>.status {
+          grid-column:2;
+          grid-row:2;
+          justify-self:start;
+          margin-top:0;
+          line-height:18px
+        }
+        .top .temps {
+          grid-column:3;
+          grid-row:2;
+          line-height:24px;
+          justify-self:end;
+          text-align:right
+        }
+        .readings .next {
+          grid-column:2 / -1;
+          grid-row:3;
+          justify-self:end;
+          max-width:100%;
+          white-space:normal;
+          min-width:0;
+          margin-top:2px;
+          line-height:18px
+        }
+        .top.inline-readings .name {
+          grid-column:2
+        }
+        .top.inline-readings .temps {
+          grid-row:1
+        }
+        .top.inline-readings .next {
+          grid-row:2;
+          max-width:calc(100% - var(--status-width,40px) - 10px)
+        }
+        .state-icon {
+          border-radius:50%;
+          height:38px;
+          width:38px;
+          min-width:38px;
+          display:grid;
+          place-items:center;
+          color:var(--room-state-color);
+          background:color-mix(in srgb,var(--room-state-color) 20%,transparent)
+        }
+        ha-icon {
+          --mdc-icon-size:24px;
+          pointer-events:none
+        }
+        .controls button {
+          display:grid;
+          place-items:center
+        }
+        .controls ha-icon {
+          width:22px;
+          height:22px;
+          --mdc-icon-size:22px
+        }
+        .name {
+          flex:1;
+          min-width:0;
+          padding:0;
+          background:none;
+          text-align:left
+        }
+        .name strong {
+          display:inline-block;
+          max-width:100%;
+          vertical-align:middle;
+          font-size:14px;
+          font-weight:500;
+          overflow:hidden;
+          text-overflow:ellipsis;
+          white-space:nowrap
+        }
+        .status {
+          display:block;
+          font-size:12px;
+          color:var(--secondary-text-color);
+          margin-top:3px
+        }
+        .temps {
+          font-size:22px;
+          white-space:nowrap;
+          font-variant-numeric:tabular-nums
+        }
+        .temps small {
+          font-size:18px;
+          color:var(--secondary-text-color)
+        }
+        .controls>.modes {
+          order:var(--feature-modes)
+        }
+        .controls>input,.controls>button:not([data-action='advance']) {
+          order:var(--feature-temperature)
+        }
+        .controls>button[data-action='advance'] {
+          order:var(--feature-advance)
+        }
+        .controls {
+          display:flex;
+          gap:4px;
+          align-items:center;
+          margin-top:8px
+        }
+        input {
+          min-width:0;
+          min-height:36px;
+          border:0;
+          border-radius:8px;
+          padding:6px;
+          background:var(--secondary-background-color);
+          font-size:13px
+        }
+        input {
+          flex:0 1 76px;
+          min-width:64px;
+          width:76px;
+          height:40px;
+          min-height:40px;
+          font-size:18px;
+          font-variant-numeric:tabular-nums;
+          text-align:right
+        }
+        .controls button {
+          width:40px;
+          height:40px;
+          min-height:40px;
+          flex-shrink:0
+        }
+        .modes {
+          display:flex;
+          flex:1 1 120px;
+          min-width:108px;
+          border-radius:10px;
+          background:var(--secondary-background-color);
+          overflow:hidden
+        }
+        .controls .mode {
+          flex:1 1 40px;
+          min-width:36px;
+          width:40px;
+          border-radius:10px;
+          background:transparent
+        }
+        .controls .mode.active {
+          color:var(--text-primary-color,#fff);
+          background:var(--room-state-color)
+        }
+        .next {
+          min-width:0;
+          margin-top:2px;
+          text-align:right;
+          font-size:12px;
+          color:var(--secondary-text-color);
+          overflow:hidden;
+          text-overflow:ellipsis;
+          white-space:nowrap
+        }
+        .message {
+          padding:12px 16px;
+          line-height:1.5
+        }
+        .error {
+          color:var(--error-color)
+        }
+        @container (max-width: 340px) {
+          header {
+            padding:12px
+          }
+          .room {
+            padding:10px 12px
+          }
+          .top {
+            column-gap:8px;
+            row-gap:0
+          }
+          .top .temps {
+            font-size:20px
+          }
+          .top .temps small {
+            font-size:16px
+          }
+          .off {
+            padding:8px 10px;
+            font-size:14px
+          }
+        }
+        @container room (max-width: 210px) {
+          .top .temps {
+            font-size:18px
+          }
+          .top .temps small {
+            font-size:15px
+          }
+          .controls {
+            flex-wrap:wrap
+          }
+          .modes {
+            flex-basis:100%;
+            min-width:0
+          }
+          .controls .mode {
+            min-width:0
+          }
+          .controls input {
+            flex:1 1 64px
+          }
+        }
+        .top.has-secondary {
+          grid-template-columns:38px minmax(0,1fr);
+          align-items:start
+        }
+        .top.has-secondary .state-icon {
+          grid-column:1;
+          grid-row:1 / 4
+        }
+        .secondary-layout {
+          grid-column:2;
+          min-width:0
+        }
+        .secondary-heading-line,.secondary-primary-line {
+          display:flex;
+          align-items:baseline;
+          justify-content:space-between;
+          gap:10px;
+          min-width:0
+        }
+        .secondary-heading-line .name {
+          min-width:0;
+          line-height:20px
+        }
+        .secondary-heading-line .temps {
+          flex:0 0 auto;
+          line-height:24px;
+          text-align:right
+        }
+        .secondary-primary-line .status {
+          flex:0 0 auto;
+          margin:0;
+          line-height:18px
+        }
+        .secondary-primary-line .next {
+          flex:1 1 auto;
+          min-width:0;
+          max-width:none;
+          margin:0;
+          line-height:18px;
+          white-space:normal;
+          overflow:visible;
+          text-overflow:clip;
+          text-align:right
+        }
+        .secondary-layout wiser-secondary-status-feature {
+          min-width:0;
+          line-height:16px
+        }
+        hui-card-features.features-bottom {
+          display:block;
+          margin-top:8px
+        }
+        .features-bottom-row {
+          display:flex;
+          align-items:stretch;
+          gap:4px;
+          margin-top:8px;
+          min-width:0
+        }
+        .features-bottom-row>hui-card-features {
+          display:block;
+          flex:1 1 0;
+          min-width:0;
+          margin-top:0
+        }
+        .features-bottom-row>hui-card-features.feature-icon-only {
+          flex:0 0 var(--feature-height,40px)
+        }
+        .features-inline-row {
+          display:flex;
+          align-items:stretch;
+          gap:4px;
+          margin-top:8px;
+          min-width:0
+        }
+        .features-inline-row>hui-card-features {
+          display:block;
+          flex:1 1 0;
+          min-width:0
+        }
+        .features-inline-row>hui-card-features.feature-icon-only {
+          flex:0 0 var(--feature-height,40px)
+        }
+        .top.hide-status .status,.top.hide-temps .temps,.top.hide-next .next {
+          display:none
+        }
+        .state-icon img {
+          width:100%;
+          height:100%;
+          object-fit:cover;
+          border-radius:50%
+        }
+        .status state-display {
+          display:inline;
+          max-width:100%;
+          overflow:hidden;
+          text-overflow:ellipsis;
+          white-space:nowrap
+        }
+        /* Match native ha-control-select / ha-control-number-buttons backgrounds. */
+        .controls {
+          --wiser-control-background:color-mix(in srgb,var(--disabled-color) 20%,transparent)
+        }
+        .controls .modes,.controls>button,.controls>input {
+          background:var(--wiser-control-background)
+        }
+        .controls button:disabled,.controls input:disabled {
+          opacity:1;
+          color:var(--disabled-color);
+          -webkit-text-fill-color:var(--disabled-color)
+        }
+        .controls input[data-field='temperature']:disabled {
+          color:var(--secondary-text-color);
+          -webkit-text-fill-color:var(--secondary-text-color)
+        }
+        .controls .mode.active:disabled {
+          background:var(--disabled-color);
+          color:white;
+          -webkit-text-fill-color:white
+        }
+        .editor-preview .room {
+          padding:8px 4px
+        }
+        .editor-preview .preview-placeholder {
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          gap:6px;
+          min-height:64px;
+          color:var(--secondary-text-color);
+          font-size:12px;
+          text-align:center;
+          overflow-wrap:anywhere
+        }
+        .preview-placeholder ha-icon {
+          flex-shrink:0;
+          --mdc-icon-size:18px
+        }
+        .preview-placeholder span {
+          min-width:0
+        }
+        .editor-preview .room.preview-selected {
+          padding:10px 16px
+        }
+        .editor-preview .preview-row>.room.preview-selected {
+          flex:0 0 var(--preview-room-width,50%);
+          max-width:100%
+        }
+        .editor-preview .preview-row:has(.preview-selected) {
+          align-items:flex-start;
+          flex-wrap:wrap
+        }
       </style><ha-card data-key="card" class="${preview ? "editor-preview" : ""}"><header data-key="header"><div><h2>${escape(this._config.title)}</h2><p>${heating} of ${rooms.filter(room => !isShutter(room)).length} rooms heating${rooms.some(isShutter) ? ` · ${rooms.filter(isShutter).length} shutters` : ""}${unavailable ? ` · ${unavailable} unavailable` : ""}</p></div><button class="off" data-action="all-off" ${this._busy || !canOff ? "disabled" : ""} title="Turn all heating off" aria-label="Turn all heating off"><ha-icon icon="mdi:power"></ha-icon>All off</button></header>
       ${this._error ? `<div data-key="error" class="message error" role="alert">${escape(this._error)}${this._discoveryFailed ? '<button data-action="retry">Retry</button>' : ""}</div>` : ""}
       ${!rooms.length ? `<p data-key="empty" class="message">${this._loading ? "Finding Wiser rooms…" : "No matching Wiser rooms or shutters found."}</p>` : groups.map(group => `${grouped ? `<h3 class="section-title" data-key="heading-${group.key}">${group.title}</h3>` : ""}<div class="rooms ${expandPreview ? "preview-rows" : ""}" data-key="rooms-${group.key}" style="--room-columns:${this._config.room_columns}">${group.rooms.map((room, index) => {
