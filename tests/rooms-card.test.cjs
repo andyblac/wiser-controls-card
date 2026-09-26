@@ -263,7 +263,7 @@ test('selected room sizing is limited to editor preview and never saved', () => 
   assert.match(card.shadowRoot.innerHTML, /class="rooms preview-rows"/);
   assert.match(card.shadowRoot.innerHTML, /data-key="climate.lounge" class="room  preview-selected"/);
   assert.match(card.shadowRoot.innerHTML, /data-key="climate.bedroom" class="room preview-placeholder"/);
-  assert.equal((card.shadowRoot.innerHTML.match(/class="room-content"/g) || []).length, 1);
+  assert.equal((card.shadowRoot.innerHTML.match(/class="room-content(?: [^"]*)?"/g) || []).length, 1);
   card.parentElement = null;
   card._render();
   assert.doesNotMatch(card.shadowRoot.innerHTML, /class="room preview-placeholder"/);
@@ -436,6 +436,45 @@ test('native feature edit callback saves to original room after changing tabs', 
   assert.equal(editor._config.room_options['climate.lounge'], undefined);
 });
 
+test('feature position is configured per room and renders native features inline', () => {
+  const {card, Editor} = setup();
+  const editor = new Editor(); editor._hass = card._hass; editor._entries = card._entries;
+  editor.setConfig({}); editor._selectRoom('climate.bedroom');
+  assert.equal(editor._featurePositionForm.data.features_position, 'bottom');
+  editor._featurePositionForm.listeners['value-changed']({stopPropagation(){},detail:{value:{features_position:'inline'}}});
+  assert.equal(editor.lastEvent.detail.config.room_options['climate.bedroom'].features_position, 'inline');
+  const nativeFeatures = [{type:'target-temperature'},{type:'climate-hvac-modes'},{type:'custom:wiser-next-schedule-feature'}];
+  card.setConfig({entities:['climate.bedroom'],room_options:{'climate.bedroom':{features_position:'inline',native_features:nativeFeatures}}});
+  assert.match(card.shadowRoot.innerHTML, /class="room-content"/);
+  assert.doesNotMatch(card.shadowRoot.innerHTML, /class="room-content features-inline"/);
+  assert.match(card.shadowRoot.innerHTML, /class="features-inline-row"/);
+  assert.equal((card.shadowRoot.innerHTML.match(/class="features-inline(?: |")/g) || []).length, 3);
+  assert.match(card.shadowRoot.innerHTML, /class="features-inline"[^>]*data-room-features="climate.bedroom"/);
+  assert.match(card.shadowRoot.innerHTML, /class="features-inline feature-icon-only"/);
+  const host = {dataset:{roomFeatures:'climate.bedroom',featureIndex:'1'}};
+  card.shadowRoot.querySelectorAll = selector => selector === 'hui-card-features' ? [host] : [];
+  card._syncNativeFeatures();
+  assert.equal(host.columns, 1);
+  assert.equal(host.features.length, 1);
+  assert.equal(host.features[0].type, 'climate-hvac-modes');
+  assert.throws(() => card.setConfig({room_options:{'climate.bedroom':{features_position:'sideways'}}}));
+});
+
+test('bottom feature position attaches Next schedule to its previous feature row', () => {
+  const {card} = setup();
+  const nativeFeatures = [{type:'climate-hvac-modes'},{type:'custom:wiser-next-schedule-feature'},{type:'target-temperature'}];
+  card.setConfig({entities:['climate.bedroom'],room_options:{'climate.bedroom':{features_position:'bottom',native_features:nativeFeatures}}});
+  assert.equal((card.shadowRoot.innerHTML.match(/class="features-bottom(?: |")/g) || []).length, 3);
+  assert.equal((card.shadowRoot.innerHTML.match(/class="features-bottom-row"/g) || []).length, 1);
+  assert.match(card.shadowRoot.innerHTML, /class="features-bottom-row">.*data-feature-index="0".*data-feature-index="1".*<\/div><hui-card-features[^>]*data-feature-index="2"/);
+  const host = {dataset:{roomFeatures:'climate.bedroom',featureIndex:'1'}};
+  card.shadowRoot.querySelectorAll = selector => selector === 'hui-card-features' ? [host] : [];
+  card._syncNativeFeatures();
+  assert.equal(host.columns, 1);
+  assert.equal(host.features.length, 1);
+  assert.equal(host.features[0].type, 'custom:wiser-next-schedule-feature');
+});
+
 test('legacy features migrate for heating and shutters without losing empty lists', () => {
   const {card, Editor} = setup(); addShutter(card);
   const editor = new Editor(); editor._hass = card._hass; editor._entries = card._entries;
@@ -478,6 +517,27 @@ test('Secondary status uses native state display and entity-specific editor fiel
   assert.equal(entry.configurable, true);
   assert.equal(entry.isSupported(card._hass,{entity_id:'climate.bedroom'}), true);
   assert.equal(entry.isSupported(card._hass,{entity_id:'cover.office'}), false);
+});
+
+test('Next schedule is an icon feature that advances the schedule', () => {
+  const {card, calls, elements, states, window} = setup();
+  Object.assign(states['climate.bedroom'].attributes, {schedule_id:1,preset_modes:['Advance Schedule'],next_schedule_change:'Sat 21:30',next_schedule_temp:17.5,schedule_name:'Evening'});
+  const Feature = elements['wiser-next-schedule-feature'];
+  const feature = new Feature();
+  feature.setConfig({type:'custom:wiser-next-schedule-feature'});
+  feature.context = {entity_id:'climate.bedroom'};
+  feature.hass = card._hass;
+  assert.equal(feature._icon.icon, 'mdi:calendar-arrow-right');
+  assert.equal(feature._button.disabled, false);
+  feature._button.listeners.click({stopPropagation(){}});
+  assert.equal(calls[0][1], 'set_preset_mode');
+  assert.equal(calls[0][2].preset_mode, 'Advance Schedule');
+  const entry = window.customCardFeatures.find(f => f.type === 'wiser-next-schedule-feature');
+  assert.equal(entry.name, 'Next schedule');
+  assert.equal(entry.configurable, false);
+  card.setConfig({entities:['climate.bedroom'],room_options:{'climate.bedroom':{native_features:[{type:'custom:wiser-next-schedule-feature'}]}}});
+  assert.match(card.shadowRoot.innerHTML, /<hui-card-features /);
+  assert.match(card.shadowRoot.innerHTML, /Next Sat 21:30 · 17.5°C/);
 });
 
 test('Secondary status renders under identity only when configured and not as bottom feature', () => {

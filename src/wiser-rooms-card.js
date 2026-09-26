@@ -117,6 +117,7 @@
           if (!/^(climate|cover)\./.test(id) || !options || typeof options !== "object" || Array.isArray(options)) throw new Error("Invalid room options");
           if (options.native_features !== undefined && !validNativeFeatures(options.native_features)) throw new Error("Invalid room native_features");
           if (options.features !== undefined && (!Array.isArray(options.features) || options.features.some(value => !FEATURES.includes(value)))) throw new Error("Invalid room features");
+          if (options.features_position !== undefined && !["bottom", "inline"].includes(options.features_position)) throw new Error("Invalid room features_position");
           if (options.temperature_focus !== undefined && !["current", "target"].includes(options.temperature_focus)) throw new Error("Invalid room temperature emphasis");
         }
       }
@@ -239,8 +240,19 @@
       return this._secondaryFeatures(room).map((_, index) => `<wiser-secondary-status-feature data-key="secondary-${index}" data-secondary-room="${escape(room.entity_id)}" data-secondary-index="${index}"></wiser-secondary-status-feature>`).join("");
     }
     _nativeMarkup(room) {
-      return nativeFeatures(roomConfig(this._config, room.entity_id), room.entity_id).some(feature => !isSecondaryFeature(feature))
-        ? `<hui-card-features data-key="features-${escape(room.entity_id)}" data-room-features="${escape(room.entity_id)}" style="margin-top:8px;--feature-height:40px"></hui-card-features>` : "";
+      const position = roomConfig(this._config, room.entity_id).features_position || "bottom";
+      const list = nativeFeatures(roomConfig(this._config, room.entity_id), room.entity_id).filter(feature => !isHeaderFeature(feature));
+      if (!list.length) return "";
+      const host = (feature, index) => `<hui-card-features class="features-${position}${feature.type === `custom:${NEXT_SCHEDULE_FEATURE}` ? " feature-icon-only" : ""}" data-key="features-${escape(room.entity_id)}-${index}" data-room-features="${escape(room.entity_id)}" data-feature-index="${index}" style="--feature-height:40px"></hui-card-features>`;
+      if (position === "inline") return `<div class="features-inline-row">${list.map(host).join("")}</div>`;
+      const rows = [];
+      list.forEach((feature, index) => {
+        if (feature.type === `custom:${NEXT_SCHEDULE_FEATURE}` && rows.length) rows.at(-1).push([feature, index]);
+        else rows.push([[feature, index]]);
+      });
+      return rows.map(row => row.length > 1
+        ? `<div class="features-bottom-row">${row.map(([feature, index]) => host(feature, index)).join("")}</div>`
+        : host(row[0][0], row[0][1])).join("");
     }
     _syncNativeFeatures() {
       for (const display of this.shadowRoot.querySelectorAll?.("state-display[data-room-status]") || []) {
@@ -260,10 +272,13 @@
       }
       for (const element of this.shadowRoot.querySelectorAll?.("hui-card-features") || []) {
         const id = element.dataset.roomFeatures;
-        const config = nativeFeatures(roomConfig(this._config, id), id).filter(feature => !isSecondaryFeature(feature));
+        const allFeatures = nativeFeatures(roomConfig(this._config, id), id).filter(feature => !isHeaderFeature(feature));
+        const featureIndex = element.dataset.featureIndex;
+        const config = featureIndex === undefined ? allFeatures : allFeatures.slice(Number(featureIndex), Number(featureIndex) + 1);
         element.hass = this._hass;
         element.context = {entity_id:id};
         element.stateObj = this._hass.states[id];
+        element.columns = 1;
         if (element._wiserConfig !== JSON.stringify(config)) {
           element.features = config;
           element._wiserConfig = JSON.stringify(config);
@@ -390,6 +405,13 @@
       .secondary-primary-line .status{flex:0 0 auto;margin:0;line-height:18px}
       .secondary-primary-line .next{flex:1 1 auto;min-width:0;max-width:none;margin:0;line-height:18px;white-space:normal;overflow:visible;text-overflow:clip;text-align:right}
       .secondary-layout wiser-secondary-status-feature{min-width:0;line-height:16px}
+      hui-card-features.features-bottom{display:block;margin-top:8px}
+      .features-bottom-row{display:flex;align-items:stretch;gap:4px;margin-top:8px;min-width:0}
+      .features-bottom-row>hui-card-features{display:block;flex:1 1 0;min-width:0;margin-top:0}
+      .features-bottom-row>hui-card-features.feature-icon-only{flex:0 0 var(--feature-height,40px)}
+      .features-inline-row{display:flex;align-items:stretch;gap:4px;margin-top:8px;min-width:0}
+      .features-inline-row>hui-card-features{display:block;flex:1 1 0;min-width:0}
+      .features-inline-row>hui-card-features.feature-icon-only{flex:0 0 var(--feature-height,40px)}
       .top.hide-status .status,.top.hide-temps .temps,.top.hide-next .next{display:none}
       .state-icon img{width:100%;height:100%;object-fit:cover;border-radius:50%}.status state-display{display:inline;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       /* Match native ha-control-select / ha-control-number-buttons backgrounds. */
@@ -459,7 +481,9 @@
     }
   }
   const SECONDARY_STATUS_FEATURE = "wiser-secondary-status-feature";
+  const NEXT_SCHEDULE_FEATURE = "wiser-next-schedule-feature";
   const isSecondaryFeature = feature => feature.type === `custom:${SECONDARY_STATUS_FEATURE}`;
+  const isHeaderFeature = feature => isSecondaryFeature(feature);
   class WiserSecondaryStatusFeature extends HTMLElement {
     constructor() {
       super();
@@ -526,11 +550,50 @@
       }
     }
   }
+  class WiserNextScheduleFeature extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({mode:"open"});
+      const style = document.createElement("style");
+      style.textContent = `:host{display:block;height:var(--feature-height,42px);min-width:0}ha-control-button{display:block;width:100%;height:100%;--control-button-border-radius:var(--feature-border-radius,12px);--control-button-background-color:var(--control-number-buttons-background-color,var(--disabled-color));--control-button-background-opacity:var(--control-number-buttons-background-opacity,.2);--disabled-text-color:var(--secondary-text-color);--mdc-icon-size:22px}`;
+      this._button = document.createElement("ha-control-button");
+      this._icon = document.createElement("ha-icon");
+      this._icon.icon = "mdi:calendar-arrow-right";
+      this._button.append(this._icon);
+      this._button.addEventListener("click", event => {
+        event.stopPropagation();
+        const id = this._config?.entity || this._context?.entity_id || this._stateObj?.entity_id;
+        const state = this._hass?.states[id];
+        if (state && !this._button.disabled) this._hass.callService("climate", "set_preset_mode", {entity_id:id, preset_mode:"Advance Schedule"});
+      });
+      this.shadowRoot.append(style, this._button);
+    }
+    static getStubConfig() { return {type:`custom:${NEXT_SCHEDULE_FEATURE}`}; }
+    setConfig(config) { this._config = {...config}; this._render(); }
+    set hass(value) { this._hass = value; this._render(); }
+    set context(value) { this._context = value; this._render(); }
+    set stateObj(value) { this._stateObj = value; this._render(); }
+    _render() {
+      if (!this._hass || !this._config) return;
+      const id = this._config.entity || this._context?.entity_id || this._stateObj?.entity_id;
+      const state = this._hass.states[id];
+      const attributes = state?.attributes || {};
+      const enabled = Boolean(state && state.state === "auto" && attributes.schedule_id && attributes.preset_modes?.includes("Advance Schedule"));
+      this._button.disabled = !enabled;
+      this._button.title = enabled ? "Advance to next schedule period" : "Advance schedule unavailable";
+      this._button.ariaLabel = this._button.title;
+    }
+  }
   if (!customElements.get(SECONDARY_STATUS_FEATURE)) customElements.define(SECONDARY_STATUS_FEATURE, WiserSecondaryStatusFeature);
   if (!customElements.get("wiser-secondary-status-feature-editor")) customElements.define("wiser-secondary-status-feature-editor", WiserSecondaryStatusFeatureEditor);
+  if (!customElements.get(NEXT_SCHEDULE_FEATURE)) customElements.define(NEXT_SCHEDULE_FEATURE, WiserNextScheduleFeature);
   window.customCardFeatures = window.customCardFeatures || [];
   if (!window.customCardFeatures.some(feature => feature.type === SECONDARY_STATUS_FEATURE)) window.customCardFeatures.push({
     type:SECONDARY_STATUS_FEATURE, name:"Secondary status", configurable:true,
+    isSupported:(hass, context) => Boolean(context?.entity_id?.startsWith("climate.") && hass.states[context.entity_id]),
+  });
+  if (!window.customCardFeatures.some(feature => feature.type === NEXT_SCHEDULE_FEATURE)) window.customCardFeatures.push({
+    type:NEXT_SCHEDULE_FEATURE, name:"Next schedule", configurable:false,
     isSupported:(hass, context) => Boolean(context?.entity_id?.startsWith("climate.") && hass.states[context.entity_id]),
   });
   class WiserRoomsCardEditor extends HTMLElement {
@@ -557,7 +620,17 @@
       this._featureList = document.createElement("div");
       this._featureList.innerHTML = '<ha-expansion-panel outlined><ha-icon slot="leading-icon" icon="mdi:list-box"></ha-icon><h3 slot="header">Features</h3><div class="native-feature-content"></div></ha-expansion-panel>';
       this._nativeEditor = document.createElement("hui-card-features-editor");
-      this._featureList.querySelector?.(".native-feature-content")?.append(this._nativeEditor);
+      this._featurePositionForm = document.createElement("ha-form");
+      this._featurePositionForm.className = "feature-position";
+      this._featurePositionForm.computeLabel = schema => schema.label;
+      this._featurePositionForm.schema = [{name:"features_position",label:"Features position",selector:{select:{mode:"box",options:[
+        {value:"bottom",label:"Bottom"},{value:"inline",label:"Inline"},
+      ]}}}];
+      this._featurePositionForm.addEventListener("value-changed", event => {
+        event.stopPropagation();
+        this._setRoomOptions({features_position:event.detail.value.features_position || "bottom"});
+      });
+      this._featureList.querySelector?.(".native-feature-content")?.append(this._nativeEditor, this._featurePositionForm);
       this._nativeEditor.addEventListener("features-changed", event => {
         event.stopPropagation();
         this._setRoomOptions({native_features:event.detail.features});
@@ -608,7 +681,7 @@
         .room-tools{display:flex;flex-wrap:nowrap;gap:4px;margin-left:auto;flex-shrink:0}
         .room-tools button{display:flex;align-items:center;justify-content:center;width:34px;height:34px;padding:0;border:1px solid var(--divider-color);border-radius:var(--ha-border-radius-lg,12px);background:var(--secondary-background-color)}
         button:disabled{opacity:.35;cursor:default}ha-icon{--mdc-icon-size:20px;pointer-events:none}
-        ha-expansion-panel{display:block;margin-top:20px}h3{margin:0;font-size:16px;font-weight:500}.native-feature-content{padding:12px}
+        ha-expansion-panel{display:block;margin-top:20px}h3{margin:0;font-size:16px;font-weight:500}.native-feature-content{padding:12px}.feature-position{display:block;margin-top:16px}
       `;
       this.shadowRoot.append(style, this._form, this._typeForm, this._tabs, this._contentPanel, this._featureList, this._message);
       this._form.computeLabel = schema => schema.label || "Title";
@@ -719,6 +792,7 @@
     _renderFeatures() {
       if (!this._selectedRoom) return;
       this._nativeEditor.hass = this._hass;
+      this._featurePositionForm.hass = this._hass;
       this._nativeEditor.context = {entity_id:this._selectedRoom};
       this._nativeEditor.stateObj = this._hass.states[this._selectedRoom];
       const list = nativeFeatures(roomConfig(this._config, this._selectedRoom), this._selectedRoom);
@@ -727,6 +801,8 @@
         this._nativeEditor.features = list;
         this._nativeEditorSignature = signature;
       }
+      const positionData = {features_position:roomConfig(this._config, this._selectedRoom).features_position || "bottom"};
+      if (JSON.stringify(positionData) !== JSON.stringify(this._featurePositionForm.data)) this._featurePositionForm.data = positionData;
     }
     _renderTabs(rooms) {
       if (!rooms.some(room => room.entity_id === this._selectedRoom)) this._selectedRoom = rooms[0]?.entity_id;

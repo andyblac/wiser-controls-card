@@ -109,6 +109,7 @@ the selected room. Feature configurations are stored in `room_options` as
 room_options:
   climate.lounge:
     temperature_focus: target
+    features_position: inline
     native_features:
       - type: target-temperature
       - type: climate-hvac-modes
@@ -123,6 +124,11 @@ still hides controls. Advance schedule becomes the native climate preset feature
 configured with `preset_modes: [Advance Schedule]`. Native features perform their
 normal Home Assistant actions; Wiser-specific mode override cancellation used by
 the earlier custom buttons is not added to native controls.
+
+Each room also has the native-style **Features position** setting. **Bottom** keeps
+features stacked below the room header; **Inline** places all configured feature
+controls on one row below the unchanged room header. The setting is stored per room
+as `features_position`.
 
 The native frontend components are loaded through Home Assistant's Tile card.
 Their availability and compatible features depend on the installed Home Assistant
@@ -146,7 +152,12 @@ native_features:
   - type: custom:wiser-secondary-status-feature
     entity: climate.lounge
     state_content: [current_temperature, hvac_action]
+  - type: custom:wiser-next-schedule-feature
 ```
+
+**Next schedule** is also registered in Home Assistant's **Add feature** menu. It
+adds a calendar icon that advances the room to its next schedule period. The normal
+next-schedule text stays in the Wiser room header.
 
 ### Room content
 
