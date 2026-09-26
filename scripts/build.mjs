@@ -1,0 +1,12 @@
+import {readFileSync, mkdirSync, writeFileSync} from "node:fs";
+import {createHash} from "node:crypto";
+const root = new URL("../", import.meta.url);
+const pkg = JSON.parse(readFileSync(new URL("package.json", root), "utf8"));
+const source = readFileSync(new URL("src/wiser-rooms-card.js", root), "utf8");
+const dev = process.argv.includes("--dev");
+const tag = process.env.RELEASE_TAG?.replace(/^v/, "");
+if (tag && !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(tag)) throw Error("Invalid release tag");
+const version = dev ? `${pkg.version}-dev.${createHash("sha256").update(source).digest("hex").slice(0, 12)}` : tag || pkg.version;
+mkdirSync(new URL("dist/", root), {recursive:true});
+writeFileSync(new URL("dist/wiser-rooms-card.js", root), `/*! WISER-CARD-VERSION wiser-rooms-card ${version} */\n${source}`);
+console.log(`Built wiser-rooms-card ${version}`);
