@@ -170,8 +170,8 @@
       const options = roomConfig(this._config, room.entity_id);
       return `<ha-icon icon="${escape(options.icon || fallback)}"></ha-icon>`;
     }
-    _contentStatus(room, fallback) {
-      return `<state-display data-room-status="${escape(room.entity_id)}">${escape(fallback)}</state-display>`;
+    _contentStatus(room) {
+      return `<state-display data-room-status="${escape(room.entity_id)}"></state-display>`;
     }
     _defaultStateContent(id) {
       return id.startsWith("cover.") ? ["state"] : ["hvac_action"];
@@ -369,7 +369,9 @@
               if (!preserve(attribute.name) && current.getAttribute(attribute.name) !== attribute.value) current.setAttribute(attribute.name, attribute.value);
             }
             if (current.localName === "input" && !editing && current.value !== next.value) current.value = next.value;
-            sync(current, next);
+            // state-display owns its light DOM. Recursing here replaces its
+            // rendered state_content with the static fallback on every update.
+            if (current.localName !== "state-display") sync(current, next);
           }
           current = current.nextSibling;
         }

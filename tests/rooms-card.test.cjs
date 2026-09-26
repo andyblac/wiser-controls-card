@@ -632,12 +632,14 @@ test('editor preview uses the measured dashboard room width with a readable fall
 test('status renders exactly the configured state content with useful defaults', () => {
   const {card} = setup();
   card.setConfig({entities:['climate.bedroom']});
-  assert.match(card.shadowRoot.innerHTML, /<span class="status"><state-display data-room-status="climate.bedroom">Heating<\/state-display><\/span>/);
+  assert.match(card.shadowRoot.innerHTML, /<span class="status"><state-display data-room-status="climate.bedroom"><\/state-display><\/span>/);
   const display = {dataset:{roomStatus:'climate.bedroom'}};
   card.shadowRoot.querySelectorAll = selector => selector === 'state-display[data-room-status]' ? [display] : [];
   card._syncNativeFeatures();
   assert.equal(display.content.join(','), 'hvac_action');
-  card.setConfig({entities:['climate.bedroom'],room_options:{'climate.bedroom':{state_content:['hvac_action']}}});
+  card.setConfig({entities:['climate.bedroom'],room_options:{'climate.bedroom':{state_content:['hvac_action','state']}}});
   card._syncNativeFeatures();
-  assert.equal(display.content.join(','), 'hvac_action');
+  assert.equal(display.content.join(','), 'hvac_action,state');
+  const source = fs.readFileSync(path.join(__dirname, '../src/wiser-rooms-card.js'), 'utf8');
+  assert.match(source, /current\.localName !== "state-display"/);
 });
