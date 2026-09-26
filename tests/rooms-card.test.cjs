@@ -485,7 +485,7 @@ test('Secondary status renders under identity only when configured and not as bo
   card.setConfig({entities:['climate.bedroom'], room_options:{'climate.bedroom':{native_features:[{type:'custom:wiser-secondary-status-feature'}]}}});
   let html = card.shadowRoot.innerHTML;
   assert.match(html, /class="top has-secondary[^"]*"/);
-  assert.match(html, /<span class="status"><state-display[^>]*>[^<]*<\/state-display><\/span><wiser-secondary-status-feature/);
+  assert.match(html, /class="secondary-primary-line"><span class="status"><state-display[^>]*>[^<]*<\/state-display><\/span><div class="next"[^>]*>[^<]*<\/div><\/div><wiser-secondary-status-feature/);
   assert.doesNotMatch(html, /<hui-card-features /);
   const statusHost = {dataset:{secondaryRoom:'climate.bedroom',secondaryIndex:'0'},setConfig(config){this.config=config;}};
   card.shadowRoot.querySelectorAll = selector => selector.startsWith('wiser-secondary') ? [statusHost] : [];
@@ -496,6 +496,14 @@ test('Secondary status renders under identity only when configured and not as bo
   card.setConfig({entities:['climate.bedroom'],native_features:[]});
   html = card.shadowRoot.innerHTML;
   assert.doesNotMatch(html, /class="top has-secondary"|<wiser-secondary-status-feature/);
+});
+
+test('Secondary status keeps next schedule beside the primary status', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/wiser-rooms-card.js'), 'utf8');
+  assert.match(source, /class="secondary-primary-line"><span class="status">.*<div class="next"/);
+  assert.match(source, /\.secondary-heading-line,\.secondary-primary-line\{display:flex;align-items:baseline;justify-content:space-between;gap:10px;min-width:0\}/);
+  assert.match(source, /\.secondary-primary-line \.next\{flex:1 1 auto;min-width:0;max-width:none;margin:0;line-height:18px;white-space:normal;overflow:visible;text-overflow:clip;text-align:right\}/);
+  assert.match(source, /\.secondary-layout wiser-secondary-status-feature\{min-width:0;line-height:16px\}/);
 });
 
 test('Content options persist per room and change header rendering', () => {

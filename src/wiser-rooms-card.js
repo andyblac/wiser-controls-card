@@ -382,13 +382,14 @@
 
         @container (max-width: 340px){header{padding:12px}.room{padding:10px 12px}.top{column-gap:8px;row-gap:0}.top .temps{font-size:20px}.top .temps small{font-size:16px}.off{padding:8px 10px;font-size:14px}}
         @container room (max-width: 210px){.top .temps{font-size:18px}.top .temps small{font-size:15px}.controls{flex-wrap:wrap}.modes{flex-basis:100%;min-width:0}.controls .mode{min-width:0}.controls input{flex:1 1 64px}}
-      .top.has-secondary .identity{display:flex;flex-direction:column;gap:0;grid-column:2 / -1;grid-row:1;min-width:0;align-self:start}
-      .top.has-secondary .name{flex:none;line-height:20px}.top.has-secondary .status{line-height:16px}
-      .top.has-secondary wiser-secondary-status-feature{min-width:0;line-height:16px}
-      .top.has-secondary .temps{grid-column:2 / -1;grid-row:2}.top.has-secondary .next{grid-column:2 / -1;grid-row:3}
-      .top.has-secondary.inline-readings .identity{grid-column:2;grid-row:1 / 3}
-      .top.has-secondary.inline-readings .temps{grid-column:3;grid-row:1}
-      .top.has-secondary.inline-readings .next{grid-column:3;grid-row:2;max-width:100%}
+      .top.has-secondary{grid-template-columns:38px minmax(0,1fr);align-items:start}
+      .top.has-secondary .state-icon{grid-column:1;grid-row:1 / 4}
+      .secondary-layout{grid-column:2;min-width:0}
+      .secondary-heading-line,.secondary-primary-line{display:flex;align-items:baseline;justify-content:space-between;gap:10px;min-width:0}
+      .secondary-heading-line .name{min-width:0;line-height:20px}.secondary-heading-line .temps{flex:0 0 auto;line-height:24px;text-align:right}
+      .secondary-primary-line .status{flex:0 0 auto;margin:0;line-height:18px}
+      .secondary-primary-line .next{flex:1 1 auto;min-width:0;max-width:none;margin:0;line-height:18px;white-space:normal;overflow:visible;text-overflow:clip;text-align:right}
+      .secondary-layout wiser-secondary-status-feature{min-width:0;line-height:16px}
       .top.hide-status .status,.top.hide-temps .temps,.top.hide-next .next{display:none}
       .state-icon img{width:100%;height:100%;object-fit:cover;border-radius:50%}.status state-display{display:inline;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       /* Match native ha-control-select / ha-control-number-buttons backgrounds. */
@@ -430,13 +431,20 @@
         const stateColor = available(room)
           ? `var(--state-climate-${mode}-color,var(--state-climate-${activity}-color,var(--state-${activity}-color,var(--secondary-text-color))))`
           : "var(--state-unavailable-color,var(--disabled-text-color))";
+        const secondary = this._secondaryMarkup(room);
+        const temperatureMarkup = options.temperature_focus === "target"
+          ? `<small>${escape(this._temperature(a.current_temperature))}</small> ${escape(target)}`
+          : `${escape(this._temperature(a.current_temperature))}<small> ${escape(target)}</small>`;
+        const statusMarkup = this._contentStatus(room, status + (a.is_boosted ? " · Boost" : a.is_override ? " · Override" : ""));
+        const headerMarkup = secondary ? `<div class="top has-secondary ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" title="${escape(status)} — open room controls" aria-label="${escape(this._name(room))}: ${status}">${this._contentIcon(room, icon)}</button>
+          <div class="secondary-layout"><div class="secondary-heading-line"><button class="name" data-entity="${id}" title="Open room controls"><strong>${escape(this._name(room))}</strong></button><div class="temps" title="Current ${escape(unit)} → target ${escape(unit)}" aria-label="Current ${escape(this._temperature(a.current_temperature))}; Target ${escape(target)}">${temperatureMarkup}</div></div>
+          <div class="secondary-primary-line"><span class="status">${statusMarkup}</span><div class="next" title="${escape(a.schedule_name || "")}">${escape(next)}</div></div>${secondary}</div></div>`
+          : `<div class="top ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" title="${escape(status)} — open room controls" aria-label="${escape(this._name(room))}: ${status}">${this._contentIcon(room, icon)}</button>
+          <div class="room-heading"><div class="identity"><button class="name" data-entity="${id}" title="Open room controls"><strong>${escape(this._name(room))}</strong></button><span class="status">${statusMarkup}</span></div>
+          <div class="readings"><div class="temps" title="Current ${escape(unit)} → target ${escape(unit)}" aria-label="Current ${escape(this._temperature(a.current_temperature))}; Target ${escape(target)}">${temperatureMarkup}</div>
+          <div class="next" title="${escape(a.schedule_name || "")}">${escape(next)}</div></div></div></div>`;
         return `${rowStart}<section data-key="${id}" class="room ${active ? "heating" : ""} ${preview && this._config[PREVIEW_ROOM] === room.entity_id ? "preview-selected" : ""}" style="--room-state-color:${this._contentColor(room, stateColor)};${featureOrder(options)}"><div class="room-content">
-          <div class="top ${this._secondaryFeatures(room).length ? "has-secondary" : ""} ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" title="${escape(status)} — open room controls" aria-label="${escape(this._name(room))}: ${status}">${this._contentIcon(room, icon)}</button>
-          <div class="room-heading"><div class="identity"><button class="name" data-entity="${id}" title="Open room controls"><strong>${escape(this._name(room))}</strong></button><span class="status">${this._contentStatus(room, status + (a.is_boosted ? " · Boost" : a.is_override ? " · Override" : ""))}</span>${this._secondaryMarkup(room)}</div>
-          <div class="readings"><div class="temps" title="Current ${escape(unit)} → target ${escape(unit)}" aria-label="Current ${escape(this._temperature(a.current_temperature))}; Target ${escape(target)}">${options.temperature_focus === "target"
-            ? `<small>${escape(this._temperature(a.current_temperature))}</small> ${escape(target)}`
-            : `${escape(this._temperature(a.current_temperature))}<small> ${escape(target)}</small>`}</div>
-          <div class="next" title="${escape(a.schedule_name || "")}">${escape(next)}</div></div></div></div>
+          ${headerMarkup}
           ${this._nativeReady || options.native_features ? this._nativeMarkup(room) : features(options).length ? `<div class="controls">${features(options).includes("modes") ? `<div class="modes" role="group" aria-label="${escape(this._name(room))} mode">${["auto", "heat", "off"].filter(mode => a.hvac_modes?.includes(mode)).map(mode => {
             const label = {auto:"Schedule",heat:"Manual",off:"Off"}[mode];
             const modeIcon = {auto:"mdi:thermostat-auto",heat:"mdi:fire",off:"mdi:power"}[mode];
