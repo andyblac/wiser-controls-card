@@ -87,21 +87,22 @@ npm run build:dev
 ```
 
 The bundle is written to `dist/wiser-rooms-card.js`, with metadata in
-`dist/build-info.json`. Development builds use the next patch version followed by
-an incrementing `-dev.N` suffix, such as `0.1.1-dev.1`, and print the cache-busting
-dashboard resource URL. The ignored `.dev-build.json` file stores the local build
-counter; `package.json` remains on the stable release version. A sibling Wiser
-integration repository picks up the bundle automatically when running its
+`dist/build-info.json`. Development builds update `package.json` after a successful
+build and append an incrementing `-dev.N` suffix. A stable `0.1.0` release starts
+`0.1.1-dev.1`; a `0.1.1-beta.1` release starts `0.1.1-beta.2-dev.1`. A sibling
+Wiser integration repository picks up the bundle automatically when running its
 development build.
 
 ## Releases
 
-Run `npm test` and `npm run build` before publishing. Set the stable semantic
-version in `package.json`, then create a matching GitHub release tag such as
-`v0.1.0`. The release workflow rejects mismatched tags, verifies the version
-marker and build metadata, and attaches `wiser-rooms-card.js`. The integration's
-release builds download published assets from this repository. Prerelease
-versions and matching tags such as `0.2.0-beta.1` / `v0.2.0-beta.1` are supported.
+Run `npm test` and `npm run build` before publishing. The release build removes
+the trailing `-dev.N` from `package.json`, so `0.1.1-beta.2-dev.7` becomes
+`0.1.1-beta.2`. Commit that result, then create the matching GitHub release tag.
+Use `npm run build:release` instead to prepare the final stable release;
+`0.1.1-beta.2-dev.7` then becomes `0.1.1`.
+The release workflow rejects mismatched tags, verifies the version marker and
+build metadata, and attaches `wiser-rooms-card.js`. The integration's release
+builds download published assets from this repository.
 
 ## Supported devices
 

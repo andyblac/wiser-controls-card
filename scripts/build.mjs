@@ -9,7 +9,9 @@ const translations = Object.fromEntries(["en-US", "en-GB", "de", "fr"].map(langu
   JSON.parse(readFileSync(new URL(`src/localize/languages/${language}.json`, root), "utf8")),
 ]));
 const dev = process.argv.includes("--dev");
-const build = buildVersion({dev, root:fileURLToPath(root), releaseTag:process.env.RELEASE_TAG});
+const final = process.argv.includes("--release");
+if (dev && final) throw new Error("A build cannot be both development and final release");
+const build = buildVersion({dev, final, root:fileURLToPath(root), releaseTag:process.env.RELEASE_TAG});
 const versionToken = "__WISER_CARD_VERSION__";
 const translationsToken = "__WISER_ROOMS_TRANSLATIONS__";
 if (!source.includes(versionToken)) throw new Error(`Missing ${versionToken} source token`);
