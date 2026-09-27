@@ -29,7 +29,7 @@ function setup() {
   };
   card.setConfig({});
   card._hass = {states, language:'en', config:{unit_system:{temperature:'°C'}}, callService:async (...args) => calls.push(args)};
-  card._entries = Object.keys(states).map(entity_id => ({entity_id, platform:entity_id === 'climate.other' ? 'other' : 'wiser'}));
+  card._entries = Object.keys(states).map(entity_id => ({entity_id, platform:entity_id === 'climate.other' ? 'other' : 'wiser', config_entry_id:entity_id === 'climate.lounge' ? 'hub-b' : 'hub-a'}));
   return {card, calls, states, Editor, elements, window:context.window};
 }
 test('master off excludes hot water, other integrations, unavailable and already off rooms', async () => {
@@ -62,6 +62,28 @@ test('clearing the visual room selection restores automatic heating room discove
   card.setConfig({entities:[]});
   await card._allOff();
   assert.deepEqual(calls.map(call => call[2].entity_id).sort(), ['climate.bedroom','climate.lounge']);
+});
+test('hub selection filters detected rooms and master control', async () => {
+  const {card,calls,Editor} = setup();
+  card.setConfig({hubs:['hub-b']});
+  assert.deepEqual(Array.from(card._rooms(), room => room.entity_id), ['climate.lounge']);
+  await card._allOff();
+  assert.deepEqual(calls.map(call => call[2].entity_id), ['climate.lounge']);
+
+  const editor = new Editor();
+  editor._hass = card._hass;
+  editor._entries = card._entries;
+  editor._hubs = [{entry_id:'hub-a',title:'Downstairs hub'},{entry_id:'hub-b',title:'Upstairs hub'}];
+  editor.setConfig({});
+  assert.equal(editor._hubForm.hidden, false);
+  assert.deepEqual(Array.from(editor._hubForm.schema[0].selector.select.options, option => option.label), ['Downstairs hub','Upstairs hub']);
+  assert.deepEqual(Array.from(editor._hubForm.data.hubs), ['hub-a','hub-b']);
+  editor._hubForm.listeners['value-changed']({stopPropagation(){},detail:{value:{hubs:['hub-a']}}});
+  assert.deepEqual(Array.from(editor._rooms(), room => room.entity_id), ['climate.bedroom','climate.offline']);
+  assert.deepEqual(Array.from(editor.lastEvent.detail.config.hubs), ['hub-a']);
+  editor._hubForm.listeners['value-changed']({stopPropagation(){},detail:{value:{hubs:['hub-a','hub-b']}}});
+  assert.equal(editor.lastEvent.detail.config.hubs, undefined);
+  assert.throws(() => card.setConfig({hubs:'hub-a'}));
 });
 test('temperature and mode edits call the room services', async () => {
   const {card,calls,states} = setup();

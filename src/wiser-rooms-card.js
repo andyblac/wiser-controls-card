@@ -35,6 +35,7 @@
   const isRoom = (entry, state) => entry.platform === "wiser" && !entry.disabled_by && state &&
     (entry.entity_id.startsWith("climate.") && Object.hasOwn(state.attributes, "heating_type") || isShutter(state));
   const matchesType = (state, type = "all") => type === "all" || (type === "shutters" ? isShutter(state) : !isShutter(state));
+  const matchesHub = (entry, hubs) => !hubs?.length || hubs.includes(entry.config_entry_id);
 
 
   const isEditorPreview = element => {
@@ -104,6 +105,9 @@
       if (config.room_order !== undefined && (!Array.isArray(config.room_order) || config.room_order.some(id => typeof id !== "string" || !/^(climate|cover)\./.test(id)))) {
         throw new Error("room_order must be a list of climate or cover entity IDs");
       }
+      if (config.hubs !== undefined && (!Array.isArray(config.hubs) || config.hubs.some(id => typeof id !== "string" || !id.length))) {
+        throw new Error("hubs must be a list of Wiser config entry IDs");
+      }
       if (config.room_columns !== undefined && (!Number.isInteger(config.room_columns) || config.room_columns < 1 || config.room_columns > 6)) {
         throw new Error("room_columns must be a whole number from 1 to 6");
       }
@@ -153,7 +157,7 @@
     }
     _rooms() {
       if (!this._hass || !this._entries) return [];
-      const rooms = this._entries.filter(entry => isRoom(entry, this._hass.states[entry.entity_id]) && matchesType(this._hass.states[entry.entity_id], this._config?.room_type) && !this._config?.excluded_entities?.includes(entry.entity_id)).map(entry => this._hass.states[entry.entity_id]);
+      const rooms = this._entries.filter(entry => isRoom(entry, this._hass.states[entry.entity_id]) && matchesHub(entry, this._config?.hubs) && matchesType(this._hass.states[entry.entity_id], this._config?.room_type) && !this._config?.excluded_entities?.includes(entry.entity_id)).map(entry => this._hass.states[entry.entity_id]);
       if (this._config?.entities?.length) return this._config.entities.map(id => rooms.find(room => room.entity_id === id)).filter(Boolean);
       return orderRooms(rooms, this._config?.room_order);
     }
@@ -1073,6 +1077,19 @@
     constructor() {
       super();
       this.attachShadow({mode: "open"});
+      this._hubForm = document.createElement("ha-form");
+      this._hubForm.className = "hubs";
+      this._hubForm.computeLabel = schema => schema.label;
+      this._hubForm.addEventListener("value-changed", event => {
+        event.stopPropagation();
+        const hubs = event.detail.value.hubs || [];
+        const detected = this._detectedHubs().map(hub => hub.value);
+        this._config = {...this._config};
+        if (hubs.length && (hubs.length !== detected.length || detected.some(id => !hubs.includes(id)))) this._config.hubs = hubs;
+        else delete this._config.hubs;
+        this._render();
+        this._dispatchConfig();
+      });
       this._form = document.createElement("ha-form");
       this._form.className = "settings";
       this._typeForm = document.createElement("ha-form");
@@ -1143,6 +1160,7 @@
       });
       const style = document.createElement("style");
       style.textContent = `
+        ha-form.hubs{display:block;margin-bottom:16px}
         ha-form.settings::part(root){display:grid;grid-template-columns:minmax(0,1fr) 130px;column-gap:8px;align-items:start}
         .room-tab-bar{display:flex;flex-direction:row;align-items:center;gap:6px;border-bottom:1px solid var(--divider-color);padding-bottom:2px;margin:20px 0 12px}
         .room-tabs{display:flex;flex-wrap:nowrap;gap:4px;flex:1;min-width:0;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:thin}
@@ -1156,7 +1174,7 @@
         button:disabled{opacity:.35;cursor:default}ha-icon{--mdc-icon-size:20px;pointer-events:none}
         ha-expansion-panel{display:block;margin-top:20px}h3{margin:0;font-size:16px;font-weight:500}.native-feature-content{padding:12px}.feature-position{display:block;margin-top:16px}
       `;
-      this.shadowRoot.append(style, this._form, this._typeForm, this._tabs, this._contentPanel, this._featureList, this._message);
+      this.shadowRoot.append(style, this._hubForm, this._form, this._typeForm, this._tabs, this._contentPanel, this._featureList, this._message);
       this._form.computeLabel = schema => schema.label || "Title";
       this._form.addEventListener("value-changed", event => this._changed(event));
     }
@@ -1173,6 +1191,12 @@
       this._loading = true;
       try {
         this._entries = await this._hass.callWS({type: "config/entity_registry/list"});
+        try {
+          const entries = await this._hass.callWS({type: "config_entries/get", domain: "wiser"});
+          this._hubs = Array.isArray(entries) ? entries : [];
+        } catch (_) {
+          this._hubs = [];
+        }
       } catch (_) {
         this._failed = true;
       } finally {
@@ -1182,8 +1206,13 @@
     }
     _rooms() {
       if (!this._hass || !this._entries) return [];
-      return orderRooms(this._entries.filter(entry => isRoom(entry, this._hass.states[entry.entity_id]) && matchesType(this._hass.states[entry.entity_id], this._config?.room_type))
+      return orderRooms(this._entries.filter(entry => isRoom(entry, this._hass.states[entry.entity_id]) && matchesHub(entry, this._config?.hubs) && matchesType(this._hass.states[entry.entity_id], this._config?.room_type))
         .map(entry => this._hass.states[entry.entity_id]), this._config?.room_order || this._config?.entities);
+    }
+    _detectedHubs() {
+      const titles = new Map((this._hubs || []).map(entry => [entry.entry_id, entry.title || entry.entry_id]));
+      return [...new Set((this._entries || []).filter(entry => entry.platform === "wiser" && entry.config_entry_id).map(entry => entry.config_entry_id))]
+        .map(id => ({value:id, label:titles.get(id) || id}));
     }
     _name(room) { return room.attributes.name || room.attributes.friendly_name || room.entity_id; }
     _shown(id) {
@@ -1193,6 +1222,14 @@
     _render() {
       if (!this._config || !this._hass) return;
       const rooms = this._rooms();
+      const hubs = this._detectedHubs();
+      this._hubForm.hass = this._hass;
+      const hubSchema = [{name:"hubs",label:"Hubs",selector:{select:{multiple:true,mode:"dropdown",options:hubs}}}];
+      const hubSignature = JSON.stringify(hubSchema);
+      if (hubSignature !== this._hubSchemaSignature) { this._hubForm.schema = hubSchema; this._hubSchemaSignature = hubSignature; }
+      const hubData = {hubs:this._config.hubs || hubs.map(hub => hub.value)};
+      if (JSON.stringify(hubData) !== JSON.stringify(this._hubForm.data)) this._hubForm.data = hubData;
+      this._hubForm.hidden = !hubs.length;
       this._form.hass = this._hass;
       this._typeForm.hass = this._hass;
       const schema = [

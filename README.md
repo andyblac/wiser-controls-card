@@ -32,7 +32,9 @@ Auto/Schedule for that room. Off uses Wiser's normal off mode, including its own
 frost protection; it does not disconnect power to the heating system.
 
 Use the card's visual editor to change its title and configure detected Wiser
-rooms and shutters using a separate tab for each detected entity. Select a tab and use the
+rooms and shutters. Use the **Hubs** selector at the top to choose any combination
+of detected hubs; all detected hubs are selected by default. Each room or shutter
+has a separate tab. Select a tab and use the
 left/right arrows to reorder it, or the eye button to hide/show it. Hidden rooms
 remain available in the editor. All rooms are shown by default,
 including newly discovered rooms. These selections change card visibility only;
@@ -54,6 +56,15 @@ entities:
 ```
 
 With an explicit list, the master button only affects those rooms.
+
+Hub selection can also be configured in YAML using the Wiser config entry IDs:
+
+```yaml
+hubs:
+  - 0123456789abcdef0123456789abcdef
+```
+
+Omit `hubs` to include all current and newly detected Wiser hubs.
 
 The integration automatically registers the card for storage-mode dashboards.
 After installing the updated integration, restart Home Assistant and refresh your
