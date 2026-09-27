@@ -22,7 +22,9 @@
     return resolved;
   };
   const masterMode = config => config.room_configuration === "master";
-  const roomConfig = (config, id) => ({...config, ...(masterMode(config) ? config.master_options : config.room_options?.[id])});
+  const typeForEntity = id => id?.startsWith("cover.") ? "shutters" : id?.startsWith("light.") ? "lights" : id?.startsWith("switch.") ? "plugs" : "heating";
+  const masterOptions = (config, id) => config.master_options_by_type?.[typeForEntity(id)] ?? config.master_options;
+  const roomConfig = (config, id) => ({...config, ...(masterMode(config) ? masterOptions(config, id) : config.room_options?.[id])});
   const featureOrder = config => FEATURES.map(value => `--feature-${value}:${features(config).indexOf(value)}`).join(";");
   const features = config => config.features ?? (config.show_controls === false ? [] : FEATURES);
   const nativeFeatures = (config, id, state) => {
@@ -68,6 +70,28 @@
   const isLight = state => state?.entity_id.startsWith("light.") && Object.hasOwn(state.attributes, "product_type");
   const isPlug = state => state?.entity_id.startsWith("switch.") && Object.hasOwn(state.attributes, "output_state") && Object.hasOwn(state.attributes, "schedule_id");
   const deviceType = state => isShutter(state) ? "shutters" : isLight(state) ? "lights" : isPlug(state) ? "plugs" : "heating";
+  const supportsNativeFeature = (feature, id) => {
+    const type = feature?.type || "";
+    if (isSecondaryFeature(feature)) return true;
+    if (isOverrideStatusFeature(feature) || type === `custom:${NEXT_SCHEDULE_FEATURE}`) return id.startsWith("climate.");
+    if (type === "toggle") return id.startsWith("light.") || id.startsWith("switch.");
+    if (type.startsWith("light-")) return id.startsWith("light.");
+    if (type.startsWith("cover-")) return id.startsWith("cover.");
+    if (type.startsWith("climate-") || type === "target-temperature") return id.startsWith("climate.");
+    return true;
+  };
+  const configuredNativeFeatures = (config, id, state) => {
+    const options = roomConfig(config, id);
+    const configured = nativeFeatures(options, id, state);
+    if (!masterMode(config) || !Array.isArray(options.native_features)) return configured;
+    const headers = configured.filter(feature => isHeaderFeature(feature) && supportsNativeFeature(feature, id));
+    const controls = configured.filter(feature => !isHeaderFeature(feature));
+    const compatible = controls.filter(feature => supportsNativeFeature(feature, id));
+    if (!controls.length || compatible.length) return orderNativeFeatures([...headers, ...compatible]);
+    const defaults = nativeFeatures({...options,native_features:undefined}, id, state)
+      .filter(feature => !isHeaderFeature(feature) && supportsNativeFeature(feature, id));
+    return orderNativeFeatures([...headers, ...defaults]);
+  };
   const isHeatingOverride = room => deviceType(room) === "heating" && available(room) && Boolean(room.attributes.is_override || room.attributes.is_boosted);
   const overrideEnd = room => {
     const value = room.attributes.boost_end || room.attributes.next_schedule_datetime;
@@ -325,7 +349,7 @@
       finally { this._busy = false; this._render(); }
     }
     _headerFeatures(room) {
-      return nativeFeatures(roomConfig(this._config, room.entity_id), room.entity_id, room).filter(isHeaderFeature)
+      return configuredNativeFeatures(this._config, room.entity_id, room).filter(isHeaderFeature)
         .map(feature => featureForRoom(feature, room.entity_id));
     }
     _secondaryMarkup(room) {
@@ -336,7 +360,7 @@
     }
     _nativeMarkup(room) {
       const position = roomConfig(this._config, room.entity_id).features_position || "bottom";
-      const list = nativeFeatures(roomConfig(this._config, room.entity_id), room.entity_id, room).filter(feature => !isHeaderFeature(feature));
+      const list = configuredNativeFeatures(this._config, room.entity_id, room).filter(feature => !isHeaderFeature(feature));
       if (!list.length) return "";
       const host = (feature, index) => `<hui-card-features class="features-${position}${feature.type === `custom:${NEXT_SCHEDULE_FEATURE}` ? " feature-icon-only" : ""}" data-key="features-${escape(room.entity_id)}-${index}" data-room-features="${escape(room.entity_id)}" data-feature-index="${index}" style="--feature-height:40px"></hui-card-features>`;
       if (position === "inline") return `<div class="features-inline-row">${list.map(host).join("")}</div>`;
@@ -371,7 +395,7 @@
       }
       for (const element of this.shadowRoot.querySelectorAll?.("hui-card-features") || []) {
         const id = element.dataset.roomFeatures;
-        const allFeatures = nativeFeatures(roomConfig(this._config, id), id, this._hass.states[id]).filter(feature => !isHeaderFeature(feature));
+        const allFeatures = configuredNativeFeatures(this._config, id, this._hass.states[id]).filter(feature => !isHeaderFeature(feature));
         const featureIndex = element.dataset.featureIndex;
         const config = featureIndex === undefined ? allFeatures : allFeatures.slice(Number(featureIndex), Number(featureIndex) + 1);
         element.hass = this._hass;
@@ -391,10 +415,16 @@
       const disabled = this._busy || !available(room);
       const position = typeof a.current_position === "number" ? a.current_position : null;
       const color = available(room) ? "var(--state-cover-active-color,var(--primary-color))" : "var(--disabled-text-color)";
+      const secondary = this._secondaryMarkup(room);
+      const reading = position === null ? "—" : `${position}%`;
+      const header = secondary ? `<div class="top has-secondary ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" aria-label="Open shutter details">${this._contentIcon(room, room.state === "closed" ? "mdi:window-shutter" : "mdi:window-shutter-open")}</button>
+        <div class="secondary-layout"><div class="secondary-heading-line"><button class="name" data-entity="${id}" data-interaction="card"><strong>${escape(this._name(room))}</strong></button><div class="temps">${reading}</div></div>
+        <div class="secondary-primary-line"><span class="status">${this._contentStatus(room, status)}</span>${options.hide_state ? secondary : ""}<div class="next">${escape(a.room || "")}</div></div>${options.hide_state ? "" : secondary}</div></div>`
+        : `<div class="top ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" aria-label="Open shutter details">${this._contentIcon(room, room.state === "closed" ? "mdi:window-shutter" : "mdi:window-shutter-open")}</button>
+        <div class="room-heading"><div class="identity"><button class="name" data-entity="${id}" data-interaction="card"><strong>${escape(this._name(room))}</strong></button><span class="status">${this._contentStatus(room, status)}</span></div>
+        <div class="readings"><div class="temps">${reading}</div><div class="next">${escape(a.room || "")}</div></div></div></div>`;
       return `<section data-key="${id}" class="room ${preview && previewRoom === room.entity_id ? "preview-selected" : ""}" style="--room-state-color:${this._contentColor(room, color)};${featureOrder(options)}"><div class="room-content">
-        <div class="top ${this._headerFeatures(room).length ? "has-secondary" : ""} ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" aria-label="Open shutter details">${this._contentIcon(room, room.state === "closed" ? "mdi:window-shutter" : "mdi:window-shutter-open")}</button>
-        <div class="room-heading"><div class="identity"><button class="name" data-entity="${id}" data-interaction="card"><strong>${escape(this._name(room))}</strong></button><span class="status">${this._contentStatus(room, status)}</span>${this._secondaryMarkup(room)}</div>
-        <div class="readings"><div class="temps">${position === null ? "—" : `${position}%`}</div><div class="next">${escape(a.room || "")}</div></div></div></div>
+        ${header}
         ${this._nativeReady || options.native_features ? this._nativeMarkup(room) : features(options).some(feature => feature === "modes" || feature === "temperature" && (a.supported_features & 4)) ? `<div class="controls">${features(options).includes("modes") ? `<div class="modes" role="group" aria-label="Shutter controls">${[["open_cover",1,"arrow-up","Open"],["stop_cover",8,"stop","Stop"],["close_cover",2,"arrow-down","Close"]].map(([service,feature,icon,label]) =>
           `<button class="mode" data-action="shutter" data-entity="${id}" data-service="${service}" title="${label}" aria-label="${label}" ${disabled || !(a.supported_features & feature) ? "disabled" : ""}><ha-icon icon="mdi:${icon}"></ha-icon></button>`).join("")}</div>` : ""}
         ${features(options).includes("temperature") && a.supported_features & 4 ? `<input type="number" data-entity="${id}" data-field="position" aria-label="${escape(this._name(room))} position percent" title="Position (0% closed, 100% open)" value="${position ?? ""}" min="0" max="100" step="1" ${disabled ? "disabled" : ""}>` : ""}</div>` : ""}</div></section>`;
@@ -417,10 +447,17 @@
       const native = useNative ? this._nativeMarkup(state) : "";
       const brightnessControl = light ? `<input type="number" data-entity="${id}" data-field="brightness" aria-label="${escape(this._name(state))} brightness percent" title="Brightness" value="${brightness ?? ""}" min="1" max="100" step="1" ${disabled}>` : "";
       const fallbackControls = useNative ? "" : `<div class="controls">${brightnessControl}<button data-action="device" data-entity="${id}" data-service="turn_${on ? "off" : "on"}" aria-label="Turn ${escape(this._name(state))} ${on ? "off" : "on"}" title="Turn ${on ? "off" : "on"}" ${disabled}><ha-icon icon="mdi:power"></ha-icon></button></div>`;
+      const secondary = this._secondaryMarkup(state);
+      const next = options.show_next_schedule === false ? "" : escape(this._deviceSchedule(state));
+      const readingMarkup = options.show_temperatures === false ? "" : escape(reading);
+      const header = secondary ? `<div class="top has-secondary ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" aria-label="Open device details">${this._contentIcon(state, icon)}</button>
+        <div class="secondary-layout"><div class="secondary-heading-line"><button class="name" data-entity="${id}" data-interaction="card"><strong>${escape(this._name(state))}</strong></button><div class="temps">${readingMarkup}</div></div>
+        <div class="secondary-primary-line"><span class="status">${this._contentStatus(state, status)}</span>${options.hide_state ? secondary : ""}<div class="next">${next}</div></div>${options.hide_state ? "" : secondary}</div></div>`
+        : `<div class="top ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" aria-label="Open device details">${this._contentIcon(state, icon)}</button>
+        <div class="room-heading"><div class="identity"><button class="name" data-entity="${id}" data-interaction="card"><strong>${escape(this._name(state))}</strong></button><span class="status">${this._contentStatus(state, status)}</span></div>
+        <div class="readings"><div class="temps">${readingMarkup}</div><div class="next">${next}</div></div></div></div>`;
       return `<section data-key="${id}" class="room device-${light ? "light" : "plug"} ${on ? "powered" : ""} ${preview && previewRoom === state.entity_id ? "preview-selected" : ""}" style="--room-state-color:${this._contentColor(state, color)};${featureOrder(options)}"><div class="room-content">
-        <div class="top ${this._headerFeatures(state).length ? "has-secondary" : ""} ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" aria-label="Open device details">${this._contentIcon(state, icon)}</button>
-        <div class="room-heading"><div class="identity"><button class="name" data-entity="${id}" data-interaction="card"><strong>${escape(this._name(state))}</strong></button><span class="status">${this._contentStatus(state, status)}</span>${this._secondaryMarkup(state)}</div>
-        <div class="readings"><div class="temps">${options.show_temperatures === false ? "" : escape(reading)}</div><div class="next">${options.show_next_schedule === false ? "" : escape(this._deviceSchedule(state))}</div></div></div></div>
+        ${header}
         ${fallbackControls}${native}</div></section>`;
     }
     async _deviceService(state, service, data = {}) {
@@ -1142,6 +1179,10 @@
           text-overflow:clip;
           text-align:right
         }
+        .secondary-primary-line wiser-secondary-status-feature {
+          flex:1 1 auto;
+          overflow:hidden
+        }
         .secondary-layout wiser-secondary-status-feature {
           min-width:0;
           line-height:16px
@@ -1294,7 +1335,7 @@
         const statusMarkup = this._contentStatus(room, status + (a.is_boosted ? " · Boost" : a.is_override ? " · Override" : ""));
         const headerMarkup = secondary ? `<div class="top has-secondary ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" title="${escape(status)} — open room controls" aria-label="${escape(this._name(room))}: ${status}">${this._contentIcon(room, icon)}</button>
           <div class="secondary-layout"><div class="secondary-heading-line"><button class="name" data-entity="${id}" data-interaction="card" title="Open room controls"><strong>${escape(this._name(room))}</strong></button><div class="temps" title="Current ${escape(unit)} → target ${escape(unit)}" aria-label="Current ${escape(this._temperature(a.current_temperature))}; Target ${escape(target)}">${temperatureMarkup}</div></div>
-          <div class="secondary-primary-line"><span class="status">${statusMarkup}</span><div class="next" title="${escape(a.schedule_name || "")}">${escape(next)}</div></div>${secondary}</div></div>`
+          <div class="secondary-primary-line"><span class="status">${statusMarkup}</span>${options.hide_state ? secondary : ""}<div class="next" title="${escape(a.schedule_name || "")}">${escape(next)}</div></div>${options.hide_state ? "" : secondary}</div></div>`
           : `<div class="top ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" title="${escape(status)} — open room controls" aria-label="${escape(this._name(room))}: ${status}">${this._contentIcon(room, icon)}</button>
           <div class="room-heading"><div class="identity"><button class="name" data-entity="${id}" data-interaction="card" title="Open room controls"><strong>${escape(this._name(room))}</strong></button><span class="status">${statusMarkup}</span></div>
           <div class="readings"><div class="temps" title="Current ${escape(unit)} → target ${escape(unit)}" aria-label="Current ${escape(this._temperature(a.current_temperature))}; Target ${escape(target)}">${temperatureMarkup}</div>
@@ -1527,7 +1568,10 @@
   window.customCardFeatures = window.customCardFeatures || [];
   if (!window.customCardFeatures.some(feature => feature.type === SECONDARY_STATUS_FEATURE)) window.customCardFeatures.push({
     type:SECONDARY_STATUS_FEATURE, name:"Secondary status", configurable:true,
-    isSupported:(hass, context) => Boolean(context?.entity_id?.startsWith("climate.") && hass.states[context.entity_id]),
+    isSupported:(hass, context) => {
+      const state = hass.states[context?.entity_id];
+      return Boolean(state && (state.entity_id.startsWith("climate.") || isShutter(state) || isLight(state) || isPlug(state)));
+    },
   });
   if (!window.customCardFeatures.some(feature => feature.type === OVERRIDE_STATUS_FEATURE)) window.customCardFeatures.push({
     type:OVERRIDE_STATUS_FEATURE, name:"Override end time", configurable:false,
@@ -1575,7 +1619,24 @@
         const config = {...this._config};
         if (next.length === DEVICE_TYPES.length) { config.room_type = "all"; delete config.room_types; }
         else { config.room_types = next; delete config.room_type; }
-        if (next.length !== 1) delete config.room_configuration;
+        if (masterMode(config) && next.length > 1) {
+          const byType = {...config.master_options_by_type};
+          const selectedType = typeForEntity(this._selectedRoom);
+          const fallback = byType[selectedType] || config.master_options || Object.values(byType)[0] || {};
+          for (const roomType of next) {
+            if (byType[roomType]) continue;
+            const room = this._allRooms().find(item => deviceType(item) === roomType);
+            const options = JSON.parse(JSON.stringify(fallback));
+            if (room && Array.isArray(options.native_features)) {
+              const legacyConfig = {...config,master_options:options};
+              delete legacyConfig.master_options_by_type;
+              options.native_features = configuredNativeFeatures(legacyConfig, room.entity_id, room);
+            }
+            byType[roomType] = options;
+          }
+          config.master_options_by_type = byType;
+          delete config.master_options;
+        }
         this._config = config;
         this._render();
         this._dispatchConfig();
@@ -1590,28 +1651,40 @@
         if (mode === "master") {
           const enteringMaster = !masterMode(config);
           config.room_configuration = "master";
-          if (enteringMaster && config.room_options?.[this._selectedRoom]) {
+          const activeTypes = selectedTypes(config);
+          if (enteringMaster && activeTypes.length > 1) {
+            config.master_options_by_type = Object.fromEntries(activeTypes.map(roomType => {
+              const room = this._rooms().find(item => deviceType(item) === roomType);
+              const options = {...(room ? config.room_options?.[room.entity_id] : {})};
+              if (room) options.native_features = nativeFeatures({...config,...options}, room.entity_id, room);
+              if (options.native_features) options.native_features = this._masterNativeFeatures(config, options.native_features, roomType);
+              return [roomType, options];
+            }));
+            delete config.master_options;
+          } else if (enteringMaster && config.room_options?.[this._selectedRoom]) {
             const selected = this._hass.states[this._selectedRoom];
             const options = {...config.room_options?.[this._selectedRoom]};
             if (selected) options.native_features = nativeFeatures({...config,...options}, this._selectedRoom, selected);
-            if (options.native_features) options.native_features = this._masterNativeFeatures(config, options.native_features);
+            if (options.native_features) options.native_features = this._masterNativeFeatures(config, options.native_features, typeForEntity(this._selectedRoom));
             config.master_options = options;
           } else if (!config.master_options) {
-            config.master_options = {};
+            if (!config.master_options_by_type) config.master_options = {};
           }
           delete config.room_options;
         } else {
           if (masterMode(config)) {
             const roomOptions = {};
             for (const room of this._rooms()) {
-              const options = JSON.parse(JSON.stringify(config.master_options || {}));
+              const options = JSON.parse(JSON.stringify(masterOptions(config, room.entity_id) || {}));
               if (Array.isArray(options.native_features)) {
-                options.native_features = options.native_features.map(feature => featureForRoom(feature, room.entity_id));
+                options.native_features = configuredNativeFeatures(config, room.entity_id, room)
+                  .map(feature => featureForRoom(feature, room.entity_id));
               }
               roomOptions[room.entity_id] = options;
             }
             config.room_options = roomOptions;
             delete config.master_options;
+            delete config.master_options_by_type;
           }
           delete config.room_configuration;
         }
@@ -1667,11 +1740,11 @@
         event.stopPropagation();
         const id = this._selectedRoom;
         const index = event.detail.subElementConfig.index;
-        const config = nativeFeatures(roomConfig(this._config, id), id, this._hass.states[id])[index];
+        const config = configuredNativeFeatures(this._config, id, this._hass.states[id])[index];
         this.dispatchEvent(new CustomEvent("edit-sub-element", {bubbles:true, composed:true, detail:{
           type:"feature", config, context:this._featureEditorContext(id),
           saveConfig: newConfig => {
-            const list = [...nativeFeatures(roomConfig(this._config, id), id, this._hass.states[id])];
+            const list = [...configuredNativeFeatures(this._config, id, this._hass.states[id])];
             list[index] = newConfig;
             this._saveNativeFeatures(id, list);
           },
@@ -1692,7 +1765,7 @@
       this._tabs.addEventListener("keydown", event => {
         if (!event.target.matches('[role="tab"]') || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
         event.preventDefault();
-        const rooms = this._rooms();
+        const rooms = this._tabRooms(this._rooms());
         let index = rooms.findIndex(room => room.entity_id === this._selectedRoom);
         index = event.key === "Home" ? 0 : event.key === "End" ? rooms.length - 1
           : (index + (event.key === "ArrowLeft" ? -1 : 1) + rooms.length) % rooms.length;
@@ -1716,6 +1789,7 @@
         button:focus-visible{outline:2px solid var(--primary-color);outline-offset:2px}
         .room-tabs button{border:0;border-bottom:3px solid transparent;background:transparent;flex:0 0 40px;min-width:40px;min-height:40px;padding:6px 8px;opacity:.6;white-space:nowrap}
         .room-tabs button.active{color:var(--primary-color);opacity:1;border-bottom-color:var(--primary-color)}
+        .room-tabs.type-tabs button{flex-basis:auto;min-width:max-content}
         .room-tabs button.hidden-room{text-decoration:line-through}
         .room-tools{display:flex;flex-wrap:nowrap;gap:4px;margin-left:auto;flex-shrink:0}
         .room-tools ha-icon-button{--ha-icon-button-size:34px}
@@ -1760,11 +1834,12 @@
         this._render();
       }
     }
-    _rooms() {
+    _allRooms() {
       if (!this._hass || !this._entries) return [];
-      return orderRooms(this._entries.filter(entry => isRoom(entry, this._hass.states[entry.entity_id]) && matchesHub(entry, this._config?.hubs) && matchesType(this._hass.states[entry.entity_id], selectedTypes(this._config)))
+      return orderRooms(this._entries.filter(entry => isRoom(entry, this._hass.states[entry.entity_id]) && matchesHub(entry, this._config?.hubs))
         .map(entry => this._hass.states[entry.entity_id]), this._config?.room_order || this._config?.entities);
     }
+    _rooms() { return this._allRooms().filter(room => matchesType(room, selectedTypes(this._config))); }
     _detectedHubs() {
       const titles = new Map((this._hubs || []).map(entry => [entry.entry_id, entry.title || entry.entry_id]));
       return [...new Set((this._entries || []).filter(entry => entry.platform === "wiser" && entry.config_entry_id).map(entry => entry.config_entry_id))]
@@ -1824,7 +1899,7 @@
       if (JSON.stringify(modeSchema) !== this._modeSchemaSignature) { this._modeForm.schema = modeSchema; this._modeSchemaSignature = JSON.stringify(modeSchema); }
       const modeData = {room_configuration:masterMode(this._config) ? "master" : "individual"};
       if (JSON.stringify(modeData) !== JSON.stringify(this._modeForm.data)) this._modeForm.data = modeData;
-      this._modeForm.hidden = activeTypes.length !== 1;
+      this._modeForm.hidden = !rooms.length;
       this._modeForm.style.marginBottom = masterMode(this._config) ? "12px" : "";
       this._hiddenRoomsForm.hass = this._hass;
       const hiddenRoomsSchema = [{name:"hidden_rooms",label:text(this._hass,"hide_rooms"),selector:{select:{multiple:true,mode:"dropdown",options:rooms.map(room => ({value:room.entity_id,label:this._name(room)}))}}}];
@@ -1835,7 +1910,7 @@
       }
       const hiddenRoomsData = {hidden_rooms:rooms.filter(room => !this._shown(room.entity_id)).map(room => room.entity_id)};
       if (JSON.stringify(hiddenRoomsData) !== JSON.stringify(this._hiddenRoomsForm.data)) this._hiddenRoomsForm.data = hiddenRoomsData;
-      this._hiddenRoomsForm.hidden = activeTypes.length !== 1 || !masterMode(this._config);
+      this._hiddenRoomsForm.hidden = !masterMode(this._config);
       this._renderTabs(rooms);
       const selectedOptions = roomConfig(this._config, this._selectedRoom);
       const selectedState = this._hass.states[this._selectedRoom];
@@ -1923,23 +1998,26 @@
     _setRoomOptions(options) {
       if (!this._selectedRoom) return;
       const master = masterMode(this._config);
-      const current = {...(master ? this._config.master_options : this._config.room_options?.[this._selectedRoom])};
+      const current = {...(master ? masterOptions(this._config, this._selectedRoom) : this._config.room_options?.[this._selectedRoom])};
       for (const [key, value] of Object.entries(options)) {
         if (value === undefined) delete current[key];
         else current[key] = value;
       }
-      this._config = master ? {...this._config,master_options:current} : {...this._config, room_options: {...this._config.room_options,
+      if (master && this._config.master_options_by_type) this._config = {...this._config,master_options_by_type:{
+        ...this._config.master_options_by_type,[typeForEntity(this._selectedRoom)]:current,
+      }};
+      else this._config = master ? {...this._config,master_options:current} : {...this._config, room_options: {...this._config.room_options,
         [this._selectedRoom]: current}};
       this._render();
       this._dispatchConfig();
     }
-    _masterNativeFeatures(config, list) {
+    _masterNativeFeatures(config, list, roomType = typeForEntity(this._selectedRoom)) {
       let secondaryIndex = 0;
       return orderNativeFeatures(list.map(feature => {
         if (!isSecondaryFeature(feature)) return feature;
         const index = secondaryIndex++;
         const entities = {};
-        for (const room of this._rooms()) {
+        for (const room of this._rooms().filter(item => deviceType(item) === roomType)) {
           const configured = config.room_options?.[room.entity_id]?.native_features;
           const candidate = Array.isArray(configured) ? configured.filter(isSecondaryFeature)[index] : undefined;
           const entity = candidate?.entities?.[room.entity_id] || candidate?.entity;
@@ -1956,7 +2034,9 @@
       const context = {entity_id:id};
       if (masterMode(this._config)) {
         context.wiser_master = true;
-        context.wiser_rooms = this._rooms().map(room => ({entity_id:room.entity_id,name:this._name(room)}));
+        const roomType = typeForEntity(id);
+        context.wiser_rooms = this._rooms().filter(room => deviceType(room) === roomType)
+          .map(room => ({entity_id:room.entity_id,name:this._name(room)}));
       }
       return context;
     }
@@ -1964,7 +2044,8 @@
       if (!id || !validNativeFeatures(list)) return;
       const ordered = orderNativeFeatures(list);
       if (masterMode(this._config)) {
-        const currentSecondary = (this._config.master_options?.native_features || []).filter(isSecondaryFeature);
+        const currentOptions = masterOptions(this._config, id) || {};
+        const currentSecondary = (currentOptions.native_features || []).filter(isSecondaryFeature);
         let secondaryIndex = 0;
         const shared = ordered.map(feature => {
           if (!isSecondaryFeature(feature)) return feature;
@@ -1985,7 +2066,11 @@
           else delete saved.entities;
           return saved;
         });
-        this._config = {...this._config,master_options:{...this._config.master_options,native_features:shared}};
+        if (this._config.master_options_by_type) this._config = {...this._config,master_options_by_type:{
+          ...this._config.master_options_by_type,
+          [typeForEntity(id)]:{...currentOptions,native_features:shared},
+        }};
+        else this._config = {...this._config,master_options:{...this._config.master_options,native_features:shared}};
       } else this._config = {...this._config, room_options:{...this._config.room_options,[id]:{...this._config.room_options?.[id],native_features:ordered}}};
       this._render();
       this._dispatchConfig();
@@ -2016,7 +2101,7 @@
       }))}}}];
       this._nativeEditor.context = this._featureEditorContext(this._selectedRoom);
       this._nativeEditor.stateObj = this._hass.states[this._selectedRoom];
-      const storedList = nativeFeatures(roomConfig(this._config, this._selectedRoom), this._selectedRoom, this._hass.states[this._selectedRoom]);
+      const storedList = configuredNativeFeatures(this._config, this._selectedRoom, this._hass.states[this._selectedRoom]);
       const list = storedList;
       this._featurePositionForm.hidden = !list.length;
       const signature = this._selectedRoom + JSON.stringify(list);
@@ -2029,13 +2114,29 @@
       const positionData = {features_position:roomConfig(this._config, this._selectedRoom).features_position || "bottom"};
       if (JSON.stringify(positionData) !== JSON.stringify(this._featurePositionForm.data)) this._featurePositionForm.data = positionData;
     }
+    _tabRooms(rooms) {
+      if (!masterMode(this._config)) return rooms;
+      return selectedTypes(this._config).map(roomType => rooms.find(room => deviceType(room) === roomType)).filter(Boolean);
+    }
     _renderTabs(rooms) {
       if (!rooms.some(room => room.entity_id === this._selectedRoom)) this._selectedRoom = rooms[0]?.entity_id;
       if (masterMode(this._config)) {
         if (!this._shown(this._selectedRoom)) this._selectedRoom = rooms.find(room => this._shown(room.entity_id))?.entity_id || rooms[0]?.entity_id;
-        this._tabs.hidden = true;
-        this._tabs.innerHTML = "";
-        this._tabsMarkup = "";
+        const typeRooms = this._tabRooms(rooms);
+        if (typeRooms.length <= 1) {
+          this._tabs.hidden = true;
+          this._tabs.innerHTML = "";
+          this._tabsMarkup = "";
+          return;
+        }
+        if (!typeRooms.some(room => room.entity_id === this._selectedRoom)) this._selectedRoom = typeRooms[0].entity_id;
+        this._tabs.hidden = false;
+        const markup = `<div class="room-tab-bar"><div class="room-tabs type-tabs" role="tablist" aria-label="${escape(text(this._hass,"configuration_mode"))}">${typeRooms.map(room => {
+          const roomType = deviceType(room);
+          const active = room.entity_id === this._selectedRoom;
+          return `<button type="button" role="tab" title="${escape(text(this._hass,roomType))}" data-room="${escape(room.entity_id)}" aria-selected="${active}" tabindex="${active ? 0 : -1}" class="${active ? "active" : ""}">${escape(text(this._hass,roomType))}</button>`;
+        }).join("")}</div></div>`;
+        if (markup !== this._tabsMarkup) { this._tabs.innerHTML = markup; this._tabsMarkup = markup; }
         return;
       }
       this._tabs.hidden = false;

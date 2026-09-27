@@ -414,6 +414,44 @@ test('master editor mode uses one shared room configuration and one preview card
   assert.equal(editor._tabs.hidden, false);
   assert.equal(editor._hiddenRoomsForm.hidden, true);
 });
+test('master mode survives adding another room type and adapts its native controls', () => {
+  const {card, Editor} = setup();
+  const plug = addPlug(card);
+  const editor = new Editor();
+  editor._entries = card._entries;
+  editor._hass = card._hass;
+  editor.setConfig({room_type:'heating',room_options:{
+    'climate.bedroom':{native_features:[
+      {type:'custom:wiser-secondary-status-feature',state_content:['current_temperature']},
+      {type:'climate-hvac-modes'},
+      {type:'target-temperature'},
+    ]},
+  }});
+  editor._modeForm.listeners['value-changed']({stopPropagation(){},detail:{value:{room_configuration:'master'}}});
+  editor._typeForm.listeners.click({target:{closest:()=>({dataset:{roomType:'plugs'}})}});
+  let config = editor.lastEvent.detail.config;
+  assert.equal(config.room_configuration, 'master');
+  assert.deepEqual(Array.from(config.room_types), ['heating','plugs']);
+  assert.equal(editor._modeForm.hidden, false);
+  assert.equal(config.master_options, undefined);
+  assert.equal(config.master_options_by_type.heating.native_features[0].type, 'custom:wiser-secondary-status-feature');
+  assert.equal(config.master_options_by_type.plugs.native_features.map(feature => feature.type).join(','),
+    'custom:wiser-secondary-status-feature,toggle');
+  assert.match(editor._tabs.innerHTML, />Heating<\/button>/);
+  assert.match(editor._tabs.innerHTML, />Smart plugs<\/button>/);
+  editor._tabs.listeners.click({target:{closest:()=>({dataset:{room:'switch.lamp'}})},stopPropagation(){}});
+  assert.equal(editor._selectedRoom, 'switch.lamp');
+  assert.equal(editor._nativeEditor.features.map(feature => feature.type).join(','),
+    'custom:wiser-secondary-status-feature,toggle');
+  card._config = config;
+  assert.equal(card._headerFeatures(plug)[0].type, 'custom:wiser-secondary-status-feature');
+  editor._modeForm.listeners['value-changed']({stopPropagation(){},detail:{value:{room_configuration:'individual'}}});
+  config = editor.lastEvent.detail.config;
+  assert.equal(config.room_options['switch.lamp'].native_features.map(feature => feature.type).join(','),
+    'custom:wiser-secondary-status-feature,toggle');
+  assert.equal(config.room_options['climate.bedroom'].native_features.map(feature => feature.type).join(','),
+    'custom:wiser-secondary-status-feature,climate-hvac-modes,target-temperature');
+});
 test('editor preserves legacy selections and layout when updating title', () => {
   const {card, Editor} = setup();
   const editor = new Editor();
@@ -939,7 +977,12 @@ test('Secondary status uses native state display and supports override end time'
   const entry = window.customCardFeatures.find(f => f.type === 'wiser-secondary-status-feature');
   assert.equal(entry.configurable, true);
   assert.equal(entry.isSupported(card._hass,{entity_id:'climate.bedroom'}), true);
-  assert.equal(entry.isSupported(card._hass,{entity_id:'cover.office'}), false);
+  addShutter(card); addLight(card); addPlug(card);
+  assert.equal(entry.isSupported(card._hass,{entity_id:'cover.office'}), true);
+  assert.equal(entry.isSupported(card._hass,{entity_id:'light.kitchen'}), true);
+  assert.equal(entry.isSupported(card._hass,{entity_id:'switch.lamp'}), true);
+  card._hass.states['sensor.outside'] = {entity_id:'sensor.outside',state:'12',attributes:{}};
+  assert.equal(entry.isSupported(card._hass,{entity_id:'sensor.outside'}), false);
 });
 
 test('Override end time is a per-room header feature', () => {
@@ -1010,6 +1053,29 @@ test('Secondary status keeps next schedule beside the primary status', () => {
   assert.match(compact, /\.secondary-heading-line,\.secondary-primary-line\{display:flex;align-items:baseline;justify-content:space-between;gap:10px;min-width:0\}/);
   assert.match(compact, /\.secondary-primary-line\.next\{flex:11auto;min-width:0;max-width:none;margin:0;line-height:18px;white-space:normal;overflow:visible;text-overflow:clip;text-align:right\}/);
   assert.match(compact, /\.secondary-layoutwiser-secondary-status-feature\{min-width:0;line-height:16px\}/);
+});
+
+test('Secondary status uses the aligned header layout for every device type', () => {
+  const {card} = setup();
+  addShutter(card); addLight(card); addPlug(card);
+  for (const id of ['cover.office','light.kitchen','switch.lamp']) {
+    card.setConfig({entities:[id],room_options:{[id]:{native_features:[{type:'custom:wiser-secondary-status-feature',state_content:['state']}]}}});
+    const html = card.shadowRoot.innerHTML;
+    assert.match(html, /class="top has-secondary[^]*?class="secondary-layout"[^]*?class="secondary-primary-line"[^]*?<wiser-secondary-status-feature/);
+    assert.doesNotMatch(html, /class="identity"[^]*?<wiser-secondary-status-feature/);
+  }
+});
+
+test('Secondary status moves onto the primary line when the primary state is hidden', () => {
+  const {card} = setup();
+  addPlug(card);
+  card.setConfig({entities:['switch.lamp'],room_options:{'switch.lamp':{
+    hide_state:true,
+    native_features:[{type:'custom:wiser-secondary-status-feature',state_content:['power']}],
+  }}});
+  const html = card.shadowRoot.innerHTML;
+  assert.match(html, /class="top has-secondary hide-status[^]*?class="secondary-primary-line"><span class="status">[^]*?<\/span><wiser-secondary-status-feature[^]*?<div class="next">/);
+  assert.doesNotMatch(html, /<\/div><wiser-secondary-status-feature[^>]*data-secondary-room="switch\.lamp"/);
 });
 
 test('Content options persist per room and change header rendering', () => {
