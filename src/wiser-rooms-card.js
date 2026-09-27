@@ -976,6 +976,39 @@
         .error {
           color:var(--error-color)
         }
+        @container (max-width: 480px) {
+          header {
+            display:grid;
+            grid-template-columns:minmax(0,1fr);
+            align-items:start;
+            gap:10px
+          }
+          header h2 {
+            white-space:nowrap
+          }
+          header .bulk-actions {
+            width:100%;
+            flex-wrap:nowrap
+          }
+          header .bulk-actions .off {
+            --ha-button-height:40px;
+            flex:1 1 0;
+            min-width:0
+          }
+          .section-title {
+            align-items:flex-start;
+            flex-direction:column
+          }
+          .section-title .bulk-actions {
+            width:100%;
+            flex-wrap:nowrap
+          }
+          .section-title .bulk-actions .off {
+            --ha-button-height:40px;
+            flex:1 1 0;
+            min-width:0
+          }
+        }
         @container (max-width: 340px) {
           header {
             padding:12px

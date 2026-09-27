@@ -1004,6 +1004,13 @@ test('card uses native Home Assistant entity icons and action buttons', () => {
   assert.equal(icon.stateObj.entity_id, 'climate.bedroom');
 });
 
+test('mobile headers stack copy above compact native bulk actions', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/wiser-rooms-card.js'), 'utf8');
+  assert.match(source, /@container \(max-width: 480px\)[\s\S]*?header \{[\s\S]*?display:grid;[\s\S]*?grid-template-columns:minmax\(0,1fr\)/);
+  assert.match(source, /header \.bulk-actions \.off \{[\s\S]*?--ha-button-height:40px;[\s\S]*?flex:1 1 0/);
+  assert.match(source, /\.section-title \{[\s\S]*?flex-direction:column/);
+});
+
 test('localization follows the other Wiser cards and prefers Home Assistant text', () => {
   const {window} = setup();
   const {localize,languageFor} = window.WiserRoomsLocalize;
