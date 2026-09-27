@@ -5,7 +5,7 @@ import {tmpdir} from "node:os";
 import {join} from "node:path";
 import buildVersion from "../scripts/build-version.mjs";
 
-test("dev versions increment after successful builds and reset after a release", () => {
+test("dev versions increment after successful builds and continue after a prerelease", () => {
   const root = mkdtempSync(join(tmpdir(), "wiser-rooms-version-"));
   const output = join(root, "dist");
   mkdirSync(output);
@@ -30,6 +30,8 @@ test("dev versions increment after successful builds and reset after a release",
     assert.equal(JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version, "1.2.3");
     setRelease("1.3.0");
     assert.equal(run(true).version, "1.3.1-dev.1");
+    setRelease("1.3.1-beta.1");
+    assert.equal(run(true).version, "1.3.2-dev.1");
   } finally {
     rmSync(root, {recursive:true, force:true});
   }

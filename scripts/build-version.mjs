@@ -2,6 +2,7 @@ import {readFileSync, writeFileSync} from "node:fs";
 import {resolve} from "node:path";
 
 const RELEASE = /^(\d+)\.(\d+)\.(\d+)$/;
+const PRERELEASE = /^(\d+)\.(\d+)\.(\d+)-[0-9A-Za-z.-]+(?:\+[0-9A-Za-z.-]+)?$/;
 const DEVELOPMENT = /^(\d+\.\d+\.\d+-dev)\.\d+$/;
 const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
@@ -15,10 +16,13 @@ export default function buildVersion({dev = false, root = process.cwd(), release
 
   if (dev) {
     const release = RELEASE.exec(packageVersion);
+    const prerelease = PRERELEASE.exec(packageVersion);
     const development = DEVELOPMENT.exec(packageVersion);
     baseVersion = release
       ? `${release[1]}.${release[2]}.${BigInt(release[3]) + 1n}-dev`
-      : development?.[1];
+      : prerelease
+        ? `${prerelease[1]}.${prerelease[2]}.${BigInt(prerelease[3]) + 1n}-dev`
+        : development?.[1];
     if (!baseVersion) throw new Error(`Cannot create a dev build from version ${packageVersion}`);
 
     let previous;
