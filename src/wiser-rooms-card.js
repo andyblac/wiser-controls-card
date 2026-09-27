@@ -705,7 +705,7 @@
           grid-column:1;
           grid-row:1 / 3;
           align-self:start;
-          transform:translateY(4px)
+          transform:translateY(5px)
         }
         .top .name {
           grid-column:2 / -1;
