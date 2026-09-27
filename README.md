@@ -1,7 +1,7 @@
 # Wiser Rooms Card
 
-Compact Home Assistant dashboard controls for Wiser heating rooms and shutters,
-with temperatures, schedules, shutter positions and an All off heating button.
+Compact Home Assistant dashboard controls for Wiser heating, shutters, lights,
+dimmers and smart plugs, with schedules and category-specific bulk actions.
 
 Add **Wiser Rooms** from the dashboard card picker, or add a Manual card:
 
@@ -9,7 +9,8 @@ Add **Wiser Rooms** from the dashboard card picker, or add a Manual card:
 type: custom:wiser-rooms-card
 ```
 
-The card automatically discovers Wiser heating rooms and shutters across your hubs.
+The card automatically discovers supported Wiser heating, shutter, lighting and
+smart-plug entities across your hubs.
 Heating rooms show
 current and target temperatures in compact tile-style rows, with icons for
 Heating, Idle, Off or Unavailable status.
@@ -32,17 +33,22 @@ Auto/Schedule for that room. Off uses Wiser's normal off mode, including its own
 frost protection; it does not disconnect power to the heating system.
 
 Use the card's visual editor to change its title and configure detected Wiser
-rooms and shutters. Use the **Hubs** selector at the top to choose any combination
-of detected hubs; all detected hubs are selected by default. Each room or shutter
-has a separate tab. Select a tab and use the
-left/right arrows to reorder it, or the eye button to hide/show it. Hidden rooms
-remain available in the editor. All rooms are shown by default,
-including newly discovered rooms. These selections change card visibility only;
-they do not change heating modes. You can hide every room if needed.
+devices. Use the **Hubs** selector at the top to choose any combination of
+detected hubs; all detected hubs are selected by default. Each device has a
+separate tab. Select a tab and use the left/right arrows to reorder it, or the eye
+button to hide/show it. Hidden devices remain available in the editor. All devices
+are shown by default, including newly discovered devices. These selections change
+card visibility only; they do not change device state. You can hide every device
+if needed.
 
-Set **Rooms per row** to 1–6 in the editor (default: 1). The selected
+Each device's **Interactions** panel uses Home Assistant's native Tile interaction
+layout. Card and icon tap actions are shown by default; use **Add interaction** to
+add card/icon hold or double-tap actions. Card tap defaults to More info. Light and
+smart-plug icon taps default to Toggle; other icon taps default to More info.
+
+Set **Devices per row** to 1–6 in the editor (default: 1). The selected
 number is always used. Use the Layout tab to give the card more width when
-showing multiple rooms side by side.
+showing multiple devices side by side.
 The equivalent YAML setting is `room_columns: 2`.
 
 You can also choose a title and specific rooms in display order using YAML:
@@ -97,15 +103,24 @@ marker and build metadata, and attaches `wiser-rooms-card.js`. The integration's
 release builds download published assets from this repository. Prerelease
 versions and matching tags such as `0.2.0-beta.1` / `v0.2.0-beta.1` are supported.
 
-## Heating and shutters
+## Supported devices
 
-The editor's **All / Heating / Shutters** selector controls which detected Wiser
-entities appear in the card and its room tabs. The default is All, which displays separate **Heating** and **Shutters** sections,
-each using the configured rooms-per-row setting. Set
-`room_type: heating` or `room_type: shutters` in YAML to filter the card.
+The editor's compact **All / Heating / Shutters / Lights / Smart plugs** buttons
+control which detected Wiser entities appear in the card and its device tabs.
+Select one or several categories; **All** selects every category. Multiple selected
+categories render as separate sections, each using the configured devices-per-row
+setting. Existing `room_type: heating` (or `shutters`, `lights`, `plugs`) YAML remains
+supported. For multiple categories, use `room_types: [heating, shutters]`.
 Shutters show open/stop/close controls and a position input when supported
 (0% closed, 100% open). Click a shutter name for Home Assistant's full controls.
-**All off** only affects the heating rooms shown, never shutters or hot water.
+Lights and dimmers show on/off controls and brightness when supported. Smart plugs
+show their current state and an on/off control. Assigned schedule information is
+shown for these devices when supplied by the Wiser integration.
+With **Shutters** selected, the header action becomes **Close all** and closes all
+available, shown shutters that support closing. With **Heating** selected, the
+header action remains **All off**. Lights and Smart plugs each have their own
+**All off** action. With **All** selected, every category has its own header and
+bulk action; one category's action never controls another category or hot water.
 
 Choose **Temperature emphasis → Current / Target** in the editor to select which
 temperature uses larger, brighter text. Current is the default. Display order
