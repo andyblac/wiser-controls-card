@@ -30,7 +30,7 @@ function setup() {
   };
   const nativeText = {
     'ui.components.selectors.automation_behavior.trigger.options.all.label':'All',
-    'ui.common.show':'Show', 'ui.common.name':'Name', 'ui.common.next':'Next', 'ui.common.current':'Current',
+    'ui.common.show':'Show', 'ui.common.name':'Name', 'ui.common.next':'Next', 'ui.card.climate.currently':'Current',
     'state.default.unavailable':'Unavailable',
     'component.switch.entity_component._.state.on':'On', 'component.switch.entity_component._.state.off':'Off',
     'ui.card.climate.target':'Target',
@@ -940,8 +940,22 @@ test('Content supports native composed names and omits the entity-picture option
   const editor = new Editor(); editor._hass = card._hass; editor._entries = card._entries;
   editor.setConfig({}); editor._selectRoom('climate.bedroom');
   assert.doesNotMatch(JSON.stringify(editor._roomForm.schema), /show_entity_picture|Show entity picture/);
-  const visibilityRow = editor._roomForm.schema[0].schema.find(item => item.type === 'grid' && item.schema?.some(field => field.name === 'hide_state'));
-  assert.equal(visibilityRow.schema.map(field => field.name).join(','), 'hide_state,show_temperatures');
+  const contentSchema = editor._roomForm.schema[0].schema;
+  const iconColorIndex = contentSchema.findIndex(item => item.type === 'grid' && item.schema?.some(field => field.name === 'icon'));
+  const compactGroups = contentSchema.filter(item => item.column_min_width === '100%');
+  const displayGroupIndex = contentSchema.indexOf(compactGroups[0]);
+  const displayGroup = contentSchema[displayGroupIndex];
+  assert.equal(displayGroupIndex, iconColorIndex + 1);
+  const visibilityRow = displayGroup.schema[0];
+  const temperatureFocus = displayGroup.schema[1];
+  assert.equal(visibilityRow.column_min_width, '140px');
+  assert.equal(Object.keys(temperatureFocus.selector)[0], 'button_toggle');
+  assert.equal(temperatureFocus.selector.button_toggle.options.map(option => option.label).join(','), 'Current,Target');
+  const stateGroup = compactGroups[1];
+  assert.equal(contentSchema.indexOf(stateGroup), displayGroupIndex + 1);
+  assert.equal(stateGroup.schema.map(item => item.name).join(','), 'state_content,hide_state');
+  assert.equal(visibilityRow.schema.map(field => field.name).join(','), 'show_temperatures,show_next_schedule');
+  assert.match(fs.readFileSync(path.join(__dirname, '../src/wiser-rooms-card.js'), 'utf8'), /ha-form\.room-options\{[^}]*--ha-space-6:12px/);
 });
 
 test('Content, Interactions and Features sections start collapsed', () => {

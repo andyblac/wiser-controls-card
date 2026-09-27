@@ -11,7 +11,7 @@
     unavailable:"state.default.unavailable",
     on:"component.switch.entity_component._.state.on",
     off:"component.switch.entity_component._.state.off",
-    current:"ui.common.current",
+    current:"ui.card.climate.currently",
     target:"ui.card.climate.target",
     title:"ui.panel.lovelace.editor.card.generic.title",
     entity:"ui.panel.lovelace.editor.card.generic.entity",

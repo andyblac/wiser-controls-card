@@ -1564,7 +1564,7 @@
         .room-tools{display:flex;flex-wrap:nowrap;gap:4px;margin-left:auto;flex-shrink:0}
         .room-tools ha-icon-button{--ha-icon-button-size:34px}
         button:disabled{opacity:.35;cursor:default}ha-icon{--mdc-icon-size:20px;pointer-events:none}
-        ha-form.room-options{display:block;margin-bottom:24px}
+        ha-form.room-options{display:block;margin-bottom:24px;--ha-space-6:12px}
         ha-expansion-panel{display:block;--expansion-panel-content-padding:0;border-radius:var(--ha-border-radius-md);--ha-card-border-radius:var(--ha-border-radius-md)}
         ha-expansion-panel .content{padding:12px}
         ha-expansion-panel>*[slot="header"]{margin:0;font-size:inherit;font-weight:inherit}
@@ -1638,7 +1638,7 @@
           {value: "all", label: text(this._hass,"all")}, {value: "heating", label: text(this._hass,"heating")}, {value: "shutters", label: text(this._hass,"shutters")},
           {value: "lights", label: text(this._hass,"lights")}, {value: "plugs", label: text(this._hass,"plugs")},
         ]}}},
-        {name: "temperature_focus", label: text(this._hass,"temperature_emphasis"), selector: {select: {mode: "box", options: [
+        {name: "temperature_focus", label: text(this._hass,"temperature_emphasis"), selector: {button_toggle: {options: [
           {value: "current", label: text(this._hass,"current")}, {value: "target", label: text(this._hass,"target")},
         ]}}},
 
@@ -1677,13 +1677,17 @@
           {name:"icon", label:text(this._hass,"icon"), selector:{icon:{}}, context:{icon_entity:"entity"}},
           {name:"color", label:text(this._hass,"color"), selector:{ui_color:{default_color:"state",include_state:true}}},
         ]},
-        {name:"", type:"grid", schema:[
-          {name:"hide_state",label:text(this._hass,"hide_state"),selector:{boolean:{}}},
-          {name:"show_temperatures",label:metricLabel,selector:{boolean:{}}},
+        {name:"",type:"grid",column_min_width:"100%",schema:[
+          {name:"",type:"grid",column_min_width:"140px",schema:[
+            {name:"show_temperatures",label:metricLabel,selector:{boolean:{}}},
+            {name:"show_next_schedule",label:text(this._hass,"show_next_schedule"),selector:{boolean:{}}},
+          ]},
+          ...(heating ? [schema[3]] : []),
         ]},
-        {name:"state_content",label:text(this._hass,"state_content"),visible:{field:"hide_state",operator:"not_eq",value:true},selector:{ui_state_content:{allow_context:true}},context:{filter_entity:"entity"}},
-        ...(heating ? [schema[3]] : []),
-        {name:"show_next_schedule",label:text(this._hass,"show_next_schedule"),selector:{boolean:{}}},
+        {name:"",type:"grid",column_min_width:"100%",schema:[
+          {name:"state_content",label:text(this._hass,"state_content"),visible:{field:"hide_state",operator:"not_eq",value:true},selector:{ui_state_content:{allow_context:true}},context:{filter_entity:"entity"}},
+          {name:"hide_state",label:text(this._hass,"hide_state"),selector:{boolean:{}}},
+        ]},
       ];
       const actionSchema = [
         {name:"tap_action",label:"Tap action",selector:{ui_action:{default_action:"more-info"}},context:{filter_entity:"entity"}},
