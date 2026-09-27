@@ -6,7 +6,7 @@ const path = require('node:path');
 function setup() {
   let Card, Editor;
   const elements = {};
-  const context = {Intl, setTimeout, window: {},
+  const context = {Intl, setTimeout, clearTimeout, window: {},
     document: {createElement() { return {style:{}, listeners:{}, append(){}, addEventListener(name, listener) { this.listeners[name] = listener; }}; }},
     CustomEvent: class { constructor(type, options) { this.type = type; Object.assign(this, options); } },
     HTMLElement: class {
@@ -294,11 +294,23 @@ test('selected room sizing is limited to editor preview and never saved', () => 
   assert.equal(Object.getOwnPropertySymbols(JSON.parse(JSON.stringify(config))).length, 0);
 });
 
-function addShutter(card, extra = {}) {
-  const shutter = {entity_id:'cover.office',state:'open',attributes:{name:'Office shutter',room:'Office',shutter_id:7,current_position:50,supported_features:15,...extra}};
+function addShutter(card, extra = {}, entity_id = 'cover.office') {
+  const shutter = {entity_id,state:'open',attributes:{name:'Office shutter',room:'Office',shutter_id:7,current_position:50,supported_features:15,...extra}};
   card._hass.states[shutter.entity_id] = shutter;
   card._entries.push({entity_id:shutter.entity_id,platform:'wiser'});
   return shutter;
+}
+function addLight(card, extra = {}, entity_id = 'light.kitchen') {
+  const light = {entity_id,state:'on',attributes:{name:'Kitchen light',product_type:'Dimmer',room:'Kitchen',brightness:128,schedule_id:3,next_schedule_change:'18:00',next_schedule_state:'On',...extra}};
+  card._hass.states[entity_id] = light;
+  card._entries.push({entity_id,platform:'wiser',config_entry_id:'hub-a'});
+  return light;
+}
+function addPlug(card, extra = {}, entity_id = 'switch.lamp') {
+  const plug = {entity_id,state:'on',attributes:{name:'Lamp plug',room:'Lounge',output_state:'On',schedule_id:4,next_schedule_change:'22:00',next_schedule_state:'Off',...extra}};
+  card._hass.states[entity_id] = plug;
+  card._entries.push({entity_id,platform:'wiser',config_entry_id:'hub-a'});
+  return plug;
 }
 test('All Heating Shutters filters include only detected Wiser entities', () => {
   const {card, Editor} = setup();
@@ -316,8 +328,29 @@ test('All Heating Shutters filters include only detected Wiser entities', () => 
   editor._hass = card._hass; editor._entries = card._entries;
   editor.setConfig({room_type:'shutters'});
   assert.equal(editor._rooms().length, 1);
-  assert.equal(editor._typeForm.data.room_type, 'shutters');
+  assert.equal(Array.from(editor._typeForm.data.room_types).join(','), 'shutters');
   assert.throws(() => card.setConfig({room_type:'invalid'}));
+  assert.throws(() => card.setConfig({room_types:[]}));
+});
+
+test('Show uses compact native buttons and supports multiple device types', () => {
+  const {card,Editor} = setup(); addShutter(card); addLight(card); addPlug(card);
+  const editor = new Editor(); editor._hass = card._hass; editor._entries = card._entries; editor.setConfig({});
+  assert.match(editor._typeForm.innerHTML, /<ha-button[^>]*data-room-type="all"/);
+  const choose = roomType => editor._typeForm.listeners.click({target:{closest:()=>({dataset:{roomType}})}});
+  choose('heating');
+  assert.equal(Array.from(editor.lastEvent.detail.config.room_types).join(','), 'heating');
+  choose('shutters');
+  assert.equal(Array.from(editor.lastEvent.detail.config.room_types).join(','), 'heating,shutters');
+  assert.deepEqual(Array.from(editor._rooms(), room => room.entity_id), ['climate.bedroom','climate.lounge','climate.offline','cover.office']);
+  card.setConfig({room_types:['heating','shutters']});
+  assert.match(card.shadowRoot.innerHTML, /data-key="section-heating"/);
+  assert.match(card.shadowRoot.innerHTML, /data-key="section-shutters"/);
+  choose('heating');
+  assert.equal(Array.from(editor.lastEvent.detail.config.room_types).join(','), 'shutters');
+  choose('all');
+  assert.equal(editor.lastEvent.detail.config.room_type, 'all');
+  assert.equal(editor.lastEvent.detail.config.room_types, undefined);
 });
 test('shutter controls call cover services and respect feature and position limits', async () => {
   const {card,calls} = setup(); const shutter = addShutter(card);
@@ -346,6 +379,33 @@ test('All off never operates shutters and filtered shutters reject heating calls
   await card._shutterService(shutter,'open_cover');
   assert.equal(calls.length,2);
 });
+test('Shutters filter replaces All off with Close all and closes eligible shutters', async () => {
+  const {card,calls} = setup();
+  addShutter(card);
+  addShutter(card, {name:'Closed shutter'}, 'cover.closed').state = 'closed';
+  addShutter(card, {name:'Unsupported shutter',supported_features:1}, 'cover.unsupported');
+  card.setConfig({room_type:'shutters'});
+  assert.match(card.shadowRoot.innerHTML, /data-action="all-close"/);
+  assert.match(card.shadowRoot.innerHTML, /mdi:window-shutter/);
+  assert.match(card.shadowRoot.innerHTML, />Close all<\/button>/);
+  assert.doesNotMatch(card.shadowRoot.innerHTML, /data-action="all-off"/);
+  await card._closeAll();
+  assert.equal(calls.length,1);
+  assert.equal(calls[0][0],'cover');
+  assert.equal(calls[0][1],'close_cover');
+  assert.equal(calls[0][2].entity_id,'cover.office');
+});
+test('Close all reports individual shutter failures and releases busy state', async () => {
+  const {card,calls} = setup(); const shutter = addShutter(card);
+  card.setConfig({room_type:'shutters'});
+  card._hass.callService = async (...args) => { calls.push(args); throw Error('jammed'); };
+  await card._closeAll();
+  assert.equal(calls.length,1);
+  assert.match(card._error,/Could not close: Office shutter/);
+  assert.equal(card._busy,false);
+  shutter.state = 'closed'; card._render();
+  assert.match(card.shadowRoot.innerHTML, /data-action="all-close" disabled/);
+});
 test('shutter failures are reported and release the busy state', async () => {
   const {card} = setup(); const shutter = addShutter(card);
   card._hass.callService = async () => { throw Error('offline'); };
@@ -358,13 +418,61 @@ test('All renders separate heating and shutter grids while single filters omit h
   const {card} = setup(); addShutter(card);
   card.setConfig({room_type:'all',room_columns:2});
   const markup = card.shadowRoot.innerHTML;
+  assert.match(markup,/data-key="section-heating"/);
+  assert.match(markup,/data-key="section-shutters"/);
   assert.match(markup,/heading-heating/);
   assert.match(markup,/heading-shutters/);
+  assert.match(markup,/heading-heating[^]*?1 of 3 rooms heating · 1 unavailable/);
+  assert.match(markup,/heading-shutters[^]*?1 of 1 shutter open/);
+  assert.match(markup,/heading-heating[^]*?data-action="all-off"/);
+  assert.match(markup,/heading-shutters[^]*?data-action="all-close"/);
+  const header = markup.slice(markup.indexOf('<header'), markup.indexOf('</header>'));
+  assert.doesNotMatch(header,/data-action="all-(?:off|close)"/);
+  assert.doesNotMatch(header,/rooms heating|shutters/);
   assert.ok(markup.indexOf('rooms-heating') < markup.indexOf('climate.bedroom'));
   assert.ok(markup.indexOf('heading-shutters') > markup.indexOf('climate.lounge'));
   assert.ok(markup.indexOf('rooms-shutters') < markup.indexOf('data-key="cover.office"'));
   card.setConfig({room_type:'shutters'});
   assert.doesNotMatch(card.shadowRoot.innerHTML,/data-key="heading-/);
+  assert.match(card.shadowRoot.innerHTML,/<header[^]*?1 of 1 shutter open[^]*?<\/header>/);
+});
+
+test('lights and smart plugs are detected, sectioned, filtered and controlled', async () => {
+  const {card,calls,Editor} = setup();
+  const light = addLight(card); const plug = addPlug(card);
+  card.setConfig({room_type:'all'});
+  assert.match(card.shadowRoot.innerHTML,/section-lights[^]*?all-lights-off/);
+  assert.match(card.shadowRoot.innerHTML,/section-plugs[^]*?all-plugs-off/);
+  assert.match(card.shadowRoot.innerHTML,/Kitchen light/);
+  assert.match(card.shadowRoot.innerHTML,/Lamp plug/);
+  assert.match(card.shadowRoot.innerHTML,/class="room device-plug powered/);
+  await card._deviceService(light,'turn_on',{brightness_pct:75});
+  await card._deviceService(plug,'turn_off');
+  assert.equal(calls[0][0],'light'); assert.equal(calls[0][1],'turn_on'); assert.equal(calls[0][2].brightness_pct,75);
+  assert.equal(calls[1][0],'switch'); assert.equal(calls[1][1],'turn_off');
+  await card._allDevicesOff('lights');
+  await card._allDevicesOff('plugs');
+  assert.equal(calls[2][0],'light'); assert.equal(calls[2][1],'turn_off');
+  assert.equal(calls[3][0],'switch'); assert.equal(calls[3][1],'turn_off');
+  card.setConfig({room_type:'lights'});
+  assert.deepEqual(Array.from(card._rooms(), state => state.entity_id), ['light.kitchen']);
+  assert.match(card.shadowRoot.innerHTML,/data-action="all-lights-off"/);
+  card.setConfig({room_type:'plugs'});
+  assert.deepEqual(Array.from(card._rooms(), state => state.entity_id), ['switch.lamp']);
+  assert.match(card.shadowRoot.innerHTML,/data-action="all-plugs-off"/);
+  const editor = new Editor(); editor._hass = card._hass; editor._entries = card._entries;
+  editor.setConfig({room_type:'lights'});
+  assert.equal(editor._rooms()[0].entity_id,'light.kitchen');
+  assert.equal(editor._typeForm.schema[0].selector.select.options.length,5);
+  editor._selectRoom('light.kitchen');
+  assert.equal(editor._nativeEditor.features.map(feature => feature.type).join(','),'toggle,light-brightness');
+  editor.setConfig({room_type:'plugs'}); editor._selectRoom('switch.lamp');
+  assert.equal(editor._nativeEditor.features.map(feature => feature.type).join(','),'toggle');
+  card._nativeReady = true;
+  card.setConfig({room_type:'plugs',room_options:{'switch.lamp':{native_features:[]}}});
+  assert.doesNotMatch(card.shadowRoot.innerHTML,/data-action="device"/);
+  card.setConfig({room_type:'plugs'});
+  assert.match(card.shadowRoot.innerHTML,/data-room-features="switch.lamp"/);
 });
 
 test('temperature emphasis changes styling, preserves order and persists from editor', () => {
@@ -441,6 +549,31 @@ test('native features retain per-room config and accept new feature types', () =
   assert.equal(host.context.entity_id, 'climate.bedroom');
   assert.equal(host.hass, card._hass);
   assert.equal(JSON.stringify(host.features), JSON.stringify(list));
+});
+
+test('every supported device exposes the same default features that the card renders', () => {
+  const {card, Editor} = setup();
+  addShutter(card); addLight(card); addPlug(card);
+  const expected = {
+    'climate.bedroom':'climate-hvac-modes,target-temperature,climate-preset-modes',
+    'cover.office':'cover-open-close,cover-position',
+    'light.kitchen':'toggle,light-brightness',
+    'switch.lamp':'toggle',
+  };
+  const editor = new Editor(); editor._hass = card._hass; editor._entries = card._entries; editor.setConfig({});
+  for (const [id, types] of Object.entries(expected)) {
+    editor._selectRoom(id);
+    assert.equal(editor._nativeEditor.features.map(feature => feature.type).join(','),types);
+  }
+  card._nativeReady = true;
+  card.setConfig({entities:Object.keys(expected)});
+  const markup = card.shadowRoot.innerHTML;
+  for (const [id, types] of Object.entries(expected)) {
+    assert.equal((markup.match(new RegExp(`data-room-features="${id.replace('.', '\\.')}"`,'g')) || []).length,types.split(',').length);
+  }
+  card.setConfig({entities:Object.keys(expected),room_options:Object.fromEntries(Object.keys(expected).map(id => [id,{native_features:[]}]))});
+  assert.doesNotMatch(card.shadowRoot.innerHTML,/data-room-features=/);
+  assert.doesNotMatch(card.shadowRoot.innerHTML,/class="controls"/);
 });
 
 test('native feature edit callback saves to original room after changing tabs', () => {
@@ -614,6 +747,46 @@ test('Content options persist per room and change header rendering', () => {
   assert.equal(display.content[0], 'current_temperature');
 });
 
+test('Interactions persist per device and execute configured actions', () => {
+  const {card, calls, states, Editor} = setup();
+  const actions = {
+    tap_action:{action:'perform-action',perform_action:'light.turn_on',data:{brightness_pct:40}},
+    hold_action:{action:'toggle'},
+    double_tap_action:{action:'more-info',entity:'climate.lounge'},
+  };
+  card.setConfig({room_options:{'climate.bedroom':{tap_action:actions.tap_action}}});
+  const button = {dataset:{entity:'climate.bedroom'}};
+  card._click({target:{closest:()=>button}});
+  assert.equal(calls[0][0],'light'); assert.equal(calls[0][1],'turn_on'); assert.equal(calls[0][2].brightness_pct,40);
+  card.setConfig({room_options:{'climate.bedroom':actions}});
+  card._runAction(states['climate.bedroom'],actions.hold_action);
+  assert.equal(calls[1][0],'climate'); assert.equal(calls[1][1],'toggle');
+  card._doubleClick({target:{closest:()=>button},preventDefault(){}});
+  assert.equal(card.lastEvent.type,'hass-more-info'); assert.equal(card.lastEvent.detail.entityId,'climate.lounge');
+
+  const editor = new Editor(); editor._hass = card._hass; editor._entries = card._entries;
+  editor.setConfig({}); editor._selectRoom('climate.bedroom');
+  const interactionSchema = editor._roomForm.schema[1].schema;
+  assert.equal(interactionSchema[0].name,'tap_action');
+  assert.equal(interactionSchema[1].type,'divider');
+  assert.equal(interactionSchema[2].name,'icon_tap_action');
+  assert.equal(interactionSchema[3].type,'optional_actions');
+  assert.equal(interactionSchema[3].schema.map(field => field.name).join(','),'hold_action,icon_hold_action,double_tap_action,icon_double_tap_action');
+  assert.equal(editor._roomForm.data.hold_action,undefined);
+  editor._roomForm.listeners['value-changed']({stopPropagation(){},detail:{value:{...editor._roomForm.data,...actions}}});
+  assert.equal(editor.lastEvent.detail.config.room_options['climate.bedroom'].hold_action.action,'toggle');
+  assert.throws(() => card.setConfig({tap_action:'toggle'}));
+});
+
+test('icon interaction uses the native per-domain default action', () => {
+  const {card, calls} = setup();
+  addLight(card); addPlug(card);
+  for (const entity of ['light.kitchen','switch.lamp']) {
+    card._click({target:{closest:()=>({dataset:{entity,interaction:'icon'}})}});
+  }
+  assert.deepEqual(calls.map(call => `${call[0]}.${call[1]}`),['light.toggle','switch.toggle']);
+});
+
 test('Content supports native composed names and omits the entity-picture option', () => {
   const {card, Editor} = setup();
   card._hass.formatEntityName = (state, name) => name[0].type === 'area' ? 'Bedroom area' : state.entity_id;
@@ -622,14 +795,18 @@ test('Content supports native composed names and omits the entity-picture option
   const editor = new Editor(); editor._hass = card._hass; editor._entries = card._entries;
   editor.setConfig({}); editor._selectRoom('climate.bedroom');
   assert.doesNotMatch(JSON.stringify(editor._roomForm.schema), /show_entity_picture|Show entity picture/);
-  const visibilityRow = editor._roomForm.schema.find(item => item.type === 'grid' && item.schema?.some(field => field.name === 'hide_state'));
+  const visibilityRow = editor._roomForm.schema[0].schema.find(item => item.type === 'grid' && item.schema?.some(field => field.name === 'hide_state'));
   assert.equal(visibilityRow.schema.map(field => field.name).join(','), 'hide_state,show_temperatures');
 });
 
-test('Content and Features sections start collapsed', () => {
-  const {Editor} = setup();
+test('Content, Interactions and Features sections start collapsed', () => {
+  const {card,Editor} = setup();
   const editor = new Editor();
-  assert.doesNotMatch(editor._contentPanel.innerHTML, /<ha-expansion-panel[^>]*\sexpanded(?:\s|>)/);
+  editor._hass = card._hass; editor._entries = card._entries; editor.setConfig({});
+  assert.equal(editor._roomForm.schema.map(section => `${section.name}:${section.type}:${section.expanded}`).join(','),
+    'content:expandable:undefined,interactions:expandable:undefined');
+  assert.equal(editor._roomForm.schema.map(section => section.icon).join(','), 'mdi:text-short,mdi:gesture-tap');
+  assert.match(editor._featureList.innerHTML, /<ha-icon[^>]*icon="mdi:list-box"/);
   assert.doesNotMatch(editor._featureList.innerHTML, /<ha-expansion-panel[^>]*\sexpanded(?:\s|>)/);
 });
 
