@@ -412,9 +412,13 @@ test('Show uses compact native buttons and supports multiple device types', () =
   const {card,Editor} = setup(); addShutter(card); addLight(card); addPlug(card);
   const editor = new Editor(); editor._hass = card._hass; editor._entries = card._entries; editor.setConfig({});
   assert.match(editor._typeForm.innerHTML, /<ha-button[^>]*data-room-type="all"/);
+  assert.match(editor._typeForm.innerHTML, /<ha-button[^>]*variant="brand"[^>]*appearance="filled"[^>]*data-room-type="heating"/);
+  assert.match(fs.readFileSync(path.join(__dirname, '../src/wiser-rooms-card.js'), 'utf8'), /\.show-options ha-button\[appearance="filled"\]::part\(base\)[^{]*\{[^}]*border-color:currentColor/);
+  assert.match(fs.readFileSync(path.join(__dirname, '../src/wiser-rooms-card.js'), 'utf8'), /\.show-options ha-button\[appearance="outlined"\]::part\(base\)[^{]*\{[^}]*color:var\(--state-inactive-color\);border-color:var\(--state-inactive-color\)/);
   const choose = roomType => editor._typeForm.listeners.click({target:{closest:()=>({dataset:{roomType}})}});
   choose('heating');
   assert.equal(Array.from(editor.lastEvent.detail.config.room_types).join(','), 'heating');
+  assert.match(editor._typeForm.innerHTML, /<ha-button[^>]*variant="neutral"[^>]*appearance="outlined"[^>]*data-room-type="all"/);
   choose('shutters');
   assert.equal(Array.from(editor.lastEvent.detail.config.room_types).join(','), 'heating,shutters');
   assert.deepEqual(Array.from(editor._rooms(), room => room.entity_id), ['climate.bedroom','climate.lounge','climate.offline','cover.office']);

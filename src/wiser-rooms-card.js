@@ -1519,6 +1519,8 @@
         .show-filter{display:block;margin-top:16px}
         .show-label{display:block;margin:0 0 8px;font-size:14px;color:var(--primary-text-color)}
         .show-options{display:flex;flex-wrap:wrap;gap:8px}
+        .show-options ha-button[appearance="filled"]::part(base){border-color:currentColor}
+        .show-options ha-button[appearance="outlined"]::part(base){color:var(--state-inactive-color);border-color:var(--state-inactive-color)}
         .room-tab-bar{display:flex;flex-direction:row;align-items:center;gap:6px;border-bottom:1px solid var(--divider-color);padding-bottom:2px;margin:20px 0 12px}
         .room-tabs{display:flex;flex-wrap:nowrap;gap:4px;flex:1;min-width:0;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:thin}
         button{font:inherit;color:var(--primary-text-color);cursor:pointer}
@@ -1623,7 +1625,7 @@
       const typeOptions = schema[2].selector.select.options;
       const typeMarkup = `<span class="show-label" id="show-label">${escape(text(this._hass,"show"))}</span><div class="show-options" role="group" aria-labelledby="show-label">${typeOptions.map(option => {
         const active = option.value === "all" ? activeTypes.length === DEVICE_TYPES.length : activeTypes.includes(option.value);
-        return `<ha-button size="s" appearance="${active ? "filled" : "outlined"}" data-room-type="${option.value}" aria-pressed="${active}">${option.label}</ha-button>`;
+        return `<ha-button size="s" variant="${active ? "brand" : "neutral"}" appearance="${active ? "filled" : "outlined"}" data-room-type="${option.value}" aria-pressed="${active}">${option.label}</ha-button>`;
       }).join("")}</div>`;
       if (typeMarkup !== this._typeMarkup) { this._typeForm.innerHTML = typeMarkup; this._typeMarkup = typeMarkup; }
       this._renderTabs(rooms);
