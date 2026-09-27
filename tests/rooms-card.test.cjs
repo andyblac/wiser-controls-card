@@ -942,21 +942,17 @@ test('Content supports native composed names and omits the entity-picture option
   assert.doesNotMatch(JSON.stringify(editor._roomForm.schema), /show_entity_picture|Show entity picture/);
   const contentSchema = editor._roomForm.schema[0].schema;
   const iconColorIndex = contentSchema.findIndex(item => item.type === 'grid' && item.schema?.some(field => field.name === 'icon'));
-  const compactGroups = contentSchema.filter(item => item.column_min_width === '100%');
-  const displayGroupIndex = contentSchema.indexOf(compactGroups[0]);
+  const displayGroupIndex = contentSchema.findIndex(item => item.column_min_width === '180px');
   const displayGroup = contentSchema[displayGroupIndex];
   assert.equal(displayGroupIndex, iconColorIndex + 1);
-  const visibilityRow = displayGroup.schema[0];
+  assert.equal(displayGroup.schema.map(item => item.name).join(','), 'show_temperatures,temperature_focus,show_next_schedule,hide_state');
   const temperatureFocus = displayGroup.schema[1];
-  assert.equal(visibilityRow.column_min_width, '140px');
   assert.equal(Object.keys(temperatureFocus.selector)[0], 'button_toggle');
+  assert.equal(temperatureFocus.label, '');
   assert.equal(JSON.stringify(temperatureFocus.visible), JSON.stringify({field:'show_temperatures',operator:'not_eq',value:false}));
   assert.equal(temperatureFocus.selector.button_toggle.options.map(option => option.label).join(','), 'Current,Target');
-  const stateGroup = compactGroups[1];
-  assert.equal(contentSchema.indexOf(stateGroup), displayGroupIndex + 1);
-  assert.equal(stateGroup.schema.map(item => item.name).join(','), 'state_content,hide_state');
-  assert.equal(visibilityRow.schema.map(field => field.name).join(','), 'show_temperatures,show_next_schedule');
-  assert.match(fs.readFileSync(path.join(__dirname, '../src/wiser-rooms-card.js'), 'utf8'), /ha-form\.room-options\{[^}]*--ha-space-6:12px/);
+  assert.equal(contentSchema[displayGroupIndex + 1].name, 'state_content');
+  assert.match(fs.readFileSync(path.join(__dirname, '../src/wiser-rooms-card.js'), 'utf8'), /ha-form\.room-options\{[^}]*--ha-space-6:var\(--ha-space-1,4px\)/);
 });
 
 test('Content, Interactions and Features sections start collapsed', () => {

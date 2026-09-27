@@ -1564,7 +1564,7 @@
         .room-tools{display:flex;flex-wrap:nowrap;gap:4px;margin-left:auto;flex-shrink:0}
         .room-tools ha-icon-button{--ha-icon-button-size:34px}
         button:disabled{opacity:.35;cursor:default}ha-icon{--mdc-icon-size:20px;pointer-events:none}
-        ha-form.room-options{display:block;margin-bottom:24px;--ha-space-6:12px}
+        ha-form.room-options{display:block;margin-bottom:24px;--ha-space-6:var(--ha-space-1,4px)}
         ha-expansion-panel{display:block;--expansion-panel-content-padding:0;border-radius:var(--ha-border-radius-md);--ha-card-border-radius:var(--ha-border-radius-md)}
         ha-expansion-panel .content{padding:12px}
         ha-expansion-panel>*[slot="header"]{margin:0;font-size:inherit;font-weight:inherit}
@@ -1638,7 +1638,7 @@
           {value: "all", label: text(this._hass,"all")}, {value: "heating", label: text(this._hass,"heating")}, {value: "shutters", label: text(this._hass,"shutters")},
           {value: "lights", label: text(this._hass,"lights")}, {value: "plugs", label: text(this._hass,"plugs")},
         ]}}},
-        {name: "temperature_focus", label: text(this._hass,"temperature_emphasis"), visible:{field:"show_temperatures",operator:"not_eq",value:false}, selector: {button_toggle: {options: [
+        {name: "temperature_focus", label:"", visible:{field:"show_temperatures",operator:"not_eq",value:false}, selector: {button_toggle: {options: [
           {value: "current", label: text(this._hass,"current")}, {value: "target", label: text(this._hass,"target")},
         ]}}},
 
@@ -1677,17 +1677,13 @@
           {name:"icon", label:text(this._hass,"icon"), selector:{icon:{}}, context:{icon_entity:"entity"}},
           {name:"color", label:text(this._hass,"color"), selector:{ui_color:{default_color:"state",include_state:true}}},
         ]},
-        {name:"",type:"grid",column_min_width:"100%",schema:[
-          {name:"",type:"grid",column_min_width:"140px",schema:[
-            {name:"show_temperatures",label:metricLabel,selector:{boolean:{}}},
-            {name:"show_next_schedule",label:text(this._hass,"show_next_schedule"),selector:{boolean:{}}},
-          ]},
+        {name:"",type:"grid",column_min_width:"180px",schema:[
+          {name:"show_temperatures",label:metricLabel,selector:{boolean:{}}},
           ...(heating ? [schema[3]] : []),
-        ]},
-        {name:"",type:"grid",column_min_width:"100%",schema:[
-          {name:"state_content",label:text(this._hass,"state_content"),visible:{field:"hide_state",operator:"not_eq",value:true},selector:{ui_state_content:{allow_context:true}},context:{filter_entity:"entity"}},
+          {name:"show_next_schedule",label:text(this._hass,"show_next_schedule"),selector:{boolean:{}}},
           {name:"hide_state",label:text(this._hass,"hide_state"),selector:{boolean:{}}},
         ]},
+        {name:"state_content",label:text(this._hass,"state_content"),visible:{field:"hide_state",operator:"not_eq",value:true},selector:{ui_state_content:{allow_context:true}},context:{filter_entity:"entity"}},
       ];
       const actionSchema = [
         {name:"tap_action",label:"Tap action",selector:{ui_action:{default_action:"more-info"}},context:{filter_entity:"entity"}},
@@ -1712,6 +1708,7 @@
         double_tap_action:selectedOptions.double_tap_action,icon_double_tap_action:selectedOptions.icon_double_tap_action};
       for (const key of Object.keys(roomData)) if (roomData[key] === undefined) delete roomData[key];
       if (JSON.stringify(roomData) !== JSON.stringify(this._roomForm.data)) this._roomForm.data = roomData;
+      this._alignTemperatureFocus();
       this._roomForm.hidden = !this._selectedRoom;
       this._featureList.hidden = !this._selectedRoom;
       this._renderFeatures();
@@ -1720,6 +1717,31 @@
         : !rooms.length ? text(this._hass,"no_devices")
         : "";
       this._message.hidden = !this._message.textContent;
+    }
+    async _alignTemperatureFocus() {
+      await this._roomForm?.updateComplete;
+      const content = [...(this._roomForm?.shadowRoot?.querySelectorAll("ha-form-expandable") || [])]
+        .find(item => item.schema?.name === "content");
+      await content?.updateComplete;
+      const form = content?.shadowRoot?.querySelector("ha-form");
+      await form?.updateComplete;
+      const grid = [...(form?.shadowRoot?.querySelectorAll("ha-form-grid") || [])]
+        .find(item => item.schema?.schema?.some(field => field.name === "temperature_focus"));
+      await grid?.updateComplete;
+      const index = grid?.schema?.schema?.findIndex(field => field.name === "temperature_focus") ?? -1;
+      const fields = [...(grid?.shadowRoot?.children || [])].filter(item => item.localName === "ha-form");
+      const field = fields[index];
+      if (!field) return;
+      field.style.justifySelf = "end";
+      field.style.alignSelf = "center";
+      field.style.setProperty("--ha-button-height", "32px");
+      await field.updateComplete;
+      const selector = field.shadowRoot?.querySelector("ha-selector");
+      await selector?.updateComplete;
+      const buttonSelector = selector?.shadowRoot?.querySelector("ha-selector-button-toggle");
+      await buttonSelector?.updateComplete;
+      const group = buttonSelector?.shadowRoot?.querySelector("ha-button-toggle-group");
+      if (group) group.size = "s";
     }
     _setRoomOptions(options) {
       if (!this._selectedRoom) return;
