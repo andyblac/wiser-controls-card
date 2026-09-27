@@ -950,6 +950,7 @@ test('Content supports native composed names and omits the entity-picture option
   const temperatureFocus = displayGroup.schema[1];
   assert.equal(visibilityRow.column_min_width, '140px');
   assert.equal(Object.keys(temperatureFocus.selector)[0], 'button_toggle');
+  assert.equal(JSON.stringify(temperatureFocus.visible), JSON.stringify({field:'show_temperatures',operator:'not_eq',value:false}));
   assert.equal(temperatureFocus.selector.button_toggle.options.map(option => option.label).join(','), 'Current,Target');
   const stateGroup = compactGroups[1];
   assert.equal(contentSchema.indexOf(stateGroup), displayGroupIndex + 1);

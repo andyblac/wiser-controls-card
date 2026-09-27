@@ -1638,7 +1638,7 @@
           {value: "all", label: text(this._hass,"all")}, {value: "heating", label: text(this._hass,"heating")}, {value: "shutters", label: text(this._hass,"shutters")},
           {value: "lights", label: text(this._hass,"lights")}, {value: "plugs", label: text(this._hass,"plugs")},
         ]}}},
-        {name: "temperature_focus", label: text(this._hass,"temperature_emphasis"), selector: {button_toggle: {options: [
+        {name: "temperature_focus", label: text(this._hass,"temperature_emphasis"), visible:{field:"show_temperatures",operator:"not_eq",value:false}, selector: {button_toggle: {options: [
           {value: "current", label: text(this._hass,"current")}, {value: "target", label: text(this._hass,"target")},
         ]}}},
 
