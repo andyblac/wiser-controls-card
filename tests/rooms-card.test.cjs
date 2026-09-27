@@ -13,7 +13,12 @@ function setup() {
     attachShadow() { this.shadowRoot = {addEventListener() {}, append() {}, innerHTML: ''}; }
     dispatchEvent(event) { this.lastEvent = event; }
   }, customElements: {get() {}, define(name, cls) { elements[name] = cls; if (name === "wiser-rooms-card") Card = cls; else if (name === "wiser-rooms-card-editor") Editor = cls; }}};
-  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../src/wiser-rooms-card.js'), 'utf8'), context);
+  const languages = Object.fromEntries(['en-US','en-GB','de','fr'].map(language => [language,
+    JSON.parse(fs.readFileSync(path.join(__dirname, `../src/localize/languages/${language}.json`), 'utf8'))]));
+  const localize = fs.readFileSync(path.join(__dirname, '../src/localize/localize.js'), 'utf8')
+    .replace('__WISER_ROOMS_TRANSLATIONS__', JSON.stringify(languages));
+  const cardSource = fs.readFileSync(path.join(__dirname, '../src/wiser-rooms-card.js'), 'utf8');
+  vm.runInNewContext(`${localize}\n${cardSource}`, context);
   const calls = [];
   const state = (id, extra = {}, mode = 'auto') => ({entity_id: id, state: mode, attributes: {name:id, heating_type:'Radiator', current_temperature:20, temperature:21, hvac_modes:['auto','heat','off'], ...extra}});
   const states = {
@@ -23,12 +28,33 @@ function setup() {
     'climate.other': state('climate.other'),
     'climate.hot_water': {entity_id:'climate.hot_water',state:'auto',attributes:{temperature:55,hvac_modes:['auto','off']}},
   };
+  const nativeText = {
+    'ui.components.selectors.automation_behavior.trigger.options.all.label':'All',
+    'ui.common.show':'Show', 'ui.common.name':'Name', 'ui.common.next':'Next', 'ui.common.current':'Current',
+    'state.default.unavailable':'Unavailable',
+    'component.switch.entity_component._.state.on':'On', 'component.switch.entity_component._.state.off':'Off',
+    'ui.card.climate.target':'Target',
+    'ui.panel.lovelace.editor.card.generic.title':'Title', 'ui.panel.lovelace.editor.card.generic.entity':'Entity',
+    'ui.panel.lovelace.editor.card.generic.features':'Features', 'ui.panel.lovelace.editor.card.tile.features_position':'Features position',
+    'ui.panel.lovelace.editor.card.tile.features_position_options.bottom':'Bottom',
+    'ui.panel.lovelace.editor.card.tile.features_position_options.inline':'Inline',
+    'ui.panel.lovelace.editor.card.tile.state_content':'State content',
+    'ui.panel.lovelace.editor.card.generic.icon':'Icon', 'ui.panel.lovelace.editor.card.tile.color':'Colour',
+    'ui.panel.lovelace.editor.card.tile.hide_state':'Hide state', 'ui.panel.lovelace.editor.card.generic.content':'Content',
+    'ui.panel.lovelace.editor.card.generic.interactions':'Interactions',
+    'component.climate.entity_component._.state_attributes.hvac_action.state.heating':'Heating',
+    'component.climate.entity_component._.state_attributes.hvac_action.state.cooling':'Cooling',
+    'component.climate.entity_component._.state_attributes.hvac_action.state.idle':'Idle',
+    'panel.light':'Lights',
+    'component.cover.entity_component._.state.open':'Open', 'component.cover.entity_component._.state.closed':'Closed',
+    'component.cover.entity_component._.state.opening':'Opening', 'component.cover.entity_component._.state.closing':'Closing',
+  };
   const card = new Card();
   card._updateDOM = function(markup) {
     if (!this.shadowRoot.activeElement) this.shadowRoot.innerHTML = markup;
   };
   card.setConfig({});
-  card._hass = {states, language:'en', config:{unit_system:{temperature:'°C'}}, callService:async (...args) => calls.push(args)};
+  card._hass = {states, language:'en', config:{unit_system:{temperature:'°C'}}, localize:key => nativeText[key] || key, callService:async (...args) => calls.push(args)};
   card._entries = Object.keys(states).map(entity_id => ({entity_id, platform:entity_id === 'climate.other' ? 'other' : 'wiser', config_entry_id:entity_id === 'climate.lounge' ? 'hub-b' : 'hub-a'}));
   return {card, calls, states, Editor, elements, window:context.window};
 }
@@ -352,6 +378,15 @@ function addPlug(card, extra = {}, entity_id = 'switch.lamp') {
   card._entries.push({entity_id,platform:'wiser',config_entry_id:'hub-a'});
   return plug;
 }
+function addModeSelect(card, device, state = 'Manual') {
+  const entry = card._entries.find(item => item.entity_id === device.entity_id);
+  entry.device_id = `device-${device.entity_id}`;
+  const entity_id = `select.${device.entity_id.replace('.', '_')}_mode`;
+  const select = {entity_id,state,attributes:{friendly_name:`${device.attributes.name} Mode`,options:['Auto','Manual']}};
+  card._hass.states[entity_id] = select;
+  card._entries.push({entity_id,platform:'wiser',config_entry_id:entry.config_entry_id,device_id:entry.device_id});
+  return select;
+}
 test('All Heating Shutters filters include only detected Wiser entities', () => {
   const {card, Editor} = setup();
   addShutter(card);
@@ -513,6 +548,26 @@ test('lights and smart plugs are detected, sectioned, filtered and controlled', 
   assert.doesNotMatch(card.shadowRoot.innerHTML,/data-action="device"/);
   card.setConfig({room_type:'plugs'});
   assert.match(card.shadowRoot.innerHTML,/data-room-features="switch.lamp"/);
+});
+
+test('scheduled shutters lights and plugs can all resume Auto mode', async () => {
+  const {card,calls} = setup();
+  const shutter = addShutter(card, {schedule_id:2}); const light = addLight(card); const plug = addPlug(card);
+  const selects = [addModeSelect(card, shutter), addModeSelect(card, light), addModeSelect(card, plug)];
+  card.setConfig({room_type:'all'});
+  for (const type of ['shutters','lights','plugs']) assert.match(card.shadowRoot.innerHTML, new RegExp(`data-action="resume-${type}"[^>]*[^]*?Resume schedules`));
+  await card._resumeSchedules('shutters');
+  await card._resumeSchedules('lights');
+  await card._resumeSchedules('plugs');
+  assert.equal(calls.length,3);
+  assert.equal(calls.every(call => call[0] === 'select' && call[1] === 'select_option' && call[2].option === 'Auto'),true);
+  assert.deepEqual(calls.map(call => call[2].entity_id).sort(),selects.map(select => select.entity_id).sort());
+  selects.forEach(select => { select.state = 'Auto'; });
+  card.setConfig({room_type:'lights'});
+  assert.match(card.shadowRoot.innerHTML, /data-action="resume-lights"[^>]*disabled/);
+  selects[2].state = 'Manual'; delete plug.attributes.schedule_id;
+  card.setConfig({room_type:'plugs'});
+  assert.match(card.shadowRoot.innerHTML, /data-action="resume-plugs"[^>]*disabled/);
 });
 
 test('temperature emphasis changes styling, preserves order and persists from editor', () => {
@@ -943,4 +998,25 @@ test('card uses native Home Assistant entity icons and action buttons', () => {
   card.shadowRoot.querySelectorAll = selector => selector === 'ha-state-icon[data-room-icon]' ? [icon] : [];
   card._syncNativeFeatures();
   assert.equal(icon.stateObj.entity_id, 'climate.bedroom');
+});
+
+test('localization follows the other Wiser cards and prefers Home Assistant text', () => {
+  const {window} = setup();
+  const {localize,languageFor} = window.WiserRoomsLocalize;
+  assert.equal(languageFor({locale:{language:'fr-FR'}}), 'fr');
+  assert.equal(localize({language:'fr'}, 'resume_schedules'), 'Reprendre les programmes');
+  assert.equal(localize({language:'de'}, 'no_schedule'), 'Kein Zeitplan zugewiesen');
+  const hass = {language:'en',localize:key => key === 'ui.components.selectors.automation_behavior.trigger.options.all.label' ? 'Everything' : key};
+  assert.equal(localize(hass, 'all'), 'Everything');
+  assert.equal(localize(hass, 'cancel_overrides'), 'Cancel overrides');
+});
+
+test('language files contain no Home Assistant-owned labels or states', () => {
+  const nativeOwned = ['all','show','name','unavailable','on','off','current','target','title','entity','features',
+    'features_position','bottom','inline','state_content','icon','color','hide_state','content','interactions',
+    'heating','cooling','idle','lights','open','closed','opening','closing','next'];
+  for (const language of ['en-US','en-GB','de','fr']) {
+    const translations = JSON.parse(fs.readFileSync(path.join(__dirname, `../src/localize/languages/${language}.json`), 'utf8'));
+    assert.deepEqual(nativeOwned.filter(key => Object.hasOwn(translations,key)), [], language);
+  }
 });

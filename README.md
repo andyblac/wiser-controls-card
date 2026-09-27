@@ -121,6 +121,9 @@ available, shown shutters that support closing. With **Heating** selected, the
 header action remains **All off**. Lights and Smart plugs each have their own
 **All off** action. With **All** selected, every category has its own header and
 bulk action; one category's action never controls another category or hot water.
+Shutters, lights and smart plugs with assigned schedules also show **Resume
+schedules**. It returns each eligible device to its Wiser `Auto` schedule mode;
+devices without an assigned schedule are excluded.
 
 Choose **Temperature emphasis → Current / Target** in the editor to select which
 temperature uses larger, brighter text. Current is the default. Display order
@@ -191,6 +194,11 @@ native_features:
 adds a calendar icon that advances the room to its next schedule period. The normal
 next-schedule text stays in the Wiser room header.
 
+**Override end time** is available as its own header feature and as a state-content
+choice inside **Secondary status**. Secondary status can use the selected room, a
+different entity, or no explicit entity; without one it follows the room currently
+being rendered.
+
 ### Room content
 
 Each room tab has a **Content** panel with native composed/custom name, icon,
@@ -198,3 +206,13 @@ colour, hide-state and state-content selectors. Wiser options
 control the current/target temperature (or shutter position), temperature emphasis,
 and next schedule visibility. These settings are stored per entity in
 `room_options`. Defaults retain the existing header layout.
+
+### Localisation and Home Assistant components
+
+The card includes English (US and UK), German and French translations. Generic
+labels and entity states come directly from Home Assistant, matching the other
+Wiser cards; the bundled language files contain only Wiser-specific wording. The
+visual editor and room features use Home Assistant components such
+as `ha-form`, native selectors, `hui-card-features-editor`, `hui-card-features`,
+`state-display`, `ha-state-icon` and `ha-button`. Custom rendering remains only for
+the multi-room layout, Wiser aggregate actions and Wiser-specific header features.

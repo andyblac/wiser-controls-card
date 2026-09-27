@@ -1,6 +1,7 @@
 /* Wiser rooms dashboard card. Bundled with the integration. */
 (() => {
   const CARD_VERSION = "__WISER_CARD_VERSION__";
+  const {localize:text, languageFor} = window.WiserRoomsLocalize;
   const DEVICE_TYPES = ["heating", "shutters", "lights", "plugs"];
   const FEATURES = ["modes", "temperature", "advance"];
   const SECONDARY_STATUS_FEATURE = "wiser-secondary-status-feature";
@@ -67,13 +68,13 @@
     return `${hours}h${remainder ? ` ${remainder}m` : ""}`;
   };
   const overrideEndValue = (room, hass) => {
-    if (!room || !isHeatingOverride(room)) return "No override";
+    if (!room || !isHeatingOverride(room)) return text(hass, "no_override");
     const end = overrideEnd(room);
     const locale = hass?.locale?.language || hass?.language;
     const endTime = end?.toLocaleString(locale, {weekday:"short",hour:"2-digit",minute:"2-digit"});
     const remaining = formatDuration(overrideMinutes(room));
-    return endTime ? `${endTime}${remaining ? ` · ${remaining} remaining` : ""}`
-      : remaining ? `${remaining} remaining` : "Unavailable";
+    return endTime ? `${endTime}${remaining ? ` · ${text(hass, "remaining", {time:remaining})}` : ""}`
+      : remaining ? text(hass, "remaining", {time:remaining}) : text(hass, "unavailable");
   };
   const withOverrideEnd = (state, hass) => state ? {
     ...state,
@@ -184,7 +185,7 @@
       }
       if (config.native_features !== undefined && !validNativeFeatures(config.native_features)) throw new Error("Invalid native_features");
       for (const key of ["tap_action","icon_tap_action","hold_action","icon_hold_action","double_tap_action","icon_double_tap_action"]) if (config[key] !== undefined && !validAction(config[key])) throw new Error(`Invalid ${key}`);
-      this._config = {show_controls: true, title: "Wiser rooms", room_columns: 1, room_type: "all", temperature_focus: "current", ...config};
+      this._config = {show_controls: true, room_columns: 1, room_type: "all", temperature_focus: "current", ...config};
       this._render();
     }
     static getStubConfig() { return {type: "custom:wiser-rooms-card", title: "Wiser rooms"}; }
@@ -193,6 +194,7 @@
     getGridOptions() { return {columns: 9, min_columns: 9}; }
     set hass(hass) {
       this._hass = hass;
+      updateFeatureTranslations(hass);
       if (!this._nativeReady && !this._nativePending) {
         this._nativePending = true;
         loadNativeFeatures().then(() => { this._nativeReady = true; this._render(); })
@@ -357,7 +359,7 @@
     _renderShutter(room, preview) {
       const options = roomConfig(this._config, room.entity_id);
       const id = escape(room.entity_id), a = room.attributes;
-      const status = !available(room) ? "Unavailable" : ({open:"Open",closed:"Closed",opening:"Opening",closing:"Closing"}[room.state] || room.state);
+      const status = !available(room) ? text(this._hass,"unavailable") : ({open:text(this._hass,"open"),closed:text(this._hass,"closed"),opening:text(this._hass,"opening"),closing:text(this._hass,"closing")}[room.state] || room.state);
       const disabled = this._busy || !available(room);
       const position = typeof a.current_position === "number" ? a.current_position : null;
       const color = available(room) ? "var(--state-cover-active-color,var(--primary-color))" : "var(--disabled-text-color)";
@@ -372,12 +374,12 @@
     _deviceSchedule(state) {
       const date = state.attributes.next_schedule_datetime ? new Date(state.attributes.next_schedule_datetime) : null;
       const time = date && Number.isFinite(date.getTime()) ? date.toLocaleString(this._hass.locale?.language || this._hass.language, {weekday:"short",hour:"2-digit",minute:"2-digit"}) : state.attributes.next_schedule_change;
-      return state.attributes.schedule_id && time ? `Next ${time} · ${state.attributes.next_schedule_state ?? ""}` : state.attributes.schedule_id ? state.attributes.schedule_name : "No schedule assigned";
+      return state.attributes.schedule_id && time ? `${text(this._hass,"next")} ${time} · ${state.attributes.next_schedule_state ?? ""}` : state.attributes.schedule_id ? state.attributes.schedule_name : text(this._hass,"no_schedule");
     }
     _renderPoweredDevice(state, preview) {
       const options = roomConfig(this._config, state.entity_id);
       const id = escape(state.entity_id), light = isLight(state), on = state.state === "on";
-      const status = !available(state) ? "Unavailable" : on ? "On" : "Off";
+      const status = !available(state) ? text(this._hass,"unavailable") : on ? text(this._hass,"on") : text(this._hass,"off");
       const disabled = this._busy || !available(state) ? "disabled" : "";
       const brightness = light && typeof state.attributes.brightness === "number" ? Math.round(state.attributes.brightness / 255 * 100) : null;
       const reading = light ? (brightness === null ? "—" : `${brightness}%`) : status;
@@ -443,6 +445,33 @@
       if (failed.length) this._error = `Could not turn off: ${failed.map(state => this._name(state)).join(", ")}. Please retry.`;
       this._busy = false; this._render();
     }
+    _scheduleModeTarget(device) {
+      const entry = this._entries?.find(item => item.entity_id === device.entity_id);
+      if (!entry?.device_id) return null;
+      for (const candidate of this._entries) {
+        if (!candidate.entity_id?.startsWith("select.") || candidate.device_id !== entry.device_id
+          || candidate.config_entry_id && entry.config_entry_id && candidate.config_entry_id !== entry.config_entry_id) continue;
+        const state = this._hass.states[candidate.entity_id];
+        const auto = state?.attributes?.options?.find(option => String(option).toLowerCase() === "auto");
+        if (available(state) && auto && String(state.state).toLowerCase() !== "auto") return {device, select:state, option:auto};
+      }
+      return null;
+    }
+    _scheduleModeTargets(type) {
+      if (!["shutters","lights","plugs"].includes(type)) return [];
+      return this._rooms().filter(device => deviceType(device) === type && available(device) && Boolean(device.attributes.schedule_id))
+        .map(device => this._scheduleModeTarget(device)).filter(Boolean);
+    }
+    async _resumeSchedules(type) {
+      if (this._busy || !selectedTypes(this._config).includes(type)) return;
+      const targets = this._scheduleModeTargets(type);
+      if (!targets.length) return;
+      this._busy = true; this._error = ""; this._render();
+      const results = await Promise.allSettled(targets.map(target => this._hass.callService("select", "select_option", {entity_id:target.select.entity_id, option:target.option})));
+      const failed = targets.filter((_, index) => results[index].status === "rejected");
+      if (failed.length) this._error = `Could not resume schedules: ${failed.map(target => this._name(target.device)).join(", ")}. Please retry.`;
+      this._busy = false; this._render();
+    }
     _click(event) {
       const button = event.target.closest("button,ha-button");
       if (!button || button.disabled) return;
@@ -451,6 +480,7 @@
       if (button.dataset.action === "all-close") { this._closeAll(); return; }
       if (button.dataset.action === "all-lights-off") { this._allDevicesOff("lights"); return; }
       if (button.dataset.action === "all-plugs-off") { this._allDevicesOff("plugs"); return; }
+      if (button.dataset.action?.startsWith("resume-")) { this._resumeSchedules(button.dataset.action.slice(7)); return; }
       if (button.dataset.action === "retry") { this._discover(); return; }
       const room = this._rooms().find(r => r.entity_id === button.dataset.entity);
       if (room && button.dataset.action === "shutter") {
@@ -591,18 +621,21 @@
         room.attributes.preset_modes?.includes("Cancel Overrides"));
       const canClose = rooms.some(room => isShutter(room) && available(room) && room.state !== "closed" && (room.attributes.supported_features & 2));
       const canTurnOff = type => rooms.some(state => deviceType(state) === type && available(state) && state.state === "on");
-      const allOffAction = section => `<ha-button class="off${section ? " section-action" : ""}" data-action="all-off" size="m" appearance="filled" variant="danger" ${this._busy || !canOff ? "disabled" : ""} title="Turn all heating off"><ha-icon slot="start" icon="mdi:power"></ha-icon>All off</ha-button>`;
-      const cancelOverridesAction = section => `<ha-button class="off cancel-overrides${section ? " section-action" : ""}" data-action="cancel-overrides" size="m" appearance="filled" variant="brand" ${this._busy || !canCancelOverrides ? "disabled" : ""} title="Cancel all heating overrides"><ha-icon slot="start" icon="mdi:restore"></ha-icon>Cancel overrides${overriddenRooms.length ? ` (${overriddenRooms.length})` : ""}</ha-button>`;
+      const canResume = type => this._scheduleModeTargets(type).length > 0;
+      const allOffAction = section => `<ha-button class="off${section ? " section-action" : ""}" data-action="all-off" size="m" appearance="filled" variant="danger" ${this._busy || !canOff ? "disabled" : ""} title="${escape(text(this._hass,"turn_all_off",{devices:text(this._hass,"heating")}))}"><ha-icon slot="start" icon="mdi:power"></ha-icon>${escape(text(this._hass,"all_off"))}</ha-button>`;
+      const cancelOverridesAction = section => `<ha-button class="off cancel-overrides${section ? " section-action" : ""}" data-action="cancel-overrides" size="m" appearance="filled" variant="brand" ${this._busy || !canCancelOverrides ? "disabled" : ""} title="${escape(text(this._hass,"cancel_all_title"))}"><ha-icon slot="start" icon="mdi:restore"></ha-icon>${escape(text(this._hass,"cancel_overrides"))}${overriddenRooms.length ? ` (${overriddenRooms.length})` : ""}</ha-button>`;
       const heatingActions = section => `<div class="bulk-actions">${cancelOverridesAction(section)}${allOffAction(section)}</div>`;
-      const closeAllAction = section => `<ha-button class="off close-all${section ? " section-action" : ""}" data-action="all-close" size="m" appearance="filled" variant="brand" ${this._busy || !canClose ? "disabled" : ""} title="Close all shutters"><ha-icon slot="start" icon="mdi:window-shutter"></ha-icon>Close all</ha-button>`;
-      const deviceOffAction = (type, section) => `<ha-button class="off device-off${section ? " section-action" : ""}" data-action="all-${type}-off" size="m" appearance="filled" variant="brand" ${this._busy || !canTurnOff(type) ? "disabled" : ""} title="Turn all ${type === "plugs" ? "smart plugs" : type} off"><ha-icon slot="start" icon="mdi:power"></ha-icon>All off</ha-button>`;
-      const headerAction = grouped ? "" : singleType === "shutters" ? closeAllAction(false) : singleType === "lights" ? deviceOffAction("lights", false) : singleType === "plugs" ? deviceOffAction("plugs", false) : heatingActions(false);
+      const closeAllAction = section => `<ha-button class="off close-all${section ? " section-action" : ""}" data-action="all-close" size="m" appearance="filled" variant="brand" ${this._busy || !canClose ? "disabled" : ""} title="${escape(text(this._hass,"close_all_title"))}"><ha-icon slot="start" icon="mdi:window-shutter"></ha-icon>${escape(text(this._hass,"close_all"))}</ha-button>`;
+      const deviceOffAction = (type, section) => `<ha-button class="off device-off${section ? " section-action" : ""}" data-action="all-${type}-off" size="m" appearance="filled" variant="brand" ${this._busy || !canTurnOff(type) ? "disabled" : ""} title="${escape(text(this._hass,"turn_all_off",{devices:text(this._hass,type)}))}"><ha-icon slot="start" icon="mdi:power"></ha-icon>${escape(text(this._hass,"all_off"))}</ha-button>`;
+      const resumeSchedulesAction = (type, section) => `<ha-button class="off resume-schedules${section ? " section-action" : ""}" data-action="resume-${type}" size="m" appearance="filled" variant="brand" ${this._busy || !canResume(type) ? "disabled" : ""} title="${escape(text(this._hass,"return_schedules",{devices:text(this._hass,type)}))}"><ha-icon slot="start" icon="mdi:calendar-sync"></ha-icon>${escape(text(this._hass,"resume_schedules"))}</ha-button>`;
+      const scheduledDeviceActions = (type, section) => `<div class="bulk-actions">${resumeSchedulesAction(type, section)}${type === "shutters" ? closeAllAction(section) : deviceOffAction(type, section)}</div>`;
+      const headerAction = grouped ? "" : singleType === "heating" ? heatingActions(false) : scheduledDeviceActions(singleType, false);
       const unit = this._hass.config?.unit_system?.temperature || "°C";
       const groups = grouped
-        ? [{key:"heating", title:"Heating", rooms:rooms.filter(room => deviceType(room) === "heating")},
-           {key:"shutters", title:"Shutters", rooms:rooms.filter(isShutter)},
-           {key:"lights", title:"Lights", rooms:rooms.filter(isLight)},
-           {key:"plugs", title:"Smart plugs", rooms:rooms.filter(isPlug)}].filter(group => types.includes(group.key) && group.rooms.length)
+        ? [{key:"heating", title:text(this._hass,"heating"), rooms:rooms.filter(room => deviceType(room) === "heating")},
+           {key:"shutters", title:text(this._hass,"shutters"), rooms:rooms.filter(isShutter)},
+           {key:"lights", title:text(this._hass,"lights"), rooms:rooms.filter(isLight)},
+           {key:"plugs", title:text(this._hass,"plugs"), rooms:rooms.filter(isPlug)}].filter(group => types.includes(group.key) && group.rooms.length)
         : [{key:singleType, title:"", rooms}];
       const groupStatus = group => {
         const total = group.rooms.length;
@@ -612,14 +645,13 @@
         const active = group.rooms.filter(room => available(room) && (group.key === "heating"
           ? room.state !== "off" && ["heating","cooling"].includes(room.attributes.hvac_action)
           : group.key === "shutters" ? room.state !== "closed" : room.state === "on")).length;
-        const noun = group.key === "heating" ? `room${total === 1 ? "" : "s"}`
-          : group.key === "shutters" ? `shutter${total === 1 ? "" : "s"}`
-          : group.key === "lights" ? `light${total === 1 ? "" : "s"}` : `smart plug${total === 1 ? "" : "s"}`;
-        const state = group.key === "heating" ? cooling && !heating ? "cooling" : cooling ? "heating or cooling" : "heating" : group.key === "shutters" ? "open" : "on";
+        const plural = new Intl.PluralRules(languageFor(this._hass)).select(total) === "one" ? "one" : "other";
+        const noun = text(this._hass,`${group.key === "heating" ? "room" : group.key === "shutters" ? "shutter" : group.key === "lights" ? "light" : "plug"}_${plural}`);
+        const state = text(this._hass, group.key === "heating" ? cooling && !heating ? "cooling" : cooling ? "heating_or_cooling" : "heating" : group.key === "shutters" ? "open" : "on").toLocaleLowerCase(languageFor(this._hass));
         const overrides = group.key === "heating" ? group.rooms.filter(isHeatingOverride) : [];
         const remaining = overrides.map(overrideMinutes).filter(Number.isFinite);
-        const overrideStatus = overrides.length ? ` · ${overrides.length} override${overrides.length === 1 ? "" : "s"}${remaining.length ? ` · next ends in ${formatDuration(Math.min(...remaining))}` : ""}` : "";
-        return `${active} of ${total} ${noun} ${state}${overrideStatus}${unavailable ? ` · ${unavailable} unavailable` : ""}`;
+        const overrideStatus = overrides.length ? ` · ${overrides.length} ${text(this._hass,`override_${overrides.length === 1 ? "one" : "other"}`)}${remaining.length ? ` · ${text(this._hass,"next_ends",{time:formatDuration(Math.min(...remaining))})}` : ""}` : "";
+        return `${text(this._hass,"group_status",{active,total,noun,state})}${overrideStatus}${unavailable ? ` · ${text(this._hass,"unavailable_count",{count:unavailable})}` : ""}`;
       };
       const preview = isEditorPreview(this);
       // Orbit expands a selected item to its normal grid width (six of twelve by default).
@@ -1135,9 +1167,9 @@
           align-items:flex-start;
           flex-wrap:wrap
         }
-      </style><ha-card data-key="card" class="${preview ? "editor-preview" : ""}"><header data-key="header"><div><h2>${escape(this._config.title)}</h2>${grouped || !groups.length ? "" : `<p>${groupStatus(groups[0])}</p>`}</div>${headerAction}</header>
+      </style><ha-card data-key="card" class="${preview ? "editor-preview" : ""}"><header data-key="header"><div><h2>${escape(this._config.title ?? text(this._hass,"wiser_rooms"))}</h2>${grouped || !groups.length ? "" : `<p>${groupStatus(groups[0])}</p>`}</div>${headerAction}</header>
           ${this._error ? `<div data-key="error" class="message error" role="alert">${escape(this._error)}${this._discoveryFailed ? '<ha-button data-action="retry" size="s" appearance="outlined" variant="danger">Retry</ha-button>' : ""}</div>` : ""}
-      ${!rooms.length ? `<p data-key="empty" class="message">${this._loading ? "Finding Wiser devices…" : "No matching Wiser devices found."}</p>` : groups.map(group => `${grouped ? `<section class="room-section" data-key="section-${group.key}"><div class="section-title" data-key="heading-${group.key}"><div><h3>${group.title}</h3><p>${groupStatus(group)}</p></div>${group.key === "heating" ? heatingActions(true) : group.key === "shutters" ? closeAllAction(true) : deviceOffAction(group.key, true)}</div>` : ""}<div class="rooms ${expandPreview ? "preview-rows" : ""}" data-key="rooms-${group.key}" style="--room-columns:${this._config.room_columns}">${group.rooms.map((room, index) => {
+      ${!rooms.length ? `<p data-key="empty" class="message">${this._loading ? text(this._hass,"finding") : text(this._hass,"no_devices")}</p>` : groups.map(group => `${grouped ? `<section class="room-section" data-key="section-${group.key}"><div class="section-title" data-key="heading-${group.key}"><div><h3>${group.title}</h3><p>${groupStatus(group)}</p></div>${group.key === "heating" ? heatingActions(true) : scheduledDeviceActions(group.key, true)}</div>` : ""}<div class="rooms ${expandPreview ? "preview-rows" : ""}" data-key="rooms-${group.key}" style="--room-columns:${this._config.room_columns}">${group.rooms.map((room, index) => {
         const options = roomConfig(this._config, room.entity_id);
         const columns = this._config.room_columns;
         const rowStart = expandPreview && index % columns === 0 ? `<div class="preview-row" data-key="preview-row-${Math.floor(index / columns)}">` : "";
@@ -1155,7 +1187,7 @@
         const heating = available(room) && room.state !== "off" && a.hvac_action === "heating";
         const cooling = available(room) && room.state !== "off" && a.hvac_action === "cooling";
         const active = heating || cooling;
-        const status = !available(room) ? "Unavailable" : room.state === "off" ? "Off" : heating ? "Heating" : cooling ? "Cooling" : "Idle";
+        const status = !available(room) ? text(this._hass,"unavailable") : room.state === "off" ? text(this._hass,"off") : heating ? text(this._hass,"heating") : cooling ? text(this._hass,"cooling") : text(this._hass,"idle");
         const disabled = this._busy || !available(room) ? "disabled" : "";
         const ranged = typeof a.target_temp_low === "number" && typeof a.target_temp_high === "number";
         const target = ranged ? `${this._temperature(a.target_temp_low)} – ${this._temperature(a.target_temp_high)}` : this._temperature(targetTemperature);
@@ -1163,7 +1195,7 @@
         const icon = !available(room) ? "mdi:alert-circle-outline" : room.state === "off" ? "mdi:power" : heating ? "mdi:radiator" : cooling ? "mdi:snowflake" : "mdi:radiator-disabled";
         const nextDate = a.next_schedule_datetime ? new Date(a.next_schedule_datetime) : null;
         const nextTime = nextDate && Number.isFinite(nextDate.getTime()) ? nextDate.toLocaleString(this._hass.locale?.language || this._hass.language, {weekday:"short",hour:"2-digit",minute:"2-digit"}) : a.next_schedule_change;
-        const next = scheduled && nextTime ? `Next ${nextTime} · ${this._temperature(a.next_schedule_temp)}` : scheduled ? a.schedule_name : "No schedule assigned";
+        const next = scheduled && nextTime ? `${text(this._hass,"next")} ${nextTime} · ${this._temperature(a.next_schedule_temp)}` : scheduled ? a.schedule_name : text(this._hass,"no_schedule");
         // Match the native tile's climate state colour and theme fallbacks.
         const mode = ["auto", "heat", "cool", "off"].includes(room.state) ? room.state : "off";
         const colorMode = cooling ? "cool" : heating ? "heat" : mode;
@@ -1186,12 +1218,12 @@
         return `${rowStart}<section data-key="${id}" class="room ${heating ? "heating" : cooling ? "cooling" : ""} ${preview && this._config[PREVIEW_ROOM] === room.entity_id ? "preview-selected" : ""}" style="--room-state-color:${this._contentColor(room, stateColor)};${featureOrder(options)}"><div class="room-content">
           ${headerMarkup}
           ${this._nativeReady || options.native_features ? this._nativeMarkup(room) : features(options).length ? `<div class="controls">${features(options).includes("modes") ? `<div class="modes" role="group" aria-label="${escape(this._name(room))} mode">${["auto", "heat", "cool", "off"].filter(mode => a.hvac_modes?.includes(mode)).map(mode => {
-            const label = {auto:"Schedule",heat:"Manual",cool:"Cool",off:"Off"}[mode];
+            const label = text(this._hass,{auto:"schedule",heat:"manual",cool:"cool",off:"off"}[mode]);
             const modeIcon = {auto:"mdi:thermostat-auto",heat:"mdi:fire",cool:"mdi:snowflake",off:"mdi:power"}[mode];
             return `<button class="mode ${mode === room.state ? "active" : ""}" data-action="mode" data-entity="${id}" data-mode="${mode}" aria-pressed="${mode === room.state}" aria-label="${label}" title="${label}" ${disabled || mode === "auto" && !scheduled ? "disabled" : ""}><ha-icon icon="${modeIcon}"></ha-icon></button>`;
           }).join("")}</div>` : ""}
-          ${features(options).includes("temperature") ? (ranged ? `<button data-entity="${id}" title="Adjust temperature range" aria-label="Adjust temperature range"><ha-icon icon="mdi:thermostat"></ha-icon></button>` : `<input type="number" data-entity="${id}" data-field="temperature" aria-label="${escape(this._name(room))} target temperature" title="Target ${escape(unit)}" value="${typeof targetTemperature === "number" ? targetTemperature : ""}" min="${a.min_temp ?? 5}" max="${a.max_temp ?? 30}" step="${a.target_temp_step || .5}" ${disabled || room.state === "off" ? "disabled" : ""}>`) : ""}
-          ${features(options).includes("advance") ? `<button data-action="advance" data-entity="${id}" aria-label="Advance schedule for ${escape(this._name(room))}" title="Advance to next schedule period" ${disabled || !scheduled || room.state !== "auto" || !a.preset_modes?.includes("Advance Schedule") ? "disabled" : ""}><ha-icon icon="mdi:calendar-arrow-right"></ha-icon></button>` : ""}</div>` : ""}</div></section>${rowEnd}`;
+          ${features(options).includes("temperature") ? (ranged ? `<button data-entity="${id}" title="${escape(text(this._hass,"adjust_temperature_range"))}" aria-label="${escape(text(this._hass,"adjust_temperature_range"))}"><ha-icon icon="mdi:thermostat"></ha-icon></button>` : `<input type="number" data-entity="${id}" data-field="temperature" aria-label="${escape(this._name(room))} ${escape(text(this._hass,"target").toLowerCase())}" title="${escape(text(this._hass,"target"))} ${escape(unit)}" value="${typeof targetTemperature === "number" ? targetTemperature : ""}" min="${a.min_temp ?? 5}" max="${a.max_temp ?? 30}" step="${a.target_temp_step || .5}" ${disabled || room.state === "off" ? "disabled" : ""}>`) : ""}
+          ${features(options).includes("advance") ? `<button data-action="advance" data-entity="${id}" aria-label="${escape(text(this._hass,"advance_schedule_for",{name:this._name(room)}))}" title="${escape(text(this._hass,"advance_schedule"))}" ${disabled || !scheduled || room.state !== "auto" || !a.preset_modes?.includes("Advance Schedule") ? "disabled" : ""}><ha-icon icon="mdi:calendar-arrow-right"></ha-icon></button>` : ""}</div>` : ""}</div></section>${rowEnd}`;
       }).join("")}</div>${grouped ? "</section>" : ""}`).join("")}</ha-card>`;
       this._updateDOM(markup);
       this._syncNativeFeatures();
@@ -1234,7 +1266,7 @@
       const state = this._hass.states[id];
       this._button.disabled = !state;
       this._display.hidden = !state;
-      this._button.title = state?.attributes?.friendly_name || id || "Secondary status";
+      this._button.title = state?.attributes?.friendly_name || id || text(this._hass,"secondary_status");
       this._display.hass = this._hass;
       this._display.stateObj = withOverrideEnd(state, this._hass);
       this._display.content = this._config.state_content?.length ? this._config.state_content : ["state"];
@@ -1246,7 +1278,7 @@
       super();
       this.attachShadow({mode:"open"});
       this._form = document.createElement("ha-form");
-      this._form.computeLabel = schema => ({entity:"Entity (optional)",state_content:"State content"})[schema.name];
+      this._form.computeLabel = schema => text(this._hass, schema.name === "entity" ? "entity" : "state_content");
       this._form.schema = [
         {name:"entity", selector:{entity:{}}},
         {name:"state_content", selector:{ui_state_content:{allow_context:true}}},
@@ -1317,8 +1349,8 @@
       const id = this._config.entity || this._context?.entity_id || this._stateObj?.entity_id;
       const state = this._hass.states[id];
       this._button.disabled = !state;
-      this._button.title = state?.attributes?.friendly_name || id || "Override end time";
-      this._value.textContent = state && isHeatingOverride(state) ? `Override ends ${overrideEndValue(state, this._hass)}` : state ? "No override" : "Unavailable";
+      this._button.title = state?.attributes?.friendly_name || id || text(this._hass,"override_end_time");
+      this._value.textContent = state && isHeatingOverride(state) ? text(this._hass,"override_ends",{time:overrideEndValue(state, this._hass)}) : state ? text(this._hass,"no_override") : text(this._hass,"unavailable");
     }
   }
   class WiserNextScheduleFeature extends HTMLElement {
@@ -1351,7 +1383,7 @@
       const attributes = state?.attributes || {};
       const enabled = Boolean(state && state.state === "auto" && attributes.schedule_id && attributes.preset_modes?.includes("Advance Schedule"));
       this._button.disabled = !enabled;
-      this._button.title = enabled ? "Advance to next schedule period" : "Advance schedule unavailable";
+      this._button.title = text(this._hass, enabled ? "advance_schedule" : "advance_unavailable");
       this._button.ariaLabel = this._button.title;
     }
   }
@@ -1372,6 +1404,10 @@
     type:NEXT_SCHEDULE_FEATURE, name:"Next schedule", configurable:false,
     isSupported:(hass, context) => Boolean(context?.entity_id?.startsWith("climate.") && hass.states[context.entity_id]),
   });
+  const updateFeatureTranslations = hass => {
+    const names = {[SECONDARY_STATUS_FEATURE]:"secondary_status",[OVERRIDE_STATUS_FEATURE]:"override_end_time",[NEXT_SCHEDULE_FEATURE]:"next_schedule"};
+    for (const feature of window.customCardFeatures) if (names[feature.type]) feature.name = text(hass,names[feature.type]);
+  };
   class WiserRoomsCardEditor extends HTMLElement {
     constructor() {
       super();
@@ -1424,14 +1460,13 @@
         this._setRoomOptions(options);
       });
       this._featureList = document.createElement("div");
-      this._featureList.innerHTML = '<ha-expansion-panel outlined><ha-icon slot="leading-icon" icon="mdi:list-box"></ha-icon><h3 slot="header">Features</h3><div class="content"></div></ha-expansion-panel>';
+      // Match hui-tile-card-editor: native expansion panel, feature editor and
+      // features-position form. There is no standalone HA feature-section element.
+      this._featureList.innerHTML = '<ha-expansion-panel outlined><ha-icon slot="leading-icon" icon="mdi:list-box"></ha-icon><h3 slot="header"></h3><div class="content"></div></ha-expansion-panel>';
       this._nativeEditor = document.createElement("hui-card-features-editor");
       this._featurePositionForm = document.createElement("ha-form");
       this._featurePositionForm.className = "features-form";
       this._featurePositionForm.computeLabel = schema => schema.label;
-      this._featurePositionForm.schema = [{name:"features_position",label:"Features position",selector:{select:{mode:"box",options:[
-        {value:"bottom",label:"Bottom"},{value:"inline",label:"Inline"},
-      ]}}}];
       this._featurePositionForm.addEventListener("value-changed", event => {
         event.stopPropagation();
         this._setRoomOptions({features_position:event.detail.value.features_position || "bottom"});
@@ -1504,7 +1539,7 @@
       `;
       this._roomForm.className = "room-options";
       this.shadowRoot.append(style, this._hubForm, this._form, this._typeForm, this._tabs, this._roomForm, this._featureList, this._message, this._version);
-      this._form.computeLabel = schema => schema.label || "Title";
+      this._form.computeLabel = schema => schema.label || text(this._hass,"title");
       this._form.addEventListener("value-changed", event => this._changed(event));
     }
     setConfig(config) {
@@ -1513,6 +1548,7 @@
     }
     set hass(hass) {
       this._hass = hass;
+      updateFeatureTranslations(hass);
       if (!this._entries && !this._loading && !this._failed) this._discover();
       this._render();
     }
@@ -1553,7 +1589,7 @@
       const rooms = this._rooms();
       const hubs = this._detectedHubs();
       this._hubForm.hass = this._hass;
-      const hubSchema = [{name:"hubs",label:"Hubs",selector:{select:{multiple:true,mode:"dropdown",options:hubs}}}];
+      const hubSchema = [{name:"hubs",label:text(this._hass,"hubs"),selector:{select:{multiple:true,mode:"dropdown",options:hubs}}}];
       const hubSignature = JSON.stringify(hubSchema);
       if (hubSignature !== this._hubSchemaSignature) { this._hubForm.schema = hubSchema; this._hubSchemaSignature = hubSignature; }
       const hubData = {hubs:this._config.hubs || hubs.map(hub => hub.value)};
@@ -1562,13 +1598,13 @@
       this._form.hass = this._hass;
       const schema = [
         {name: "title", selector: {text: {}}},
-        {name: "room_columns", label: "Devices per row", selector: {number: {min: 1, max: 6, step: 1, mode: "box"}}},
-        {name: "room_type", label: "Show", selector: {select: {mode: "box", options: [
-          {value: "all", label: "All"}, {value: "heating", label: "Heating"}, {value: "shutters", label: "Shutters"},
-          {value: "lights", label: "Lights"}, {value: "plugs", label: "Smart plugs"},
+        {name: "room_columns", label: text(this._hass,"devices_per_row"), selector: {number: {min: 1, max: 6, step: 1, mode: "box"}}},
+        {name: "room_type", label: text(this._hass,"show"), selector: {select: {mode: "box", options: [
+          {value: "all", label: text(this._hass,"all")}, {value: "heating", label: text(this._hass,"heating")}, {value: "shutters", label: text(this._hass,"shutters")},
+          {value: "lights", label: text(this._hass,"lights")}, {value: "plugs", label: text(this._hass,"plugs")},
         ]}}},
-        {name: "temperature_focus", label: "Temperature emphasis", selector: {select: {mode: "box", options: [
-          {value: "current", label: "Current"}, {value: "target", label: "Target"},
+        {name: "temperature_focus", label: text(this._hass,"temperature_emphasis"), selector: {select: {mode: "box", options: [
+          {value: "current", label: text(this._hass,"current")}, {value: "target", label: text(this._hass,"target")},
         ]}}},
 
       ];
@@ -1580,12 +1616,12 @@
 
         this._schemaSignature = signature;
       }
-      const data = {title: this._config.title ?? "Wiser rooms", room_columns: this._config.room_columns ?? 1};
+      const data = {title: this._config.title ?? text(this._hass,"wiser_rooms"), room_columns: this._config.room_columns ?? 1};
       if (JSON.stringify(data) !== JSON.stringify(this._form.data)) this._form.data = data;
       const activeTypes = selectedTypes(this._config);
       this._typeForm.data = {room_types:activeTypes};
       const typeOptions = schema[2].selector.select.options;
-      const typeMarkup = `<span class="show-label" id="show-label">Show</span><div class="show-options" role="group" aria-labelledby="show-label">${typeOptions.map(option => {
+      const typeMarkup = `<span class="show-label" id="show-label">${escape(text(this._hass,"show"))}</span><div class="show-options" role="group" aria-labelledby="show-label">${typeOptions.map(option => {
         const active = option.value === "all" ? activeTypes.length === DEVICE_TYPES.length : activeTypes.includes(option.value);
         return `<ha-button size="s" appearance="${active ? "filled" : "outlined"}" data-room-type="${option.value}" aria-pressed="${active}">${option.label}</ha-button>`;
       }).join("")}</div>`;
@@ -1599,20 +1635,20 @@
       this._roomForm.hass = heating && selectedState
         ? {...this._hass, states:{...this._hass.states, [this._selectedRoom]:withOverrideEnd(selectedState, this._hass)}}
         : this._hass;
-      const metricLabel = shutter ? "Show position" : selectedType === "lights" ? "Show brightness" : selectedType === "plugs" ? "Show status reading" : "Show current / target temperature";
+      const metricLabel = text(this._hass,shutter ? "show_position" : selectedType === "lights" ? "show_brightness" : selectedType === "plugs" ? "show_status" : "show_temperatures");
       const contentSchema = [
-        {name:"name", label:"Name", selector:{entity_name:{}}, context:{entity:"entity"}},
+        {name:"name", label:text(this._hass,"name"), selector:{entity_name:{}}, context:{entity:"entity"}},
         {name:"", type:"grid", schema:[
-          {name:"icon", label:"Icon", selector:{icon:{}}, context:{icon_entity:"entity"}},
-          {name:"color", label:"Colour", selector:{ui_color:{default_color:"state",include_state:true}}},
+          {name:"icon", label:text(this._hass,"icon"), selector:{icon:{}}, context:{icon_entity:"entity"}},
+          {name:"color", label:text(this._hass,"color"), selector:{ui_color:{default_color:"state",include_state:true}}},
         ]},
         {name:"", type:"grid", schema:[
-          {name:"hide_state",label:"Hide state",selector:{boolean:{}}},
+          {name:"hide_state",label:text(this._hass,"hide_state"),selector:{boolean:{}}},
           {name:"show_temperatures",label:metricLabel,selector:{boolean:{}}},
         ]},
-        {name:"state_content",label:"State content",visible:{field:"hide_state",operator:"not_eq",value:true},selector:{ui_state_content:{allow_context:true}},context:{filter_entity:"entity"}},
+        {name:"state_content",label:text(this._hass,"state_content"),visible:{field:"hide_state",operator:"not_eq",value:true},selector:{ui_state_content:{allow_context:true}},context:{filter_entity:"entity"}},
         ...(heating ? [schema[3]] : []),
-        {name:"show_next_schedule",label:"Show next schedule",selector:{boolean:{}}},
+        {name:"show_next_schedule",label:text(this._hass,"show_next_schedule"),selector:{boolean:{}}},
       ];
       const actionSchema = [
         {name:"tap_action",label:"Tap action",selector:{ui_action:{default_action:"more-info"}},context:{filter_entity:"entity"}},
@@ -1626,8 +1662,8 @@
         ]},
       ];
       const roomSchema = [
-        {name:"content",type:"expandable",flatten:true,icon:"mdi:text-short",schema:contentSchema},
-        {name:"interactions",type:"expandable",flatten:true,icon:"mdi:gesture-tap",schema:actionSchema},
+        {name:"content",label:text(this._hass,"content"),type:"expandable",flatten:true,icon:"mdi:text-short",schema:contentSchema},
+        {name:"interactions",label:text(this._hass,"interactions"),type:"expandable",flatten:true,icon:"mdi:gesture-tap",schema:actionSchema},
       ];
       const roomSignature = JSON.stringify(roomSchema);
       if (roomSignature !== this._roomSchema) { this._roomForm.schema = roomSchema; this._roomSchema = roomSignature; }
@@ -1640,9 +1676,9 @@
       this._roomForm.hidden = !this._selectedRoom;
       this._featureList.hidden = !this._selectedRoom;
       this._renderFeatures();
-      this._message.textContent = this._failed ? "Unable to detect rooms. Close and reopen the editor to retry."
-        : this._loading ? "Finding Wiser rooms…"
-        : !rooms.length ? "No matching Wiser devices found."
+      this._message.textContent = this._failed ? text(this._hass,"retry_editor")
+        : this._loading ? text(this._hass,"finding")
+        : !rooms.length ? text(this._hass,"no_devices")
         : "";
       this._message.hidden = !this._message.textContent;
     }
@@ -1680,11 +1716,20 @@
     }
     _renderFeatures() {
       if (!this._selectedRoom) return;
+      const featureHeading = this._featureList.querySelector?.('[slot="header"]');
+      if (featureHeading) featureHeading.textContent = text(this._hass,"features");
       this._nativeEditor.hass = this._hass;
       this._featurePositionForm.hass = this._hass;
+      this._featurePositionForm.schema = [{name:"features_position",required:true,label:text(this._hass,"features_position"),selector:{select:{mode:"box",options:["bottom","inline"].map(value => ({
+        value,
+        label:text(this._hass,value),
+        description:this._hass.localize(`ui.panel.lovelace.editor.card.tile.features_position_options.${value}_description`),
+        image:{src:`/static/images/form/tile_features_position_${value}.svg`,src_dark:`/static/images/form/tile_features_position_${value}_dark.svg`,flip_rtl:true},
+      }))}}}];
       this._nativeEditor.context = {entity_id:this._selectedRoom};
       this._nativeEditor.stateObj = this._hass.states[this._selectedRoom];
       const list = nativeFeatures(roomConfig(this._config, this._selectedRoom), this._selectedRoom);
+      this._featurePositionForm.hidden = !list.length;
       const signature = this._selectedRoom + JSON.stringify(list);
       if (signature !== this._nativeEditorSignature) {
         this._nativeEditor.features = list;
@@ -1757,7 +1802,7 @@
     _changed(event) {
       event.stopPropagation();
       const data = event.detail.value;
-      const config = {...this._config, title: data.title ?? "Wiser rooms", room_columns: data.room_columns ?? 1};
+      const config = {...this._config, title: data.title ?? text(this._hass,"wiser_rooms"), room_columns: data.room_columns ?? 1};
       this._config = config;
       this._render();
       this._dispatchConfig();
