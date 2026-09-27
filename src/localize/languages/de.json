@@ -31,6 +31,8 @@
   "follow_schedule_title": "Alle Heizräume zu ihren Zeitplänen zurückkehren",
   "override_end_time": "Ende der Übersteuerung",
   "secondary_status": "Sekundärstatus",
+  "show_state_labels": "Statusbezeichnungen anzeigen",
+  "hide_rooms": "Räume ausblenden",
   "next_schedule": "Nächster Zeitplan",
   "no_schedule": "Kein Zeitplan zugewiesen",
   "advance_schedule": "Zum nächsten Zeitplan wechseln",

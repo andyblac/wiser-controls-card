@@ -99,6 +99,14 @@
     ...state,
     attributes:{...state.attributes, override_end_time:overrideEndValue(state, hass)},
   } : state;
+  const stateContentLabel = (hass, state, content) => {
+    if (content === "state") return hass?.localize?.("ui.common.state") || "State";
+    const domain = state?.entity_id?.split(".")[0];
+    const key = domain ? `component.${domain}.entity_component._.state_attributes.${content}.name` : "";
+    const localized = key && hass?.localize?.(key);
+    if (localized && localized !== key) return localized;
+    return content.replaceAll("_", " ").replace(/^./, letter => letter.toLocaleUpperCase(hass?.locale?.language || hass?.language));
+  };
   const selectedTypes = config => Array.isArray(config?.room_types) && config.room_types.length
     ? DEVICE_TYPES.filter(type => config.room_types.includes(type))
     : config?.room_type && config.room_type !== "all" ? [config.room_type] : DEVICE_TYPES;
@@ -693,7 +701,9 @@
       };
       const preview = isEditorPreview(this);
       const masterPreview = preview && masterMode(this._config);
-      const previewRoom = this._config[PREVIEW_ROOM] || (masterPreview ? rooms[0]?.entity_id : undefined);
+      const configuredPreviewRoom = this._config[PREVIEW_ROOM];
+      const previewRoom = configuredPreviewRoom && rooms.some(room => room.entity_id === configuredPreviewRoom)
+        ? configuredPreviewRoom : masterPreview ? rooms[0]?.entity_id : configuredPreviewRoom;
       // Orbit expands a selected item to its normal grid width (six of twelve by default).
       const expandPreview = preview && !masterPreview && this._config.room_columns > 2;
       const markup = `<style data-key="style">
@@ -1309,11 +1319,13 @@
       super();
       this.attachShadow({mode:"open"});
       const style = document.createElement("style");
-      style.textContent = `:host{display:block;pointer-events:auto;min-width:0}button{display:block;width:100%;padding:0;border:0;background:none;color:var(--secondary-text-color);font:inherit;font-size:12px;text-align:start;cursor:pointer}button:focus-visible{outline:2px solid var(--primary-color)}state-display{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}`;
+      style.textContent = `:host{display:block;pointer-events:auto;min-width:0}button{display:block;width:100%;padding:0;border:0;background:none;color:var(--secondary-text-color);font:inherit;font-size:12px;text-align:start;cursor:pointer}button:focus-visible{outline:2px solid var(--primary-color)}state-display{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.labelled{display:flex;min-width:0;gap:6px;overflow:hidden}state-display[hidden],.labelled[hidden]{display:none!important}.labelled-item{display:flex;min-width:0;gap:3px;white-space:nowrap}.label{color:var(--secondary-text-color)}.label::after{content:":"}`;
       this._button = document.createElement("button");
       this._button.type = "button";
       this._display = document.createElement("state-display");
-      this._button.append(this._display);
+      this._labelled = document.createElement("span");
+      this._labelled.className = "labelled";
+      this._button.append(this._display, this._labelled);
       this._button.addEventListener("click", event => {
         event.stopPropagation();
         const id = this._config?.entity || this._context?.entity_id || this._stateObj?.entity_id;
@@ -1338,13 +1350,32 @@
       if (!this._hass || !this._config) return;
       const id = this._config.entity || this._context?.entity_id || this._stateObj?.entity_id;
       const state = this._hass.states[id];
+      const content = this._config.state_content?.length ? this._config.state_content : ["state"];
+      const showLabels = this._config.show_labels === true;
       this._button.disabled = !state;
-      this._display.hidden = !state;
+      this._display.hidden = !state || showLabels;
+      this._labelled.hidden = !state || !showLabels;
       this._button.title = state?.attributes?.friendly_name || id || text(this._hass,"secondary_status");
       this._display.hass = this._hass;
       this._display.stateObj = withOverrideEnd(state, this._hass);
-      this._display.content = this._config.state_content?.length ? this._config.state_content : ["state"];
+      this._display.content = content;
       this._display.timestampTooltip = true;
+      this._labelled.innerHTML = "";
+      this._labelDisplays = content.map(item => {
+        const row = document.createElement("span");
+        row.className = "labelled-item";
+        const label = document.createElement("span");
+        label.className = "label";
+        label.textContent = stateContentLabel(this._hass, state, item);
+        const display = document.createElement("state-display");
+        display.hass = this._hass;
+        display.stateObj = withOverrideEnd(state, this._hass);
+        display.content = [item];
+        display.timestampTooltip = true;
+        row.append(label, display);
+        this._labelled.append(row);
+        return {label,display};
+      });
     }
   }
   class WiserSecondaryStatusFeatureEditor extends HTMLElement {
@@ -1369,6 +1400,8 @@
             else delete entities[room.entity_id];
           });
           this._config = {...this._config,state_content:value.state_content,type:`custom:${SECONDARY_STATUS_FEATURE}`};
+          if (value.show_labels) this._config.show_labels = true;
+          else delete this._config.show_labels;
           delete this._config.entity;
           if (Object.keys(entities).length) this._config.entities = entities;
           else delete this._config.entities;
@@ -1376,6 +1409,7 @@
           if (!value.entity || value.entity === this._context?.entity_id) delete value.entity;
           this._config = {...this._config, ...value, type:`custom:${SECONDARY_STATUS_FEATURE}`};
           if (!value.entity) delete this._config.entity;
+          if (!value.show_labels) delete this._config.show_labels;
         }
         this.dispatchEvent(new CustomEvent("config-changed", {bubbles:true, composed:true, detail:{config:this._config}}));
       });
@@ -1401,14 +1435,17 @@
       this._form.schema = rooms.length ? [
         ...rooms.map((room, index) => ({name:`room_${index}`,label:room.name,selector:{entity:{}}})),
         {name:"state_content", selector:{ui_state_content:{allow_context:true,entity_id:effectiveEntity || undefined}}},
+        {name:"show_labels",label:text(this._hass,"show_state_labels"),selector:{boolean:{}}},
       ] : [
         {name:"entity", selector:{entity:{}}},
         {name:"state_content", selector:{ui_state_content:{allow_context:true,entity_id:effectiveEntity || undefined}}},
+        {name:"show_labels",label:text(this._hass,"show_state_labels"),selector:{boolean:{}}},
       ];
       const data = rooms.length ? Object.fromEntries([
         ...rooms.map((room, index) => [`room_${index}`,this._config.entities?.[room.entity_id] || ""]),
         ["state_content",this._config.state_content?.length ? this._config.state_content : ["state"]],
-      ]) : {entity:this._config.entity || "", state_content:this._config.state_content?.length ? this._config.state_content : ["state"]};
+        ["show_labels",this._config.show_labels === true],
+      ]) : {entity:this._config.entity || "", state_content:this._config.state_content?.length ? this._config.state_content : ["state"],show_labels:this._config.show_labels === true};
       if (JSON.stringify(data) !== this._signature) {
         this._form.data = data;
         this._signature = JSON.stringify(data);
@@ -1582,6 +1619,20 @@
         this._render();
         this._dispatchConfig();
       });
+      this._hiddenRoomsForm = document.createElement("ha-form");
+      this._hiddenRoomsForm.className = "hidden-rooms";
+      this._hiddenRoomsForm.computeLabel = schema => schema.label;
+      this._hiddenRoomsForm.addEventListener("value-changed", event => {
+        event.stopPropagation();
+        const roomIds = new Set(this._rooms().map(room => room.entity_id));
+        const hidden = event.detail.value.hidden_rooms || [];
+        const excluded = [...(this._config.excluded_entities || []).filter(id => !roomIds.has(id)), ...hidden];
+        this._config = {...this._config};
+        if (excluded.length) this._config.excluded_entities = excluded;
+        else delete this._config.excluded_entities;
+        this._render();
+        this._dispatchConfig();
+      });
       this._roomForm = document.createElement("ha-form");
       this._roomForm.computeLabel = schema => {
         const scope = ["color","icon_tap_action","icon_hold_action","icon_double_tap_action","hide_state","state_content"].includes(schema.name) ? "tile" : "generic";
@@ -1654,6 +1705,7 @@
         ha-form.settings::part(root){display:grid;grid-template-columns:minmax(0,1fr) 130px;column-gap:8px;align-items:start}
         .show-filter{display:block;margin-top:16px}
         ha-form.configuration-mode{display:block;margin-top:16px}
+        ha-form.hidden-rooms{display:block;margin-bottom:12px}
         .show-label{display:block;margin:0 0 8px;font-size:14px;color:var(--primary-text-color)}
         .show-options{display:flex;flex-wrap:wrap;gap:8px}
         .show-options ha-button[appearance="filled"]::part(base){border-color:currentColor}
@@ -1677,7 +1729,7 @@
         .version{margin-top:24px;color:var(--secondary-text-color);font-size:12px;text-align:right}
       `;
       this._roomForm.className = "room-options";
-      this.shadowRoot.append(style, this._hubForm, this._form, this._typeForm, this._modeForm, this._tabs, this._roomForm, this._featureList, this._message, this._version);
+      this.shadowRoot.append(style, this._hubForm, this._form, this._typeForm, this._modeForm, this._hiddenRoomsForm, this._tabs, this._roomForm, this._featureList, this._message, this._version);
       this._form.computeLabel = schema => schema.label || text(this._hass,"title");
       this._form.addEventListener("value-changed", event => this._changed(event));
     }
@@ -1774,6 +1826,16 @@
       if (JSON.stringify(modeData) !== JSON.stringify(this._modeForm.data)) this._modeForm.data = modeData;
       this._modeForm.hidden = activeTypes.length !== 1;
       this._modeForm.style.marginBottom = masterMode(this._config) ? "12px" : "";
+      this._hiddenRoomsForm.hass = this._hass;
+      const hiddenRoomsSchema = [{name:"hidden_rooms",label:text(this._hass,"hide_rooms"),selector:{select:{multiple:true,mode:"dropdown",options:rooms.map(room => ({value:room.entity_id,label:this._name(room)}))}}}];
+      const hiddenRoomsSignature = JSON.stringify(hiddenRoomsSchema);
+      if (hiddenRoomsSignature !== this._hiddenRoomsSchemaSignature) {
+        this._hiddenRoomsForm.schema = hiddenRoomsSchema;
+        this._hiddenRoomsSchemaSignature = hiddenRoomsSignature;
+      }
+      const hiddenRoomsData = {hidden_rooms:rooms.filter(room => !this._shown(room.entity_id)).map(room => room.entity_id)};
+      if (JSON.stringify(hiddenRoomsData) !== JSON.stringify(this._hiddenRoomsForm.data)) this._hiddenRoomsForm.data = hiddenRoomsData;
+      this._hiddenRoomsForm.hidden = activeTypes.length !== 1 || !masterMode(this._config);
       this._renderTabs(rooms);
       const selectedOptions = roomConfig(this._config, this._selectedRoom);
       const selectedState = this._hass.states[this._selectedRoom];
@@ -1970,6 +2032,7 @@
     _renderTabs(rooms) {
       if (!rooms.some(room => room.entity_id === this._selectedRoom)) this._selectedRoom = rooms[0]?.entity_id;
       if (masterMode(this._config)) {
+        if (!this._shown(this._selectedRoom)) this._selectedRoom = rooms.find(room => this._shown(room.entity_id))?.entity_id || rooms[0]?.entity_id;
         this._tabs.hidden = true;
         this._tabs.innerHTML = "";
         this._tabsMarkup = "";

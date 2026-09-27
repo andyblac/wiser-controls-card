@@ -45,6 +45,8 @@ function setup() {
     'component.climate.entity_component._.state_attributes.hvac_action.state.heating':'Heating',
     'component.climate.entity_component._.state_attributes.hvac_action.state.cooling':'Cooling',
     'component.climate.entity_component._.state_attributes.hvac_action.state.idle':'Idle',
+    'component.climate.entity_component._.state_attributes.current_temperature.name':'Current temperature',
+    'component.climate.entity_component._.state_attributes.temperature.name':'Target temperature',
     'panel.light':'Lights',
     'component.cover.entity_component._.state.open':'Open', 'component.cover.entity_component._.state.closed':'Closed',
     'component.cover.entity_component._.state.opening':'Opening', 'component.cover.entity_component._.state.closing':'Closing',
@@ -365,6 +367,13 @@ test('master editor mode uses one shared room configuration and one preview card
   assert.equal(config.room_options, undefined);
   assert.equal(editor._tabs.hidden, true);
   assert.equal(editor._tabs.innerHTML, '');
+  assert.equal(editor._hiddenRoomsForm.hidden, false);
+  assert.equal(editor._hiddenRoomsForm.schema[0].label, 'Hide rooms');
+  assert.equal(editor._hiddenRoomsForm.schema[0].selector.select.options.length, 3);
+  editor._hiddenRoomsForm.listeners['value-changed']({stopPropagation(){},detail:{value:{hidden_rooms:['climate.lounge']}}});
+  assert.equal(JSON.stringify(editor.lastEvent.detail.config.excluded_entities), '["climate.lounge"]');
+  editor._hiddenRoomsForm.listeners['value-changed']({stopPropagation(){},detail:{value:{hidden_rooms:[]}}});
+  assert.equal(editor.lastEvent.detail.config.excluded_entities, undefined);
   editor._setRoomOptions({color:'green',hide_state:true});
   editor._saveNativeFeatures(editor._selectedRoom, [
     {type:'custom:wiser-secondary-status-feature',entity:'climate.bedroom_itrv_new',state_content:['current_temperature']},
@@ -384,6 +393,9 @@ test('master editor mode uses one shared room configuration and one preview card
   card.setConfig(savedMasterConfig);
   assert.equal((card.shadowRoot.innerHTML.match(/class="room-content(?: [^"]*)?"/g) || []).length, 1);
   assert.match(card.shadowRoot.innerHTML, /class="room [^"]*preview-selected/);
+  card.setConfig({...savedMasterConfig,excluded_entities:['climate.bedroom'],[Symbol.for('wiser-rooms-card-preview-room')]:'climate.bedroom'});
+  assert.equal((card.shadowRoot.innerHTML.match(/class="room-content(?: [^"]*)?"/g) || []).length, 1);
+  assert.match(card.shadowRoot.innerHTML, /data-key="climate\.lounge"/);
   card.parentElement = null;
   card.setConfig(savedMasterConfig);
   const dashboardRooms = card._rooms().length;
@@ -400,6 +412,7 @@ test('master editor mode uses one shared room configuration and one preview card
   assert.equal(config.room_options['climate.offline'].native_features[0].entity, undefined);
   assert.equal(config.room_options['climate.offline'].native_features[0].entities, undefined);
   assert.equal(editor._tabs.hidden, false);
+  assert.equal(editor._hiddenRoomsForm.hidden, true);
 });
 test('editor preserves legacy selections and layout when updating title', () => {
   const {card, Editor} = setup();
@@ -876,6 +889,11 @@ test('Secondary status uses native state display and supports override end time'
   assert.match(feature._display.stateObj.attributes.override_end_time, / · 25m remaining/);
   feature._button.listeners.click({stopPropagation(){}});
   assert.equal(feature.lastEvent.detail.entityId, 'climate.lounge');
+  feature.setConfig({type:'custom:wiser-secondary-status-feature',entity:'climate.lounge',state_content:['current_temperature','temperature'],show_labels:true});
+  assert.equal(feature._display.hidden, true);
+  assert.equal(feature._labelled.hidden, false);
+  assert.equal(feature._labelDisplays.map(item => item.label.textContent).join(','), 'Current temperature,Target temperature');
+  assert.equal(feature._labelDisplays.map(item => item.display.content[0]).join(','), 'current_temperature,temperature');
   feature.setConfig({type:'custom:wiser-secondary-status-feature'});
   assert.equal(feature._display.stateObj.entity_id, 'climate.bedroom');
   feature.setConfig({entity:'climate.missing'});
@@ -888,10 +906,12 @@ test('Secondary status uses native state display and supports override end time'
   assert.equal(editor._form.schema[0].required, undefined);
   assert.equal(editor._form.data.entity, '');
   assert.equal(editor._form.schema[1].selector.ui_state_content.entity_id, 'climate.bedroom');
+  assert.equal(editor._form.schema[2].label, 'Show state labels');
   assert.equal(editor._form.hass.states['climate.bedroom'].attributes.override_end_time, 'No override');
-  editor._form.listeners['value-changed']({stopPropagation(){},detail:{value:{entity:'climate.lounge',state_content:['state','current_temperature','override_end_time']}}});
+  editor._form.listeners['value-changed']({stopPropagation(){},detail:{value:{entity:'climate.lounge',state_content:['state','current_temperature','override_end_time'],show_labels:true}}});
   assert.equal(editor.lastEvent.detail.config.entity, 'climate.lounge');
   assert.equal(editor.lastEvent.detail.config.state_content.join(','), 'state,current_temperature,override_end_time');
+  assert.equal(editor.lastEvent.detail.config.show_labels, true);
   editor._form.listeners['value-changed']({stopPropagation(){},detail:{value:{entity:'climate.bedroom',state_content:['state']}}});
   assert.equal(editor.lastEvent.detail.config.entity, undefined);
   const masterEditor = new elements['wiser-secondary-status-feature-editor']();

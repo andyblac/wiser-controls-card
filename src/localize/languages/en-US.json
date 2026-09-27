@@ -31,6 +31,8 @@
   "follow_schedule_title": "Return all heating rooms to their schedules",
   "override_end_time": "Override end time",
   "secondary_status": "Secondary status",
+  "show_state_labels": "Show state labels",
+  "hide_rooms": "Hide rooms",
   "next_schedule": "Next schedule",
   "no_schedule": "No schedule assigned",
   "advance_schedule": "Advance to next schedule period",

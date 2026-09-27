@@ -31,6 +31,8 @@
   "follow_schedule_title": "Replacer toutes les pièces chauffées sur leur programme",
   "override_end_time": "Fin de la dérogation",
   "secondary_status": "État secondaire",
+  "show_state_labels": "Afficher les libellés d’état",
+  "hide_rooms": "Masquer des pièces",
   "next_schedule": "Prochain programme",
   "no_schedule": "Aucun programme attribué",
   "advance_schedule": "Passer à la prochaine période programmée",
