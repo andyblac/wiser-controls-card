@@ -414,7 +414,7 @@ test('master editor mode uses one shared room configuration and one preview card
   assert.equal(editor._tabs.hidden, false);
   assert.equal(editor._hiddenRoomsForm.hidden, true);
 });
-test('master mode survives adding another room type and adapts its native controls', () => {
+test('master mode gives each newly added room type clean defaults', () => {
   const {card, Editor} = setup();
   const plug = addPlug(card);
   const editor = new Editor();
@@ -435,20 +435,32 @@ test('master mode survives adding another room type and adapts its native contro
   assert.equal(editor._modeForm.hidden, false);
   assert.equal(config.master_options, undefined);
   assert.equal(config.master_options_by_type.heating.native_features[0].type, 'custom:wiser-secondary-status-feature');
-  assert.equal(config.master_options_by_type.plugs.native_features.map(feature => feature.type).join(','),
-    'custom:wiser-secondary-status-feature,toggle');
+  assert.equal(JSON.stringify(config.master_options_by_type.plugs), '{}');
   assert.match(editor._tabs.innerHTML, />Heating<\/button>/);
   assert.match(editor._tabs.innerHTML, />Smart plugs<\/button>/);
   editor._tabs.listeners.click({target:{closest:()=>({dataset:{room:'switch.lamp'}})},stopPropagation(){}});
   assert.equal(editor._selectedRoom, 'switch.lamp');
-  assert.equal(editor._nativeEditor.features.map(feature => feature.type).join(','),
-    'custom:wiser-secondary-status-feature,toggle');
+  assert.equal(editor._nativeEditor.features.map(feature => feature.type).join(','), 'toggle');
+  assert.equal(editor._roomForm.data.hide_state, false);
+  assert.equal(editor._roomForm.data.state_content.join(','), 'state');
+  editor._saveNativeFeatures('switch.lamp', [{
+    type:'custom:wiser-secondary-status-feature',
+    entities:{'climate.bedroom':'climate.bedroom_itrv','switch.lamp':'sensor.lamp_power'},
+    state_content:['state'],
+  },{type:'toggle'}]);
+  config = editor.lastEvent.detail.config;
+  assert.equal(JSON.stringify(config.master_options_by_type.plugs.native_features[0].entities),
+    '{"switch.lamp":"sensor.lamp_power"}');
+  editor._typeForm.listeners.click({target:{closest:()=>({dataset:{roomType:'plugs'}})}});
+  assert.equal(editor.lastEvent.detail.config.master_options_by_type.plugs, undefined);
+  editor._typeForm.listeners.click({target:{closest:()=>({dataset:{roomType:'plugs'}})}});
+  config = editor.lastEvent.detail.config;
+  assert.equal(JSON.stringify(config.master_options_by_type.plugs), '{}');
   card._config = config;
-  assert.equal(card._headerFeatures(plug)[0].type, 'custom:wiser-secondary-status-feature');
+  assert.equal(card._headerFeatures(plug).length, 0);
   editor._modeForm.listeners['value-changed']({stopPropagation(){},detail:{value:{room_configuration:'individual'}}});
   config = editor.lastEvent.detail.config;
-  assert.equal(config.room_options['switch.lamp'].native_features.map(feature => feature.type).join(','),
-    'custom:wiser-secondary-status-feature,toggle');
+  assert.equal(config.room_options['switch.lamp'].native_features, undefined);
   assert.equal(config.room_options['climate.bedroom'].native_features.map(feature => feature.type).join(','),
     'custom:wiser-secondary-status-feature,climate-hvac-modes,target-temperature');
 });
@@ -954,6 +966,9 @@ test('Secondary status uses native state display and supports override end time'
   assert.equal(feature._labelDisplays.map(item => item.display.content[0]).join(','), 'current_temperature,temperature');
   feature.setConfig({type:'custom:wiser-secondary-status-feature'});
   assert.equal(feature._display.stateObj.entity_id, 'climate.bedroom');
+  feature.setConfig({type:'custom:wiser-secondary-status-feature',state_content:'state'});
+  assert.equal(feature._config.state_content.join(','), 'state');
+  assert.equal(feature._display.content.join(','), 'state');
   feature.setConfig({entity:'climate.missing'});
   assert.equal(feature._button.disabled, true);
   assert.equal(feature._display.hidden, true);
@@ -988,7 +1003,7 @@ test('Secondary status uses native state display and supports override end time'
   assert.equal(masterEditor._form.data.room_0, 'climate.bedroom_itrv');
   assert.equal(masterEditor._form.data.room_2, '');
   masterEditor._form.listeners['value-changed']({stopPropagation(){},detail:{value:{
-    room_0:'',room_1:'climate.lounge_itrv_new',room_2:'',state_content:['temperature'],
+    room_0:'',room_1:'climate.lounge_itrv_new',room_2:'',state_content:'temperature',
   }}});
   assert.equal(masterEditor.lastEvent.detail.config.entities['climate.bedroom'], undefined);
   assert.equal(masterEditor.lastEvent.detail.config.entities['climate.lounge'], 'climate.lounge_itrv_new');

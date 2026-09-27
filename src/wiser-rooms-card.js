@@ -11,6 +11,7 @@
   const isSecondaryFeature = feature => feature.type === `custom:${SECONDARY_STATUS_FEATURE}`;
   const isOverrideStatusFeature = feature => feature.type === `custom:${OVERRIDE_STATUS_FEATURE}`;
   const isHeaderFeature = feature => isSecondaryFeature(feature) || isOverrideStatusFeature(feature);
+  const normalizedStateContent = value => Array.isArray(value) && value.length ? value : typeof value === "string" && value ? [value] : ["state"];
   const orderNativeFeatures = list => [...list.filter(isHeaderFeature), ...list.filter(feature => !isHeaderFeature(feature))];
   const featureForRoom = (feature, id) => {
     if (!isSecondaryFeature(feature) || !feature.entities || typeof feature.entities !== "object" || Array.isArray(feature.entities)) return feature;
@@ -1384,8 +1385,9 @@
     static getConfigElement() { return document.createElement("wiser-secondary-status-feature-editor"); }
     setConfig(config) {
       this._config = {...config};
+      this._config.state_content = normalizedStateContent(this._config.state_content);
       if (this._config.override_end_time) {
-        this._config.state_content = [...new Set([...(this._config.state_content || ["state"]), "override_end_time"])];
+        this._config.state_content = [...new Set([...this._config.state_content, "override_end_time"])];
         delete this._config.override_end_time;
       }
       this._render();
@@ -1397,7 +1399,7 @@
       if (!this._hass || !this._config) return;
       const id = this._config.entity || this._context?.entity_id || this._stateObj?.entity_id;
       const state = this._hass.states[id];
-      const content = this._config.state_content?.length ? this._config.state_content : ["state"];
+      const content = normalizedStateContent(this._config.state_content);
       const showLabels = this._config.show_labels === true;
       this._button.disabled = !state;
       this._display.hidden = !state || showLabels;
@@ -1446,7 +1448,7 @@
             if (entity && entity !== room.entity_id) entities[room.entity_id] = entity;
             else delete entities[room.entity_id];
           });
-          this._config = {...this._config,state_content:value.state_content,type:`custom:${SECONDARY_STATUS_FEATURE}`};
+          this._config = {...this._config,state_content:normalizedStateContent(value.state_content),type:`custom:${SECONDARY_STATUS_FEATURE}`};
           if (value.show_labels) this._config.show_labels = true;
           else delete this._config.show_labels;
           delete this._config.entity;
@@ -1454,7 +1456,7 @@
           else delete this._config.entities;
         } else {
           if (!value.entity || value.entity === this._context?.entity_id) delete value.entity;
-          this._config = {...this._config, ...value, type:`custom:${SECONDARY_STATUS_FEATURE}`};
+          this._config = {...this._config, ...value,state_content:normalizedStateContent(value.state_content),type:`custom:${SECONDARY_STATUS_FEATURE}`};
           if (!value.entity) delete this._config.entity;
           if (!value.show_labels) delete this._config.show_labels;
         }
@@ -1464,8 +1466,9 @@
     }
     setConfig(config) {
       this._config = {...config};
+      this._config.state_content = normalizedStateContent(this._config.state_content);
       if (this._config.override_end_time) {
-        this._config.state_content = [...new Set([...(this._config.state_content || ["state"]), "override_end_time"])];
+        this._config.state_content = [...new Set([...this._config.state_content, "override_end_time"])];
         delete this._config.override_end_time;
       }
       this._render();
@@ -1490,9 +1493,9 @@
       ];
       const data = rooms.length ? Object.fromEntries([
         ...rooms.map((room, index) => [`room_${index}`,this._config.entities?.[room.entity_id] || ""]),
-        ["state_content",this._config.state_content?.length ? this._config.state_content : ["state"]],
+        ["state_content",normalizedStateContent(this._config.state_content)],
         ["show_labels",this._config.show_labels === true],
-      ]) : {entity:this._config.entity || "", state_content:this._config.state_content?.length ? this._config.state_content : ["state"],show_labels:this._config.show_labels === true};
+      ]) : {entity:this._config.entity || "", state_content:normalizedStateContent(this._config.state_content),show_labels:this._config.show_labels === true};
       if (JSON.stringify(data) !== this._signature) {
         this._form.data = data;
         this._signature = JSON.stringify(data);
@@ -1625,20 +1628,14 @@
         const config = {...this._config};
         if (next.length === DEVICE_TYPES.length) { config.room_type = "all"; delete config.room_types; }
         else { config.room_types = next; delete config.room_type; }
-        if (masterMode(config) && next.length > 1) {
-          const byType = {...config.master_options_by_type};
+        if (masterMode(config) && (config.master_options_by_type || next.length > 1)) {
+          const existing = config.master_options_by_type || {};
+          const byType = {};
           const selectedType = typeForEntity(this._selectedRoom);
-          const fallback = byType[selectedType] || config.master_options || Object.values(byType)[0] || {};
           for (const roomType of next) {
-            if (byType[roomType]) continue;
-            const room = this._allRooms().find(item => deviceType(item) === roomType);
-            const options = JSON.parse(JSON.stringify(fallback));
-            if (room && Array.isArray(options.native_features)) {
-              const legacyConfig = {...config,master_options:options};
-              delete legacyConfig.master_options_by_type;
-              options.native_features = configuredNativeFeatures(legacyConfig, room.entity_id, room);
-            }
-            byType[roomType] = options;
+            if (current.includes(roomType) && existing[roomType]) byType[roomType] = existing[roomType];
+            else byType[roomType] = current.includes(roomType) && config.master_options && roomType === selectedType
+              ? JSON.parse(JSON.stringify(config.master_options)) : {};
           }
           config.master_options_by_type = byType;
           delete config.master_options;
@@ -2052,6 +2049,8 @@
       if (masterMode(this._config)) {
         const currentOptions = masterOptions(this._config, id) || {};
         const currentSecondary = (currentOptions.native_features || []).filter(isSecondaryFeature);
+        const roomType = typeForEntity(id);
+        const typeRooms = new Set(this._rooms().filter(room => deviceType(room) === roomType).map(room => room.entity_id));
         let secondaryIndex = 0;
         const shared = ordered.map(feature => {
           if (!isSecondaryFeature(feature)) return feature;
@@ -2059,11 +2058,12 @@
           if (feature.entities && typeof feature.entities === "object" && !Array.isArray(feature.entities)) {
             const saved = {...feature};
             delete saved.entity;
-            saved.entities = Object.fromEntries(Object.entries(feature.entities).filter(([, entity]) => typeof entity === "string" && entity));
+            saved.entities = Object.fromEntries(Object.entries(feature.entities)
+              .filter(([roomId, entity]) => typeRooms.has(roomId) && typeof entity === "string" && entity));
             if (!Object.keys(saved.entities).length) delete saved.entities;
             return saved;
           }
-          const entities = {...(existing.entities || {})};
+          const entities = Object.fromEntries(Object.entries(existing.entities || {}).filter(([roomId]) => typeRooms.has(roomId)));
           if (typeof feature.entity === "string" && feature.entity) entities[id] = feature.entity;
           else delete entities[id];
           const saved = {...feature};
@@ -2074,7 +2074,7 @@
         });
         if (this._config.master_options_by_type) this._config = {...this._config,master_options_by_type:{
           ...this._config.master_options_by_type,
-          [typeForEntity(id)]:{...currentOptions,native_features:shared},
+          [roomType]:{...currentOptions,native_features:shared},
         }};
         else this._config = {...this._config,master_options:{...this._config.master_options,native_features:shared}};
       } else this._config = {...this._config, room_options:{...this._config.room_options,[id]:{...this._config.room_options?.[id],native_features:ordered}}};
