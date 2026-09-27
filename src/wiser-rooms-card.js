@@ -1255,7 +1255,7 @@
         const icon = !available(room) ? "mdi:alert-circle-outline" : room.state === "off" ? "mdi:power" : heating ? "mdi:radiator" : cooling ? "mdi:snowflake" : "mdi:radiator-disabled";
         const nextDate = a.next_schedule_datetime ? new Date(a.next_schedule_datetime) : null;
         const nextTime = nextDate && Number.isFinite(nextDate.getTime()) ? nextDate.toLocaleString(this._hass.locale?.language || this._hass.language, {weekday:"short",hour:"2-digit",minute:"2-digit"}) : a.next_schedule_change;
-        const next = scheduled && nextTime ? `${text(this._hass,"next")} ${nextTime} · ${this._temperature(a.next_schedule_temp)}` : scheduled ? a.schedule_name : text(this._hass,"no_schedule");
+        const next = room.state !== "auto" ? "" : scheduled && nextTime ? `${text(this._hass,"next")} ${nextTime} · ${this._temperature(a.next_schedule_temp)}` : scheduled ? a.schedule_name : text(this._hass,"no_schedule");
         // Match the native tile's climate state colour and theme fallbacks.
         const mode = ["auto", "heat", "cool", "off"].includes(room.state) ? room.state : "off";
         const colorMode = cooling ? "cool" : heating ? "heat" : mode;

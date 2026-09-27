@@ -871,6 +871,9 @@ test('Next schedule is an icon feature that advances the schedule', () => {
   card.setConfig({entities:['climate.bedroom'],room_options:{'climate.bedroom':{native_features:[{type:'custom:wiser-next-schedule-feature'}]}}});
   assert.match(card.shadowRoot.innerHTML, /<hui-card-features /);
   assert.match(card.shadowRoot.innerHTML, /Next Sat 21:30 · 17.5°C/);
+  states['climate.bedroom'].state = 'heat';
+  card.setConfig({entities:['climate.bedroom'],room_options:{'climate.bedroom':{native_features:[{type:'custom:wiser-next-schedule-feature'}]}}});
+  assert.doesNotMatch(card.shadowRoot.innerHTML, /Next Sat 21:30 · 17.5°C/);
 });
 
 test('Secondary status renders under identity only when configured and not as bottom feature', () => {
