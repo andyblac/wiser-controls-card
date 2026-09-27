@@ -82,13 +82,27 @@ test('cancel overrides action targets only eligible overridden heating rooms', a
   Object.assign(states['climate.offline'].attributes, {is_override:true,preset_modes:['Cancel Overrides']});
   card.setConfig({room_type:'heating'});
   assert.match(card.shadowRoot.innerHTML, /2 overrides · next ends in 25m/);
-  assert.match(card.shadowRoot.innerHTML, /data-action="cancel-overrides"[^>]*appearance="filled"[^>]*>[^]*Cancel overrides \(2\)<\/ha-button>[^]*data-action="all-off"[^>]*appearance="filled"/);
+  assert.match(card.shadowRoot.innerHTML, /data-action="follow-schedule"[^]*?data-action="cancel-overrides"[^>]*appearance="filled"[^>]*>[^]*Cancel overrides \(2\)<\/ha-button>[^]*data-action="all-off"[^>]*appearance="filled"/);
   await card._cancelAllOverrides();
   assert.equal(calls.length, 2);
   assert.equal(calls.every(call => call[0] === 'climate' && call[1] === 'set_preset_mode'), true);
   assert.equal(calls.every(call => call[2].preset_mode === 'Cancel Overrides'), true);
   assert.equal(calls.map(call => call[2].entity_id).sort().join(','), 'climate.bedroom,climate.lounge');
   assert.match(card.shadowRoot.innerHTML, /--ha-color-on-disabled-normal:var\(--secondary-text-color\)/);
+});
+test('follow schedule returns every eligible heating room to auto', async () => {
+  const {card,calls,states} = setup();
+  Object.assign(states['climate.bedroom'], {state:'heat'});
+  Object.assign(states['climate.bedroom'].attributes, {schedule_id:1});
+  Object.assign(states['climate.lounge'].attributes, {schedule_id:2,is_override:true});
+  Object.assign(states['climate.offline'].attributes, {schedule_id:3,is_override:true});
+  card.setConfig({room_type:'heating'});
+  assert.match(card.shadowRoot.innerHTML, /data-action="follow-schedule"[^>]*appearance="filled"(?![^>]*disabled)/);
+  await card._followHeatingSchedule();
+  assert.equal(calls.length, 2);
+  assert.equal(calls.every(call => call[0] === 'climate' && call[1] === 'set_hvac_mode'), true);
+  assert.equal(calls.every(call => call[2].hvac_mode === 'auto'), true);
+  assert.equal(calls.map(call => call[2].entity_id).sort().join(','), 'climate.bedroom,climate.lounge');
 });
 test('explicit room selection limits master control and rejects unrelated climates', async () => {
   const {card,calls} = setup();
@@ -648,6 +662,25 @@ test('native features retain per-room config and accept new feature types', () =
   assert.equal(host.context.entity_id, 'climate.bedroom');
   assert.equal(host.hass, card._hass);
   assert.equal(JSON.stringify(host.features), JSON.stringify(list));
+});
+
+test('preset feature exposes supported Wiser actions and upgrades the legacy advance-only default', () => {
+  const {card, Editor} = setup();
+  const modes = ['Advance Schedule','Cancel Overrides','Boost 30m','Boost 1h','Boost 2h','Boost 3h'];
+  card._hass.states['climate.bedroom'].attributes.preset_modes = [...modes, 'Away'];
+  const editor = new Editor();
+  editor._hass = card._hass; editor._entries = card._entries;
+  editor.setConfig({});
+  editor._selectRoom('climate.bedroom');
+  assert.equal(editor._nativeEditor.features.at(-1).preset_modes.join(','), modes.join(','));
+  editor.setConfig({room_options:{'climate.bedroom':{native_features:[
+    {type:'climate-preset-modes',preset_modes:['Advance Schedule']},
+  ]}}});
+  assert.equal(editor._nativeEditor.features[0].preset_modes.join(','), modes.join(','));
+  editor.setConfig({room_options:{'climate.bedroom':{native_features:[
+    {type:'climate-preset-modes',preset_modes:['Boost 1h']},
+  ]}}});
+  assert.equal(editor._nativeEditor.features[0].preset_modes.join(','), 'Boost 1h');
 });
 
 test('Secondary status is always first in the native features list', () => {

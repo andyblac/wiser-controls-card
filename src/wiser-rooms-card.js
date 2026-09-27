@@ -4,6 +4,7 @@
   const {localize:text, languageFor} = window.WiserRoomsLocalize;
   const DEVICE_TYPES = ["heating", "shutters", "lights", "plugs"];
   const FEATURES = ["modes", "temperature", "advance"];
+  const WISER_PRESET_MODES = ["Advance Schedule", "Cancel Overrides", "Boost 30m", "Boost 1h", "Boost 2h", "Boost 3h"];
   const SECONDARY_STATUS_FEATURE = "wiser-secondary-status-feature";
   const OVERRIDE_STATUS_FEATURE = "wiser-override-status-feature";
   const NEXT_SCHEDULE_FEATURE = "wiser-next-schedule-feature";
@@ -14,15 +15,23 @@
   const roomConfig = (config, id) => ({...config, ...config.room_options?.[id]});
   const featureOrder = config => FEATURES.map(value => `--feature-${value}:${features(config).indexOf(value)}`).join(";");
   const features = config => config.features ?? (config.show_controls === false ? [] : FEATURES);
-  const nativeFeatures = (config, id) => orderNativeFeatures(config.native_features ?? features(config).flatMap(value => {
-    const cover = id.startsWith("cover.");
-    const light = id.startsWith("light.");
-    if (light) return value === "modes" ? [{type:"toggle"}] : value === "temperature" ? [{type:"light-brightness"}] : [];
-    if (id.startsWith("switch.")) return value === "modes" ? [{type:"toggle"}] : [];
-    if (value === "modes") return [{type: cover ? "cover-open-close" : "climate-hvac-modes"}];
-    if (value === "temperature") return [{type: cover ? "cover-position" : "target-temperature"}];
-    return cover ? [] : [{type: "climate-preset-modes", preset_modes: ["Advance Schedule"]}];
-  }));
+  const nativeFeatures = (config, id, state) => {
+    const supported = Array.isArray(state?.attributes?.preset_modes) ? state.attributes.preset_modes : [];
+    const presetModes = WISER_PRESET_MODES.filter(mode => supported.includes(mode));
+    if (!presetModes.length) presetModes.push("Advance Schedule");
+    const list = config.native_features ?? features(config).flatMap(value => {
+      const cover = id.startsWith("cover.");
+      const light = id.startsWith("light.");
+      if (light) return value === "modes" ? [{type:"toggle"}] : value === "temperature" ? [{type:"light-brightness"}] : [];
+      if (id.startsWith("switch.")) return value === "modes" ? [{type:"toggle"}] : [];
+      if (value === "modes") return [{type: cover ? "cover-open-close" : "climate-hvac-modes"}];
+      if (value === "temperature") return [{type: cover ? "cover-position" : "target-temperature"}];
+      return cover ? [] : [{type:"climate-preset-modes",preset_modes:presetModes}];
+    });
+    return orderNativeFeatures(list.map(feature => feature.type === "climate-preset-modes"
+      && (!Array.isArray(feature.preset_modes) || feature.preset_modes.length === 1 && feature.preset_modes[0] === "Advance Schedule")
+      ? {...feature,preset_modes:presetModes} : feature));
+  };
   const validNativeFeatures = value => Array.isArray(value) && value.every(feature => feature && typeof feature === "object" && typeof feature.type === "string" && feature.type.length);
   const validAction = value => value && typeof value === "object" && !Array.isArray(value) && typeof value.action === "string";
   let nativeLoading;
@@ -298,7 +307,7 @@
       finally { this._busy = false; this._render(); }
     }
     _headerFeatures(room) {
-      return nativeFeatures(roomConfig(this._config, room.entity_id), room.entity_id).filter(isHeaderFeature);
+      return nativeFeatures(roomConfig(this._config, room.entity_id), room.entity_id, room).filter(isHeaderFeature);
     }
     _secondaryMarkup(room) {
       return this._headerFeatures(room).map((feature, index) => {
@@ -308,7 +317,7 @@
     }
     _nativeMarkup(room) {
       const position = roomConfig(this._config, room.entity_id).features_position || "bottom";
-      const list = nativeFeatures(roomConfig(this._config, room.entity_id), room.entity_id).filter(feature => !isHeaderFeature(feature));
+      const list = nativeFeatures(roomConfig(this._config, room.entity_id), room.entity_id, room).filter(feature => !isHeaderFeature(feature));
       if (!list.length) return "";
       const host = (feature, index) => `<hui-card-features class="features-${position}${feature.type === `custom:${NEXT_SCHEDULE_FEATURE}` ? " feature-icon-only" : ""}" data-key="features-${escape(room.entity_id)}-${index}" data-room-features="${escape(room.entity_id)}" data-feature-index="${index}" style="--feature-height:40px"></hui-card-features>`;
       if (position === "inline") return `<div class="features-inline-row">${list.map(host).join("")}</div>`;
@@ -343,7 +352,7 @@
       }
       for (const element of this.shadowRoot.querySelectorAll?.("hui-card-features") || []) {
         const id = element.dataset.roomFeatures;
-        const allFeatures = nativeFeatures(roomConfig(this._config, id), id).filter(feature => !isHeaderFeature(feature));
+        const allFeatures = nativeFeatures(roomConfig(this._config, id), id, this._hass.states[id]).filter(feature => !isHeaderFeature(feature));
         const featureIndex = element.dataset.featureIndex;
         const config = featureIndex === undefined ? allFeatures : allFeatures.slice(Number(featureIndex), Number(featureIndex) + 1);
         element.hass = this._hass;
@@ -424,6 +433,21 @@
       if (failed.length) this._error = `Could not cancel overrides: ${failed.map(room => this._name(room)).join(", ")}. Please retry.`;
       this._busy = false; this._render();
     }
+    _heatingScheduleTargets() {
+      return this._rooms().filter(room => deviceType(room) === "heating" && available(room)
+        && Boolean(room.attributes.schedule_id) && room.attributes.hvac_modes?.includes("auto")
+        && (room.state !== "auto" || room.attributes.is_override || room.attributes.is_boosted));
+    }
+    async _followHeatingSchedule() {
+      if (this._busy || !selectedTypes(this._config).includes("heating")) return;
+      const rooms = this._heatingScheduleTargets();
+      if (!rooms.length) return;
+      this._busy = true; this._error = ""; this._render();
+      const results = await Promise.allSettled(rooms.map(room => this._hass.callService("climate", "set_hvac_mode", {entity_id:room.entity_id, hvac_mode:"auto"})));
+      const failed = rooms.filter((_, index) => results[index].status === "rejected");
+      if (failed.length) this._error = `Could not follow schedules: ${failed.map(room => this._name(room)).join(", ")}. Please retry.`;
+      this._busy = false; this._render();
+    }
     async _closeAll() {
       if (this._busy || !selectedTypes(this._config).includes("shutters")) return;
       const shutters = this._rooms().filter(room => isShutter(room) && available(room) && room.state !== "closed" && (room.attributes.supported_features & 2));
@@ -477,6 +501,7 @@
       if (!button || button.disabled) return;
       if (button.dataset.action === "all-off") { this._allOff(); return; }
       if (button.dataset.action === "cancel-overrides") { this._cancelAllOverrides(); return; }
+      if (button.dataset.action === "follow-schedule") { this._followHeatingSchedule(); return; }
       if (button.dataset.action === "all-close") { this._closeAll(); return; }
       if (button.dataset.action === "all-lights-off") { this._allDevicesOff("lights"); return; }
       if (button.dataset.action === "all-plugs-off") { this._allDevicesOff("plugs"); return; }
@@ -619,12 +644,14 @@
       const overriddenRooms = rooms.filter(isHeatingOverride);
       const canCancelOverrides = overriddenRooms.some(room =>
         room.attributes.preset_modes?.includes("Cancel Overrides"));
+      const canFollowSchedule = this._heatingScheduleTargets().length > 0;
       const canClose = rooms.some(room => isShutter(room) && available(room) && room.state !== "closed" && (room.attributes.supported_features & 2));
       const canTurnOff = type => rooms.some(state => deviceType(state) === type && available(state) && state.state === "on");
       const canResume = type => this._scheduleModeTargets(type).length > 0;
       const allOffAction = section => `<ha-button class="off${section ? " section-action" : ""}" data-action="all-off" size="m" appearance="filled" variant="danger" ${this._busy || !canOff ? "disabled" : ""} title="${escape(text(this._hass,"turn_all_off",{devices:text(this._hass,"heating")}))}"><ha-icon slot="start" icon="mdi:power"></ha-icon>${escape(text(this._hass,"all_off"))}</ha-button>`;
       const cancelOverridesAction = section => `<ha-button class="off cancel-overrides${section ? " section-action" : ""}" data-action="cancel-overrides" size="m" appearance="filled" variant="brand" ${this._busy || !canCancelOverrides ? "disabled" : ""} title="${escape(text(this._hass,"cancel_all_title"))}"><ha-icon slot="start" icon="mdi:restore"></ha-icon>${escape(text(this._hass,"cancel_overrides"))}${overriddenRooms.length ? ` (${overriddenRooms.length})` : ""}</ha-button>`;
-      const heatingActions = section => `<div class="bulk-actions">${cancelOverridesAction(section)}${allOffAction(section)}</div>`;
+      const followScheduleAction = section => `<ha-button class="off follow-schedule${section ? " section-action" : ""}" data-action="follow-schedule" size="m" appearance="filled" variant="brand" ${this._busy || !canFollowSchedule ? "disabled" : ""} title="${escape(text(this._hass,"follow_schedule_title"))}"><ha-icon slot="start" icon="mdi:calendar-sync"></ha-icon>${escape(text(this._hass,"follow_schedule"))}</ha-button>`;
+      const heatingActions = section => `<div class="bulk-actions">${followScheduleAction(section)}${cancelOverridesAction(section)}${allOffAction(section)}</div>`;
       const closeAllAction = section => `<ha-button class="off close-all${section ? " section-action" : ""}" data-action="all-close" size="m" appearance="filled" variant="brand" ${this._busy || !canClose ? "disabled" : ""} title="${escape(text(this._hass,"close_all_title"))}"><ha-icon slot="start" icon="mdi:window-shutter"></ha-icon>${escape(text(this._hass,"close_all"))}</ha-button>`;
       const deviceOffAction = (type, section) => `<ha-button class="off device-off${section ? " section-action" : ""}" data-action="all-${type}-off" size="m" appearance="filled" variant="brand" ${this._busy || !canTurnOff(type) ? "disabled" : ""} title="${escape(text(this._hass,"turn_all_off",{devices:text(this._hass,type)}))}"><ha-icon slot="start" icon="mdi:power"></ha-icon>${escape(text(this._hass,"all_off"))}</ha-button>`;
       const resumeSchedulesAction = (type, section) => `<ha-button class="off resume-schedules${section ? " section-action" : ""}" data-action="resume-${type}" size="m" appearance="filled" variant="brand" ${this._busy || !canResume(type) ? "disabled" : ""} title="${escape(text(this._hass,"return_schedules",{devices:text(this._hass,type)}))}"><ha-icon slot="start" icon="mdi:calendar-sync"></ha-icon>${escape(text(this._hass,"resume_schedules"))}</ha-button>`;
@@ -1513,11 +1540,11 @@
         event.stopPropagation();
         const id = this._selectedRoom;
         const index = event.detail.subElementConfig.index;
-        const config = nativeFeatures(roomConfig(this._config, id), id)[index];
+        const config = nativeFeatures(roomConfig(this._config, id), id, this._hass.states[id])[index];
         this.dispatchEvent(new CustomEvent("edit-sub-element", {bubbles:true, composed:true, detail:{
           type:"feature", config, context:{entity_id:id},
           saveConfig: newConfig => {
-            const list = [...nativeFeatures(roomConfig(this._config, id), id)];
+            const list = [...nativeFeatures(roomConfig(this._config, id), id, this._hass.states[id])];
             list[index] = newConfig;
             this._saveNativeFeatures(id, list);
           },
@@ -1786,7 +1813,7 @@
       }))}}}];
       this._nativeEditor.context = {entity_id:this._selectedRoom};
       this._nativeEditor.stateObj = this._hass.states[this._selectedRoom];
-      const list = nativeFeatures(roomConfig(this._config, this._selectedRoom), this._selectedRoom);
+      const list = nativeFeatures(roomConfig(this._config, this._selectedRoom), this._selectedRoom, this._hass.states[this._selectedRoom]);
       this._featurePositionForm.hidden = !list.length;
       const signature = this._selectedRoom + JSON.stringify(list);
       if (signature !== this._nativeEditorSignature) {
