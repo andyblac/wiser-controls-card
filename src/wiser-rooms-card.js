@@ -375,6 +375,18 @@
       if (failed.length) this._error = `Could not turn off: ${failed.map(room => this._name(room)).join(", ")}. Please retry.`;
       this._busy = false; this._render();
     }
+    async _cancelAllOverrides() {
+      if (this._busy) return;
+      const rooms = this._rooms().filter(room => deviceType(room) === "heating" && available(room)
+        && (room.attributes.is_override || room.attributes.is_boosted)
+        && room.attributes.preset_modes?.includes("Cancel Overrides"));
+      if (!rooms.length) return;
+      this._busy = true; this._error = ""; this._render();
+      const results = await Promise.allSettled(rooms.map(room => this._hass.callService("climate", "set_preset_mode", {entity_id:room.entity_id, preset_mode:"Cancel Overrides"})));
+      const failed = rooms.filter((_, index) => results[index].status === "rejected");
+      if (failed.length) this._error = `Could not cancel overrides: ${failed.map(room => this._name(room)).join(", ")}. Please retry.`;
+      this._busy = false; this._render();
+    }
     async _closeAll() {
       if (this._busy || !selectedTypes(this._config).includes("shutters")) return;
       const shutters = this._rooms().filter(room => isShutter(room) && available(room) && room.state !== "closed" && (room.attributes.supported_features & 2));
@@ -400,6 +412,7 @@
       const button = event.target.closest("button,ha-button");
       if (!button || button.disabled) return;
       if (button.dataset.action === "all-off") { this._allOff(); return; }
+      if (button.dataset.action === "cancel-overrides") { this._cancelAllOverrides(); return; }
       if (button.dataset.action === "all-close") { this._closeAll(); return; }
       if (button.dataset.action === "all-lights-off") { this._allDevicesOff("lights"); return; }
       if (button.dataset.action === "all-plugs-off") { this._allDevicesOff("plugs"); return; }
@@ -538,12 +551,17 @@
       const grouped = types.length > 1;
       const singleType = types[0];
       const canOff = rooms.some(r => available(r) && r.state !== "off" && r.attributes.hvac_modes?.includes("off"));
+      const canCancelOverrides = rooms.some(room => deviceType(room) === "heating" && available(room)
+        && (room.attributes.is_override || room.attributes.is_boosted)
+        && room.attributes.preset_modes?.includes("Cancel Overrides"));
       const canClose = rooms.some(room => isShutter(room) && available(room) && room.state !== "closed" && (room.attributes.supported_features & 2));
       const canTurnOff = type => rooms.some(state => deviceType(state) === type && available(state) && state.state === "on");
-      const allOffAction = section => `<ha-button class="off${section ? " section-action" : ""}" data-action="all-off" size="m" appearance="plain" variant="danger" ${this._busy || !canOff ? "disabled" : ""} title="Turn all heating off"><ha-icon slot="start" icon="mdi:power"></ha-icon>All off</ha-button>`;
-      const closeAllAction = section => `<ha-button class="off close-all${section ? " section-action" : ""}" data-action="all-close" size="m" appearance="plain" variant="brand" ${this._busy || !canClose ? "disabled" : ""} title="Close all shutters"><ha-icon slot="start" icon="mdi:window-shutter"></ha-icon>Close all</ha-button>`;
-      const deviceOffAction = (type, section) => `<ha-button class="off device-off${section ? " section-action" : ""}" data-action="all-${type}-off" size="m" appearance="plain" variant="brand" ${this._busy || !canTurnOff(type) ? "disabled" : ""} title="Turn all ${type === "plugs" ? "smart plugs" : type} off"><ha-icon slot="start" icon="mdi:power"></ha-icon>All off</ha-button>`;
-      const headerAction = grouped ? "" : singleType === "shutters" ? closeAllAction(false) : singleType === "lights" ? deviceOffAction("lights", false) : singleType === "plugs" ? deviceOffAction("plugs", false) : allOffAction(false);
+      const allOffAction = section => `<ha-button class="off${section ? " section-action" : ""}" data-action="all-off" size="m" appearance="filled" variant="danger" ${this._busy || !canOff ? "disabled" : ""} title="Turn all heating off"><ha-icon slot="start" icon="mdi:power"></ha-icon>All off</ha-button>`;
+      const cancelOverridesAction = section => `<ha-button class="off cancel-overrides${section ? " section-action" : ""}" data-action="cancel-overrides" size="m" appearance="filled" variant="brand" ${this._busy || !canCancelOverrides ? "disabled" : ""} title="Cancel all heating overrides"><ha-icon slot="start" icon="mdi:restore"></ha-icon>Cancel overrides</ha-button>`;
+      const heatingActions = section => `<div class="bulk-actions">${cancelOverridesAction(section)}${allOffAction(section)}</div>`;
+      const closeAllAction = section => `<ha-button class="off close-all${section ? " section-action" : ""}" data-action="all-close" size="m" appearance="filled" variant="brand" ${this._busy || !canClose ? "disabled" : ""} title="Close all shutters"><ha-icon slot="start" icon="mdi:window-shutter"></ha-icon>Close all</ha-button>`;
+      const deviceOffAction = (type, section) => `<ha-button class="off device-off${section ? " section-action" : ""}" data-action="all-${type}-off" size="m" appearance="filled" variant="brand" ${this._busy || !canTurnOff(type) ? "disabled" : ""} title="Turn all ${type === "plugs" ? "smart plugs" : type} off"><ha-icon slot="start" icon="mdi:power"></ha-icon>All off</ha-button>`;
+      const headerAction = grouped ? "" : singleType === "shutters" ? closeAllAction(false) : singleType === "lights" ? deviceOffAction("lights", false) : singleType === "plugs" ? deviceOffAction("plugs", false) : heatingActions(false);
       const unit = this._hass.config?.unit_system?.temperature || "°C";
       const groups = grouped
         ? [{key:"heating", title:"Heating", rooms:rooms.filter(room => deviceType(room) === "heating")},
@@ -554,13 +572,15 @@
       const groupStatus = group => {
         const total = group.rooms.length;
         const unavailable = group.rooms.filter(room => !available(room)).length;
+        const heating = group.key === "heating" ? group.rooms.filter(room => available(room) && room.state !== "off" && room.attributes.hvac_action === "heating").length : 0;
+        const cooling = group.key === "heating" ? group.rooms.filter(room => available(room) && room.state !== "off" && room.attributes.hvac_action === "cooling").length : 0;
         const active = group.rooms.filter(room => available(room) && (group.key === "heating"
-          ? room.state !== "off" && room.attributes.hvac_action === "heating"
+          ? room.state !== "off" && ["heating","cooling"].includes(room.attributes.hvac_action)
           : group.key === "shutters" ? room.state !== "closed" : room.state === "on")).length;
         const noun = group.key === "heating" ? `room${total === 1 ? "" : "s"}`
           : group.key === "shutters" ? `shutter${total === 1 ? "" : "s"}`
           : group.key === "lights" ? `light${total === 1 ? "" : "s"}` : `smart plug${total === 1 ? "" : "s"}`;
-        const state = group.key === "heating" ? "heating" : group.key === "shutters" ? "open" : "on";
+        const state = group.key === "heating" ? cooling && !heating ? "cooling" : cooling ? "heating or cooling" : "heating" : group.key === "shutters" ? "open" : "on";
         return `${active} of ${total} ${noun} ${state}${unavailable ? ` · ${unavailable} unavailable` : ""}`;
       };
       const preview = isEditorPreview(this);
@@ -682,10 +702,18 @@
         }
         .off {
           --ha-button-height:48px;
+          --ha-color-on-disabled-normal:var(--secondary-text-color);
           flex-shrink:0
         }
         .off ha-icon {
           --mdc-icon-size:26px
+        }
+        .bulk-actions {
+          display:flex;
+          align-items:center;
+          justify-content:flex-end;
+          flex-wrap:wrap;
+          gap:4px
         }
         .room {
           padding:10px 16px;
@@ -1071,7 +1099,7 @@
         }
       </style><ha-card data-key="card" class="${preview ? "editor-preview" : ""}"><header data-key="header"><div><h2>${escape(this._config.title)}</h2>${grouped || !groups.length ? "" : `<p>${groupStatus(groups[0])}</p>`}</div>${headerAction}</header>
           ${this._error ? `<div data-key="error" class="message error" role="alert">${escape(this._error)}${this._discoveryFailed ? '<ha-button data-action="retry" size="s" appearance="outlined" variant="danger">Retry</ha-button>' : ""}</div>` : ""}
-      ${!rooms.length ? `<p data-key="empty" class="message">${this._loading ? "Finding Wiser devices…" : "No matching Wiser devices found."}</p>` : groups.map(group => `${grouped ? `<section class="room-section" data-key="section-${group.key}"><div class="section-title" data-key="heading-${group.key}"><div><h3>${group.title}</h3><p>${groupStatus(group)}</p></div>${group.key === "heating" ? allOffAction(true) : group.key === "shutters" ? closeAllAction(true) : deviceOffAction(group.key, true)}</div>` : ""}<div class="rooms ${expandPreview ? "preview-rows" : ""}" data-key="rooms-${group.key}" style="--room-columns:${this._config.room_columns}">${group.rooms.map((room, index) => {
+      ${!rooms.length ? `<p data-key="empty" class="message">${this._loading ? "Finding Wiser devices…" : "No matching Wiser devices found."}</p>` : groups.map(group => `${grouped ? `<section class="room-section" data-key="section-${group.key}"><div class="section-title" data-key="heading-${group.key}"><div><h3>${group.title}</h3><p>${groupStatus(group)}</p></div>${group.key === "heating" ? heatingActions(true) : group.key === "shutters" ? closeAllAction(true) : deviceOffAction(group.key, true)}</div>` : ""}<div class="rooms ${expandPreview ? "preview-rows" : ""}" data-key="rooms-${group.key}" style="--room-columns:${this._config.room_columns}">${group.rooms.map((room, index) => {
         const options = roomConfig(this._config, room.entity_id);
         const columns = this._config.room_columns;
         const rowStart = expandPreview && index % columns === 0 ? `<div class="preview-row" data-key="preview-row-${Math.floor(index / columns)}">` : "";
@@ -1086,21 +1114,24 @@
         const pending = this._targets.get(room.entity_id);
         if (pending && (Date.now() > pending.expires || (!this._temperatureSending && a.temperature === pending.value))) this._targets.delete(room.entity_id);
         const targetTemperature = this._targets.get(room.entity_id)?.value ?? a.temperature;
-        const active = available(room) && room.state !== "off" && a.hvac_action === "heating";
-        const status = !available(room) ? "Unavailable" : room.state === "off" ? "Off" : active ? "Heating" : "Idle";
+        const heating = available(room) && room.state !== "off" && a.hvac_action === "heating";
+        const cooling = available(room) && room.state !== "off" && a.hvac_action === "cooling";
+        const active = heating || cooling;
+        const status = !available(room) ? "Unavailable" : room.state === "off" ? "Off" : heating ? "Heating" : cooling ? "Cooling" : "Idle";
         const disabled = this._busy || !available(room) ? "disabled" : "";
         const ranged = typeof a.target_temp_low === "number" && typeof a.target_temp_high === "number";
         const target = ranged ? `${this._temperature(a.target_temp_low)} – ${this._temperature(a.target_temp_high)}` : this._temperature(targetTemperature);
         const scheduled = Boolean(a.schedule_id);
-        const icon = !available(room) ? "mdi:alert-circle-outline" : room.state === "off" ? "mdi:power" : active ? "mdi:fire" : "mdi:radiator";
+        const icon = !available(room) ? "mdi:alert-circle-outline" : room.state === "off" ? "mdi:power" : heating ? "mdi:radiator" : cooling ? "mdi:snowflake" : "mdi:radiator-disabled";
         const nextDate = a.next_schedule_datetime ? new Date(a.next_schedule_datetime) : null;
         const nextTime = nextDate && Number.isFinite(nextDate.getTime()) ? nextDate.toLocaleString(this._hass.locale?.language || this._hass.language, {weekday:"short",hour:"2-digit",minute:"2-digit"}) : a.next_schedule_change;
         const next = scheduled && nextTime ? `Next ${nextTime} · ${this._temperature(a.next_schedule_temp)}` : scheduled ? a.schedule_name : "No schedule assigned";
         // Match the native tile's climate state colour and theme fallbacks.
-        const mode = ["auto", "heat", "off"].includes(room.state) ? room.state : "off";
-        const activity = mode === "off" ? "inactive" : "active";
+        const mode = ["auto", "heat", "cool", "off"].includes(room.state) ? room.state : "off";
+        const colorMode = cooling ? "cool" : heating ? "heat" : mode;
+        const activity = colorMode === "off" ? "inactive" : "active";
         const stateColor = available(room)
-          ? `var(--state-climate-${mode}-color,var(--state-climate-${activity}-color,var(--state-${activity}-color,var(--secondary-text-color))))`
+          ? `var(--state-climate-${colorMode}-color,var(--state-climate-${activity}-color,var(--state-${activity}-color,var(--secondary-text-color))))`
           : "var(--state-unavailable-color,var(--disabled-text-color))";
         const secondary = this._secondaryMarkup(room);
         const temperatureMarkup = options.temperature_focus === "target"
@@ -1114,11 +1145,11 @@
           <div class="room-heading"><div class="identity"><button class="name" data-entity="${id}" data-interaction="card" title="Open room controls"><strong>${escape(this._name(room))}</strong></button><span class="status">${statusMarkup}</span></div>
           <div class="readings"><div class="temps" title="Current ${escape(unit)} → target ${escape(unit)}" aria-label="Current ${escape(this._temperature(a.current_temperature))}; Target ${escape(target)}">${temperatureMarkup}</div>
           <div class="next" title="${escape(a.schedule_name || "")}">${escape(next)}</div></div></div></div>`;
-        return `${rowStart}<section data-key="${id}" class="room ${active ? "heating" : ""} ${preview && this._config[PREVIEW_ROOM] === room.entity_id ? "preview-selected" : ""}" style="--room-state-color:${this._contentColor(room, stateColor)};${featureOrder(options)}"><div class="room-content">
+        return `${rowStart}<section data-key="${id}" class="room ${heating ? "heating" : cooling ? "cooling" : ""} ${preview && this._config[PREVIEW_ROOM] === room.entity_id ? "preview-selected" : ""}" style="--room-state-color:${this._contentColor(room, stateColor)};${featureOrder(options)}"><div class="room-content">
           ${headerMarkup}
-          ${this._nativeReady || options.native_features ? this._nativeMarkup(room) : features(options).length ? `<div class="controls">${features(options).includes("modes") ? `<div class="modes" role="group" aria-label="${escape(this._name(room))} mode">${["auto", "heat", "off"].filter(mode => a.hvac_modes?.includes(mode)).map(mode => {
-            const label = {auto:"Schedule",heat:"Manual",off:"Off"}[mode];
-            const modeIcon = {auto:"mdi:thermostat-auto",heat:"mdi:fire",off:"mdi:power"}[mode];
+          ${this._nativeReady || options.native_features ? this._nativeMarkup(room) : features(options).length ? `<div class="controls">${features(options).includes("modes") ? `<div class="modes" role="group" aria-label="${escape(this._name(room))} mode">${["auto", "heat", "cool", "off"].filter(mode => a.hvac_modes?.includes(mode)).map(mode => {
+            const label = {auto:"Schedule",heat:"Manual",cool:"Cool",off:"Off"}[mode];
+            const modeIcon = {auto:"mdi:thermostat-auto",heat:"mdi:fire",cool:"mdi:snowflake",off:"mdi:power"}[mode];
             return `<button class="mode ${mode === room.state ? "active" : ""}" data-action="mode" data-entity="${id}" data-mode="${mode}" aria-pressed="${mode === room.state}" aria-label="${label}" title="${label}" ${disabled || mode === "auto" && !scheduled ? "disabled" : ""}><ha-icon icon="${modeIcon}"></ha-icon></button>`;
           }).join("")}</div>` : ""}
           ${features(options).includes("temperature") ? (ranged ? `<button data-entity="${id}" title="Adjust temperature range" aria-label="Adjust temperature range"><ha-icon icon="mdi:thermostat"></ha-icon></button>` : `<input type="number" data-entity="${id}" data-field="temperature" aria-label="${escape(this._name(room))} target temperature" title="Target ${escape(unit)}" value="${typeof targetTemperature === "number" ? targetTemperature : ""}" min="${a.min_temp ?? 5}" max="${a.max_temp ?? 30}" step="${a.target_temp_step || .5}" ${disabled || room.state === "off" ? "disabled" : ""}>`) : ""}

@@ -49,6 +49,20 @@ test('master off attempts every eligible room and reports partial failure', asyn
   assert.match(card._error, /bedroom/);
   assert.equal(card._busy, false);
 });
+test('cancel overrides action targets only eligible overridden heating rooms', async () => {
+  const {card,calls,states} = setup();
+  Object.assign(states['climate.bedroom'].attributes, {is_override:true,preset_modes:['Cancel Overrides']});
+  Object.assign(states['climate.lounge'].attributes, {is_boosted:true,preset_modes:['Cancel Overrides']});
+  Object.assign(states['climate.offline'].attributes, {is_override:true,preset_modes:['Cancel Overrides']});
+  card.setConfig({room_type:'heating'});
+  assert.match(card.shadowRoot.innerHTML, /data-action="cancel-overrides"[^>]*appearance="filled"[^>]*>[^]*Cancel overrides<\/ha-button>[^]*data-action="all-off"[^>]*appearance="filled"/);
+  await card._cancelAllOverrides();
+  assert.equal(calls.length, 2);
+  assert.equal(calls.every(call => call[0] === 'climate' && call[1] === 'set_preset_mode'), true);
+  assert.equal(calls.every(call => call[2].preset_mode === 'Cancel Overrides'), true);
+  assert.equal(calls.map(call => call[2].entity_id).sort().join(','), 'climate.bedroom,climate.lounge');
+  assert.match(card.shadowRoot.innerHTML, /--ha-color-on-disabled-normal:var\(--secondary-text-color\)/);
+});
 test('explicit room selection limits master control and rejects unrelated climates', async () => {
   const {card,calls} = setup();
   card.setConfig({entities:['climate.lounge','climate.other','climate.hot_water']});
@@ -209,6 +223,29 @@ test('temperatures use the configured Celsius or Fahrenheit unit', () => {
   card._hass.config.unit_system.temperature = '°F';
   assert.equal(card._temperature(70.9), '70.9°F');
   assert.equal(card._temperature(null), '—');
+});
+
+test('cooling climate rooms use cooling status, icon, colour and fallback mode', () => {
+  const {card, states} = setup();
+  const room = states['climate.bedroom'];
+  room.state = 'auto';
+  room.attributes.hvac_action = 'cooling';
+  room.attributes.hvac_modes.push('cool');
+  card.setConfig({room_type:'heating'});
+  const html = card.shadowRoot.innerHTML;
+  assert.match(html, /class="room cooling/);
+  assert.match(html, /icon="mdi:snowflake"/);
+  assert.match(html, /--room-state-color:var\(--state-climate-cool-color/);
+  assert.match(html, /data-mode="cool"[^>]*aria-label="Cool"/);
+  assert.match(html, /1 of 3 rooms cooling · 1 unavailable/);
+});
+
+test('heating room icons distinguish active heating from idle', () => {
+  const {card} = setup();
+  card.setConfig({room_type:'heating'});
+  const html = card.shadowRoot.innerHTML;
+  assert.match(html, /data-room-icon="climate\.bedroom" icon="mdi:radiator"/);
+  assert.match(html, /data-room-icon="climate\.lounge" icon="mdi:radiator-disabled"/);
 });
 
 
