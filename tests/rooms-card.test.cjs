@@ -949,7 +949,7 @@ test('Content supports native composed names and omits the entity-picture option
   const temperatureFocus = displayGroup.schema[1];
   assert.equal(Object.keys(temperatureFocus.selector)[0], 'button_toggle');
   assert.equal(temperatureFocus.label, '');
-  assert.equal(JSON.stringify(temperatureFocus.visible), JSON.stringify({field:'show_temperatures',operator:'not_eq',value:false}));
+  assert.equal(temperatureFocus.visible, undefined);
   assert.equal(temperatureFocus.selector.button_toggle.options.map(option => option.label).join(','), 'Current,Target');
   assert.equal(contentSchema[displayGroupIndex + 1].name, 'state_content');
   assert.match(fs.readFileSync(path.join(__dirname, '../src/wiser-rooms-card.js'), 'utf8'), /ha-form\.room-options\{[^}]*--ha-space-6:var\(--ha-space-1,4px\)/);
