@@ -52,10 +52,11 @@ test('master off attempts every eligible room and reports partial failure', asyn
 test('cancel overrides action targets only eligible overridden heating rooms', async () => {
   const {card,calls,states} = setup();
   Object.assign(states['climate.bedroom'].attributes, {is_override:true,preset_modes:['Cancel Overrides']});
-  Object.assign(states['climate.lounge'].attributes, {is_boosted:true,preset_modes:['Cancel Overrides']});
+  Object.assign(states['climate.lounge'].attributes, {is_boosted:true,boost_time_remaining:25,preset_modes:['Cancel Overrides']});
   Object.assign(states['climate.offline'].attributes, {is_override:true,preset_modes:['Cancel Overrides']});
   card.setConfig({room_type:'heating'});
-  assert.match(card.shadowRoot.innerHTML, /data-action="cancel-overrides"[^>]*appearance="filled"[^>]*>[^]*Cancel overrides<\/ha-button>[^]*data-action="all-off"[^>]*appearance="filled"/);
+  assert.match(card.shadowRoot.innerHTML, /2 overrides · next ends in 25m/);
+  assert.match(card.shadowRoot.innerHTML, /data-action="cancel-overrides"[^>]*appearance="filled"[^>]*>[^]*Cancel overrides \(2\)<\/ha-button>[^]*data-action="all-off"[^>]*appearance="filled"/);
   await card._cancelAllOverrides();
   assert.equal(calls.length, 2);
   assert.equal(calls.every(call => call[0] === 'climate' && call[1] === 'set_preset_mode'), true);
@@ -703,15 +704,17 @@ test('legacy features migrate for heating and shutters without losing empty list
   assert.throws(() => card.setConfig({room_options:{'climate.bedroom':{native_features:[{}]}}}));
 });
 
-test('Secondary status uses native state display and entity-specific editor fields', () => {
+test('Secondary status uses native state display and supports override end time', () => {
   const {card, elements, window} = setup();
+  Object.assign(card._hass.states['climate.lounge'].attributes, {is_boosted:true,boost_time_remaining:25});
   const Feature = elements['wiser-secondary-status-feature'];
   const feature = new Feature();
-  feature.setConfig({type:'custom:wiser-secondary-status-feature',entity:'climate.lounge',state_content:['current_temperature','hvac_action']});
+  feature.setConfig({type:'custom:wiser-secondary-status-feature',entity:'climate.lounge',state_content:['current_temperature','hvac_action'],override_end_time:true});
   feature.context = {entity_id:'climate.bedroom'};
   feature.hass = card._hass;
   assert.equal(feature._display.stateObj.entity_id, 'climate.lounge');
-  assert.equal(feature._display.content.join(','), 'current_temperature,hvac_action');
+  assert.equal(feature._display.content.join(','), 'current_temperature,hvac_action,override_end_time');
+  assert.match(feature._display.stateObj.attributes.override_end_time, / · 25m remaining/);
   feature._button.listeners.click({stopPropagation(){}});
   assert.equal(feature.lastEvent.detail.entityId, 'climate.lounge');
   feature.setConfig({type:'custom:wiser-secondary-status-feature'});
@@ -723,14 +726,38 @@ test('Secondary status uses native state display and entity-specific editor fiel
   editor.setConfig({type:'custom:wiser-secondary-status-feature'});
   editor.context = {entity_id:'climate.bedroom'};
   editor.hass = card._hass;
-  assert.equal(editor._form.data.entity, 'climate.bedroom');
-  editor._form.listeners['value-changed']({stopPropagation(){},detail:{value:{entity:'climate.lounge',state_content:['state','current_temperature']}}});
+  assert.equal(editor._form.schema[0].required, undefined);
+  assert.equal(editor._form.data.entity, '');
+  assert.equal(editor._form.schema[1].selector.ui_state_content.entity_id, 'climate.bedroom');
+  assert.equal(editor._form.hass.states['climate.bedroom'].attributes.override_end_time, 'No override');
+  editor._form.listeners['value-changed']({stopPropagation(){},detail:{value:{entity:'climate.lounge',state_content:['state','current_temperature','override_end_time']}}});
   assert.equal(editor.lastEvent.detail.config.entity, 'climate.lounge');
-  assert.equal(editor.lastEvent.detail.config.state_content.join(','), 'state,current_temperature');
+  assert.equal(editor.lastEvent.detail.config.state_content.join(','), 'state,current_temperature,override_end_time');
+  editor._form.listeners['value-changed']({stopPropagation(){},detail:{value:{entity:'climate.bedroom',state_content:['state']}}});
+  assert.equal(editor.lastEvent.detail.config.entity, undefined);
   const entry = window.customCardFeatures.find(f => f.type === 'wiser-secondary-status-feature');
   assert.equal(entry.configurable, true);
   assert.equal(entry.isSupported(card._hass,{entity_id:'climate.bedroom'}), true);
   assert.equal(entry.isSupported(card._hass,{entity_id:'cover.office'}), false);
+});
+
+test('Override end time is a per-room header feature', () => {
+  const {card, elements, states, window} = setup();
+  Object.assign(states['climate.bedroom'].attributes, {is_override:true,next_schedule_datetime:'2099-09-27T12:30:00+01:00'});
+  const Feature = elements['wiser-override-status-feature'];
+  const feature = new Feature();
+  feature.setConfig({type:'custom:wiser-override-status-feature'});
+  feature.context = {entity_id:'climate.bedroom'};
+  feature.hass = card._hass;
+  assert.equal(feature._icon.icon, 'mdi:timer-outline');
+  assert.match(feature._value.textContent, /^Override ends /);
+  const entry = window.customCardFeatures.find(f => f.type === 'wiser-override-status-feature');
+  assert.equal(entry.name, 'Override end time');
+  assert.equal(entry.configurable, false);
+  assert.equal(entry.isSupported(card._hass,{entity_id:'climate.bedroom'}), true);
+  card.setConfig({entities:['climate.bedroom'],room_options:{'climate.bedroom':{native_features:[{type:'custom:wiser-override-status-feature'}]}}});
+  assert.match(card.shadowRoot.innerHTML, /<wiser-override-status-feature/);
+  assert.doesNotMatch(card.shadowRoot.innerHTML, /<hui-card-features /);
 });
 
 test('Next schedule is an icon feature that advances the schedule', () => {
@@ -762,7 +789,7 @@ test('Secondary status renders under identity only when configured and not as bo
   assert.match(html, /class="secondary-primary-line"><span class="status"><state-display[^>]*>[^<]*<\/state-display><\/span><div class="next"[^>]*>[^<]*<\/div><\/div><wiser-secondary-status-feature/);
   assert.doesNotMatch(html, /<hui-card-features /);
   const statusHost = {dataset:{secondaryRoom:'climate.bedroom',secondaryIndex:'0'},setConfig(config){this.config=config;}};
-  card.shadowRoot.querySelectorAll = selector => selector.startsWith('wiser-secondary') ? [statusHost] : [];
+  card.shadowRoot.querySelectorAll = selector => selector === '[data-secondary-room]' ? [statusHost] : [];
   card._syncNativeFeatures();
   assert.equal(statusHost.context.entity_id, 'climate.bedroom');
   assert.equal(statusHost.config.type, 'custom:wiser-secondary-status-feature');
@@ -878,6 +905,7 @@ test('Content name defaults to the room area', () => {
   editor._selectRoom('climate.bedroom');
   assert.equal(JSON.stringify(editor._roomForm.data.name), JSON.stringify([{type:'area'}]));
   assert.equal(editor._roomForm.data.state_content.join(','), 'hvac_action');
+  assert.equal(editor._roomForm.hass.states['climate.bedroom'].attributes.override_end_time, 'No override');
 });
 
 test('editor preview uses the measured dashboard room width with a readable fallback', () => {
@@ -900,6 +928,7 @@ test('status renders exactly the configured state content with useful defaults',
   card.setConfig({entities:['climate.bedroom'],room_options:{'climate.bedroom':{state_content:['hvac_action','state']}}});
   card._syncNativeFeatures();
   assert.equal(display.content.join(','), 'hvac_action,state');
+  assert.equal(display.stateObj.attributes.override_end_time, 'No override');
   const source = fs.readFileSync(path.join(__dirname, '../src/wiser-rooms-card.js'), 'utf8');
   assert.match(source, /current\.localName !== "state-display"/);
 });

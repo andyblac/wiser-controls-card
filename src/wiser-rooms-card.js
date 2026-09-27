@@ -4,10 +4,12 @@
   const DEVICE_TYPES = ["heating", "shutters", "lights", "plugs"];
   const FEATURES = ["modes", "temperature", "advance"];
   const SECONDARY_STATUS_FEATURE = "wiser-secondary-status-feature";
+  const OVERRIDE_STATUS_FEATURE = "wiser-override-status-feature";
   const NEXT_SCHEDULE_FEATURE = "wiser-next-schedule-feature";
   const isSecondaryFeature = feature => feature.type === `custom:${SECONDARY_STATUS_FEATURE}`;
-  const isHeaderFeature = feature => isSecondaryFeature(feature);
-  const orderNativeFeatures = list => [...list.filter(isSecondaryFeature), ...list.filter(feature => !isSecondaryFeature(feature))];
+  const isOverrideStatusFeature = feature => feature.type === `custom:${OVERRIDE_STATUS_FEATURE}`;
+  const isHeaderFeature = feature => isSecondaryFeature(feature) || isOverrideStatusFeature(feature);
+  const orderNativeFeatures = list => [...list.filter(isHeaderFeature), ...list.filter(feature => !isHeaderFeature(feature))];
   const roomConfig = (config, id) => ({...config, ...config.room_options?.[id]});
   const featureOrder = config => FEATURES.map(value => `--feature-${value}:${features(config).indexOf(value)}`).join(";");
   const features = config => config.features ?? (config.show_controls === false ? [] : FEATURES);
@@ -46,6 +48,37 @@
   const isLight = state => state?.entity_id.startsWith("light.") && Object.hasOwn(state.attributes, "product_type");
   const isPlug = state => state?.entity_id.startsWith("switch.") && Object.hasOwn(state.attributes, "output_state") && Object.hasOwn(state.attributes, "schedule_id");
   const deviceType = state => isShutter(state) ? "shutters" : isLight(state) ? "lights" : isPlug(state) ? "plugs" : "heating";
+  const isHeatingOverride = room => deviceType(room) === "heating" && available(room) && Boolean(room.attributes.is_override || room.attributes.is_boosted);
+  const overrideEnd = room => {
+    const value = room.attributes.boost_end || room.attributes.next_schedule_datetime;
+    const end = value ? new Date(value) : room.attributes.is_boosted && Number.isFinite(room.attributes.boost_time_remaining)
+      ? new Date(Date.now() + Math.max(0, room.attributes.boost_time_remaining) * 60000) : null;
+    return end && Number.isFinite(end.getTime()) ? end : null;
+  };
+  const overrideMinutes = room => {
+    if (room.attributes.is_boosted && Number.isFinite(room.attributes.boost_time_remaining)) return Math.max(0, room.attributes.boost_time_remaining);
+    const end = overrideEnd(room);
+    return end ? Math.max(0, Math.ceil((end.getTime() - Date.now()) / 60000)) : null;
+  };
+  const formatDuration = minutes => {
+    if (!Number.isFinite(minutes)) return "";
+    if (minutes < 60) return `${minutes}m`;
+    const hours = Math.floor(minutes / 60), remainder = minutes % 60;
+    return `${hours}h${remainder ? ` ${remainder}m` : ""}`;
+  };
+  const overrideEndValue = (room, hass) => {
+    if (!room || !isHeatingOverride(room)) return "No override";
+    const end = overrideEnd(room);
+    const locale = hass?.locale?.language || hass?.language;
+    const endTime = end?.toLocaleString(locale, {weekday:"short",hour:"2-digit",minute:"2-digit"});
+    const remaining = formatDuration(overrideMinutes(room));
+    return endTime ? `${endTime}${remaining ? ` · ${remaining} remaining` : ""}`
+      : remaining ? `${remaining} remaining` : "Unavailable";
+  };
+  const withOverrideEnd = (state, hass) => state ? {
+    ...state,
+    attributes:{...state.attributes, override_end_time:overrideEndValue(state, hass)},
+  } : state;
   const selectedTypes = config => Array.isArray(config?.room_types) && config.room_types.length
     ? DEVICE_TYPES.filter(type => config.room_types.includes(type))
     : config?.room_type && config.room_type !== "all" ? [config.room_type] : DEVICE_TYPES;
@@ -262,11 +295,14 @@
       } catch (error) { this._error = `Unable to control ${this._name(room)}: ${error.message || error}`; }
       finally { this._busy = false; this._render(); }
     }
-    _secondaryFeatures(room) {
-      return nativeFeatures(roomConfig(this._config, room.entity_id), room.entity_id).filter(feature => isSecondaryFeature(feature));
+    _headerFeatures(room) {
+      return nativeFeatures(roomConfig(this._config, room.entity_id), room.entity_id).filter(isHeaderFeature);
     }
     _secondaryMarkup(room) {
-      return this._secondaryFeatures(room).map((_, index) => `<wiser-secondary-status-feature data-key="secondary-${index}" data-secondary-room="${escape(room.entity_id)}" data-secondary-index="${index}"></wiser-secondary-status-feature>`).join("");
+      return this._headerFeatures(room).map((feature, index) => {
+        const tag = isOverrideStatusFeature(feature) ? OVERRIDE_STATUS_FEATURE : SECONDARY_STATUS_FEATURE;
+        return `<${tag} data-key="secondary-${index}" data-secondary-room="${escape(room.entity_id)}" data-secondary-index="${index}"></${tag}>`;
+      }).join("");
     }
     _nativeMarkup(room) {
       const position = roomConfig(this._config, room.entity_id).features_position || "bottom";
@@ -290,12 +326,12 @@
       }
       for (const display of this.shadowRoot.querySelectorAll?.("state-display[data-room-status]") || []) {
         const id = display.dataset.roomStatus;
-        display.hass = this._hass; display.stateObj = this._hass.states[id];
+        display.hass = this._hass; display.stateObj = withOverrideEnd(this._hass.states[id], this._hass);
         display.content = roomConfig(this._config, id).state_content ?? this._defaultStateContent(id);
       }
-      for (const element of this.shadowRoot.querySelectorAll?.("wiser-secondary-status-feature[data-secondary-room]") || []) {
+      for (const element of this.shadowRoot.querySelectorAll?.("[data-secondary-room]") || []) {
         const id = element.dataset.secondaryRoom;
-        const config = this._secondaryFeatures(this._hass.states[id])[Number(element.dataset.secondaryIndex)];
+        const config = this._headerFeatures(this._hass.states[id])[Number(element.dataset.secondaryIndex)];
         element.hass = this._hass;
         element.context = {entity_id:id};
         if (element._wiserConfig !== JSON.stringify(config)) {
@@ -326,7 +362,7 @@
       const position = typeof a.current_position === "number" ? a.current_position : null;
       const color = available(room) ? "var(--state-cover-active-color,var(--primary-color))" : "var(--disabled-text-color)";
       return `<section data-key="${id}" class="room ${preview && this._config[PREVIEW_ROOM] === room.entity_id ? "preview-selected" : ""}" style="--room-state-color:${this._contentColor(room, color)};${featureOrder(options)}"><div class="room-content">
-        <div class="top ${this._secondaryFeatures(room).length ? "has-secondary" : ""} ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" aria-label="Open shutter details">${this._contentIcon(room, room.state === "closed" ? "mdi:window-shutter" : "mdi:window-shutter-open")}</button>
+        <div class="top ${this._headerFeatures(room).length ? "has-secondary" : ""} ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" aria-label="Open shutter details">${this._contentIcon(room, room.state === "closed" ? "mdi:window-shutter" : "mdi:window-shutter-open")}</button>
         <div class="room-heading"><div class="identity"><button class="name" data-entity="${id}" data-interaction="card"><strong>${escape(this._name(room))}</strong></button><span class="status">${this._contentStatus(room, status)}</span>${this._secondaryMarkup(room)}</div>
         <div class="readings"><div class="temps">${position === null ? "—" : `${position}%`}</div><div class="next">${escape(a.room || "")}</div></div></div></div>
         ${this._nativeReady || options.native_features ? this._nativeMarkup(room) : features(options).some(feature => feature === "modes" || feature === "temperature" && (a.supported_features & 4)) ? `<div class="controls">${features(options).includes("modes") ? `<div class="modes" role="group" aria-label="Shutter controls">${[["open_cover",1,"arrow-up","Open"],["stop_cover",8,"stop","Stop"],["close_cover",2,"arrow-down","Close"]].map(([service,feature,icon,label]) =>
@@ -352,7 +388,7 @@
       const brightnessControl = light ? `<input type="number" data-entity="${id}" data-field="brightness" aria-label="${escape(this._name(state))} brightness percent" title="Brightness" value="${brightness ?? ""}" min="1" max="100" step="1" ${disabled}>` : "";
       const fallbackControls = useNative ? "" : `<div class="controls">${brightnessControl}<button data-action="device" data-entity="${id}" data-service="turn_${on ? "off" : "on"}" aria-label="Turn ${escape(this._name(state))} ${on ? "off" : "on"}" title="Turn ${on ? "off" : "on"}" ${disabled}><ha-icon icon="mdi:power"></ha-icon></button></div>`;
       return `<section data-key="${id}" class="room device-${light ? "light" : "plug"} ${on ? "powered" : ""} ${preview && this._config[PREVIEW_ROOM] === state.entity_id ? "preview-selected" : ""}" style="--room-state-color:${this._contentColor(state, color)};${featureOrder(options)}"><div class="room-content">
-        <div class="top ${this._secondaryFeatures(state).length ? "has-secondary" : ""} ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" aria-label="Open device details">${this._contentIcon(state, icon)}</button>
+        <div class="top ${this._headerFeatures(state).length ? "has-secondary" : ""} ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" aria-label="Open device details">${this._contentIcon(state, icon)}</button>
         <div class="room-heading"><div class="identity"><button class="name" data-entity="${id}" data-interaction="card"><strong>${escape(this._name(state))}</strong></button><span class="status">${this._contentStatus(state, status)}</span>${this._secondaryMarkup(state)}</div>
         <div class="readings"><div class="temps">${options.show_temperatures === false ? "" : escape(reading)}</div><div class="next">${options.show_next_schedule === false ? "" : escape(this._deviceSchedule(state))}</div></div></div></div>
         ${fallbackControls}${native}</div></section>`;
@@ -377,8 +413,7 @@
     }
     async _cancelAllOverrides() {
       if (this._busy) return;
-      const rooms = this._rooms().filter(room => deviceType(room) === "heating" && available(room)
-        && (room.attributes.is_override || room.attributes.is_boosted)
+      const rooms = this._rooms().filter(room => isHeatingOverride(room)
         && room.attributes.preset_modes?.includes("Cancel Overrides"));
       if (!rooms.length) return;
       this._busy = true; this._error = ""; this._render();
@@ -551,13 +586,13 @@
       const grouped = types.length > 1;
       const singleType = types[0];
       const canOff = rooms.some(r => available(r) && r.state !== "off" && r.attributes.hvac_modes?.includes("off"));
-      const canCancelOverrides = rooms.some(room => deviceType(room) === "heating" && available(room)
-        && (room.attributes.is_override || room.attributes.is_boosted)
-        && room.attributes.preset_modes?.includes("Cancel Overrides"));
+      const overriddenRooms = rooms.filter(isHeatingOverride);
+      const canCancelOverrides = overriddenRooms.some(room =>
+        room.attributes.preset_modes?.includes("Cancel Overrides"));
       const canClose = rooms.some(room => isShutter(room) && available(room) && room.state !== "closed" && (room.attributes.supported_features & 2));
       const canTurnOff = type => rooms.some(state => deviceType(state) === type && available(state) && state.state === "on");
       const allOffAction = section => `<ha-button class="off${section ? " section-action" : ""}" data-action="all-off" size="m" appearance="filled" variant="danger" ${this._busy || !canOff ? "disabled" : ""} title="Turn all heating off"><ha-icon slot="start" icon="mdi:power"></ha-icon>All off</ha-button>`;
-      const cancelOverridesAction = section => `<ha-button class="off cancel-overrides${section ? " section-action" : ""}" data-action="cancel-overrides" size="m" appearance="filled" variant="brand" ${this._busy || !canCancelOverrides ? "disabled" : ""} title="Cancel all heating overrides"><ha-icon slot="start" icon="mdi:restore"></ha-icon>Cancel overrides</ha-button>`;
+      const cancelOverridesAction = section => `<ha-button class="off cancel-overrides${section ? " section-action" : ""}" data-action="cancel-overrides" size="m" appearance="filled" variant="brand" ${this._busy || !canCancelOverrides ? "disabled" : ""} title="Cancel all heating overrides"><ha-icon slot="start" icon="mdi:restore"></ha-icon>Cancel overrides${overriddenRooms.length ? ` (${overriddenRooms.length})` : ""}</ha-button>`;
       const heatingActions = section => `<div class="bulk-actions">${cancelOverridesAction(section)}${allOffAction(section)}</div>`;
       const closeAllAction = section => `<ha-button class="off close-all${section ? " section-action" : ""}" data-action="all-close" size="m" appearance="filled" variant="brand" ${this._busy || !canClose ? "disabled" : ""} title="Close all shutters"><ha-icon slot="start" icon="mdi:window-shutter"></ha-icon>Close all</ha-button>`;
       const deviceOffAction = (type, section) => `<ha-button class="off device-off${section ? " section-action" : ""}" data-action="all-${type}-off" size="m" appearance="filled" variant="brand" ${this._busy || !canTurnOff(type) ? "disabled" : ""} title="Turn all ${type === "plugs" ? "smart plugs" : type} off"><ha-icon slot="start" icon="mdi:power"></ha-icon>All off</ha-button>`;
@@ -581,7 +616,10 @@
           : group.key === "shutters" ? `shutter${total === 1 ? "" : "s"}`
           : group.key === "lights" ? `light${total === 1 ? "" : "s"}` : `smart plug${total === 1 ? "" : "s"}`;
         const state = group.key === "heating" ? cooling && !heating ? "cooling" : cooling ? "heating or cooling" : "heating" : group.key === "shutters" ? "open" : "on";
-        return `${active} of ${total} ${noun} ${state}${unavailable ? ` · ${unavailable} unavailable` : ""}`;
+        const overrides = group.key === "heating" ? group.rooms.filter(isHeatingOverride) : [];
+        const remaining = overrides.map(overrideMinutes).filter(Number.isFinite);
+        const overrideStatus = overrides.length ? ` · ${overrides.length} override${overrides.length === 1 ? "" : "s"}${remaining.length ? ` · next ends in ${formatDuration(Math.min(...remaining))}` : ""}` : "";
+        return `${active} of ${total} ${noun} ${state}${overrideStatus}${unavailable ? ` · ${unavailable} unavailable` : ""}`;
       };
       const preview = isEditorPreview(this);
       // Orbit expands a selected item to its normal grid width (six of twelve by default).
@@ -1179,7 +1217,14 @@
     }
     static getStubConfig() { return {type:`custom:${SECONDARY_STATUS_FEATURE}`, state_content:["state"]}; }
     static getConfigElement() { return document.createElement("wiser-secondary-status-feature-editor"); }
-    setConfig(config) { this._config = {...config}; this._render(); }
+    setConfig(config) {
+      this._config = {...config};
+      if (this._config.override_end_time) {
+        this._config.state_content = [...new Set([...(this._config.state_content || ["state"]), "override_end_time"])];
+        delete this._config.override_end_time;
+      }
+      this._render();
+    }
     set hass(value) { this._hass = value; this._render(); }
     set context(value) { this._context = value; this._render(); }
     set stateObj(value) { this._stateObj = value; this._render(); }
@@ -1191,7 +1236,7 @@
       this._display.hidden = !state;
       this._button.title = state?.attributes?.friendly_name || id || "Secondary status";
       this._display.hass = this._hass;
-      this._display.stateObj = state;
+      this._display.stateObj = withOverrideEnd(state, this._hass);
       this._display.content = this._config.state_content?.length ? this._config.state_content : ["state"];
       this._display.timestampTooltip = true;
     }
@@ -1201,29 +1246,79 @@
       super();
       this.attachShadow({mode:"open"});
       this._form = document.createElement("ha-form");
-      this._form.computeLabel = schema => schema.name === "entity" ? "Entity" : "State content";
+      this._form.computeLabel = schema => ({entity:"Entity (optional)",state_content:"State content"})[schema.name];
       this._form.schema = [
-        {name:"entity", required:true, selector:{entity:{}}},
-        {name:"state_content", selector:{ui_state_content:{allow_context:true}}, context:{filter_entity:"entity"}},
+        {name:"entity", selector:{entity:{}}},
+        {name:"state_content", selector:{ui_state_content:{allow_context:true}}},
       ];
       this._form.addEventListener("value-changed", event => {
         event.stopPropagation();
-        this._config = {...this._config, ...event.detail.value, type:`custom:${SECONDARY_STATUS_FEATURE}`};
+        const value = {...event.detail.value};
+        if (!value.entity || value.entity === this._context?.entity_id) delete value.entity;
+        this._config = {...this._config, ...value, type:`custom:${SECONDARY_STATUS_FEATURE}`};
+        if (!value.entity) delete this._config.entity;
         this.dispatchEvent(new CustomEvent("config-changed", {bubbles:true, composed:true, detail:{config:this._config}}));
       });
       this.shadowRoot.append(this._form);
     }
-    setConfig(config) { this._config = {...config}; this._render(); }
+    setConfig(config) {
+      this._config = {...config};
+      if (this._config.override_end_time) {
+        this._config.state_content = [...new Set([...(this._config.state_content || ["state"]), "override_end_time"])];
+        delete this._config.override_end_time;
+      }
+      this._render();
+    }
     set hass(value) { this._hass = value; this._render(); }
     set context(value) { this._context = value; this._render(); }
     _render() {
       if (!this._hass || !this._config) return;
-      this._form.hass = this._hass;
-      const data = {entity:this._config.entity || this._context?.entity_id || "", state_content:this._config.state_content?.length ? this._config.state_content : ["state"]};
+      const effectiveEntity = this._config.entity || this._context?.entity_id || "";
+      const effectiveState = this._hass.states[effectiveEntity];
+      this._form.hass = effectiveState ? {...this._hass, states:{...this._hass.states, [effectiveEntity]:withOverrideEnd(effectiveState, this._hass)}} : this._hass;
+      this._form.schema = [
+        {name:"entity", selector:{entity:{}}},
+        {name:"state_content", selector:{ui_state_content:{allow_context:true,entity_id:effectiveEntity || undefined}}},
+      ];
+      const data = {entity:this._config.entity || "", state_content:this._config.state_content?.length ? this._config.state_content : ["state"]};
       if (JSON.stringify(data) !== this._signature) {
         this._form.data = data;
         this._signature = JSON.stringify(data);
       }
+    }
+  }
+  class WiserOverrideStatusFeature extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({mode:"open"});
+      const style = document.createElement("style");
+      style.textContent = `:host{display:block;pointer-events:auto;min-width:0}button{display:flex;width:100%;min-width:0;align-items:center;gap:6px;padding:0;border:0;background:none;color:var(--secondary-text-color);font:inherit;font-size:12px;text-align:start;cursor:pointer}button:focus-visible{outline:2px solid var(--primary-color)}ha-icon{flex:0 0 auto;--mdc-icon-size:16px}.value{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}`;
+      this._button = document.createElement("button");
+      this._button.type = "button";
+      this._icon = document.createElement("ha-icon");
+      this._icon.icon = "mdi:timer-outline";
+      this._value = document.createElement("span");
+      this._value.className = "value";
+      this._button.append(this._icon, this._value);
+      this._button.addEventListener("click", event => {
+        event.stopPropagation();
+        const id = this._config?.entity || this._context?.entity_id || this._stateObj?.entity_id;
+        if (id && this._hass?.states[id]) this.dispatchEvent(new CustomEvent("hass-more-info", {bubbles:true, composed:true, detail:{entityId:id}}));
+      });
+      this.shadowRoot.append(style, this._button);
+    }
+    static getStubConfig() { return {type:`custom:${OVERRIDE_STATUS_FEATURE}`}; }
+    setConfig(config) { this._config = {...config}; this._render(); }
+    set hass(value) { this._hass = value; this._render(); }
+    set context(value) { this._context = value; this._render(); }
+    set stateObj(value) { this._stateObj = value; this._render(); }
+    _render() {
+      if (!this._hass || !this._config) return;
+      const id = this._config.entity || this._context?.entity_id || this._stateObj?.entity_id;
+      const state = this._hass.states[id];
+      this._button.disabled = !state;
+      this._button.title = state?.attributes?.friendly_name || id || "Override end time";
+      this._value.textContent = state && isHeatingOverride(state) ? `Override ends ${overrideEndValue(state, this._hass)}` : state ? "No override" : "Unavailable";
     }
   }
   class WiserNextScheduleFeature extends HTMLElement {
@@ -1262,10 +1357,15 @@
   }
   if (!customElements.get(SECONDARY_STATUS_FEATURE)) customElements.define(SECONDARY_STATUS_FEATURE, WiserSecondaryStatusFeature);
   if (!customElements.get("wiser-secondary-status-feature-editor")) customElements.define("wiser-secondary-status-feature-editor", WiserSecondaryStatusFeatureEditor);
+  if (!customElements.get(OVERRIDE_STATUS_FEATURE)) customElements.define(OVERRIDE_STATUS_FEATURE, WiserOverrideStatusFeature);
   if (!customElements.get(NEXT_SCHEDULE_FEATURE)) customElements.define(NEXT_SCHEDULE_FEATURE, WiserNextScheduleFeature);
   window.customCardFeatures = window.customCardFeatures || [];
   if (!window.customCardFeatures.some(feature => feature.type === SECONDARY_STATUS_FEATURE)) window.customCardFeatures.push({
     type:SECONDARY_STATUS_FEATURE, name:"Secondary status", configurable:true,
+    isSupported:(hass, context) => Boolean(context?.entity_id?.startsWith("climate.") && hass.states[context.entity_id]),
+  });
+  if (!window.customCardFeatures.some(feature => feature.type === OVERRIDE_STATUS_FEATURE)) window.customCardFeatures.push({
+    type:OVERRIDE_STATUS_FEATURE, name:"Override end time", configurable:false,
     isSupported:(hass, context) => Boolean(context?.entity_id?.startsWith("climate.") && hass.states[context.entity_id]),
   });
   if (!window.customCardFeatures.some(feature => feature.type === NEXT_SCHEDULE_FEATURE)) window.customCardFeatures.push({
@@ -1492,11 +1592,13 @@
       if (typeMarkup !== this._typeMarkup) { this._typeForm.innerHTML = typeMarkup; this._typeMarkup = typeMarkup; }
       this._renderTabs(rooms);
       const selectedOptions = roomConfig(this._config, this._selectedRoom);
-      this._roomForm.hass = this._hass;
       const selectedState = this._hass.states[this._selectedRoom];
       const selectedType = selectedState ? deviceType(selectedState) : "heating";
       const shutter = selectedType === "shutters";
       const heating = selectedType === "heating";
+      this._roomForm.hass = heating && selectedState
+        ? {...this._hass, states:{...this._hass.states, [this._selectedRoom]:withOverrideEnd(selectedState, this._hass)}}
+        : this._hass;
       const metricLabel = shutter ? "Show position" : selectedType === "lights" ? "Show brightness" : selectedType === "plugs" ? "Show status reading" : "Show current / target temperature";
       const contentSchema = [
         {name:"name", label:"Name", selector:{entity_name:{}}, context:{entity:"entity"}},
