@@ -220,6 +220,8 @@ test('room tabs include all detected heating rooms and hide/show without losing 
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(editor._form.data.title, 'Wiser rooms');
   assert.equal(editor._rooms().length, 3);
+  assert.match(editor._tabs.innerHTML, /<ha-icon-button[^>]*data-action="hide"/);
+  assert.doesNotMatch(editor._tabs.innerHTML, /<button[^>]*data-action="(?:hide|left|right)"/);
   for (const room of editor._rooms()) {
     assert.equal(editor._shown(room.entity_id), true);
     editor._selectedRoom = room.entity_id;
@@ -387,7 +389,7 @@ test('Shutters filter replaces All off with Close all and closes eligible shutte
   card.setConfig({room_type:'shutters'});
   assert.match(card.shadowRoot.innerHTML, /data-action="all-close"/);
   assert.match(card.shadowRoot.innerHTML, /mdi:window-shutter/);
-  assert.match(card.shadowRoot.innerHTML, />Close all<\/button>/);
+  assert.match(card.shadowRoot.innerHTML, /<ha-button[^>]*data-action="all-close"[^>]*>.*Close all<\/ha-button>/);
   assert.doesNotMatch(card.shadowRoot.innerHTML, /data-action="all-off"/);
   await card._closeAll();
   assert.equal(calls.length,1);
@@ -404,7 +406,7 @@ test('Close all reports individual shutter failures and releases busy state', as
   assert.match(card._error,/Could not close: Office shutter/);
   assert.equal(card._busy,false);
   shutter.state = 'closed'; card._render();
-  assert.match(card.shadowRoot.innerHTML, /data-action="all-close" disabled/);
+  assert.match(card.shadowRoot.innerHTML, /<ha-button[^>]*data-action="all-close"[^>]*disabled/);
 });
 test('shutter failures are reported and release the busy state', async () => {
   const {card} = setup(); const shutter = addShutter(card);
@@ -843,4 +845,16 @@ test('status renders exactly the configured state content with useful defaults',
   assert.equal(display.content.join(','), 'hvac_action,state');
   const source = fs.readFileSync(path.join(__dirname, '../src/wiser-rooms-card.js'), 'utf8');
   assert.match(source, /current\.localName !== "state-display"/);
+});
+
+test('card uses native Home Assistant entity icons and action buttons', () => {
+  const {card} = setup();
+  card.setConfig({entities:['climate.bedroom']});
+  assert.match(card.shadowRoot.innerHTML, /<ha-state-icon data-room-icon="climate\.bedroom" icon="mdi:[^"]+"><\/ha-state-icon>/);
+  assert.match(card.shadowRoot.innerHTML, /<ha-button[^>]*data-action="all-off"[^>]*variant="danger"/);
+  assert.doesNotMatch(card.shadowRoot.innerHTML, /<button[^>]*data-action="all-off"/);
+  const icon = {dataset:{roomIcon:'climate.bedroom'}};
+  card.shadowRoot.querySelectorAll = selector => selector === 'ha-state-icon[data-room-icon]' ? [icon] : [];
+  card._syncNativeFeatures();
+  assert.equal(icon.stateObj.entity_id, 'climate.bedroom');
 });

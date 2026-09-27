@@ -192,7 +192,7 @@
     }
     _contentIcon(room, fallback) {
       const options = roomConfig(this._config, room.entity_id);
-      return `<ha-icon icon="${escape(options.icon || fallback)}"></ha-icon>`;
+      return `<ha-state-icon data-room-icon="${escape(room.entity_id)}" icon="${escape(options.icon || fallback)}"></ha-state-icon>`;
     }
     _contentStatus(room) {
       return `<state-display data-room-status="${escape(room.entity_id)}"></state-display>`;
@@ -279,6 +279,10 @@
         : host(row[0][0], row[0][1])).join("");
     }
     _syncNativeFeatures() {
+      for (const icon of this.shadowRoot.querySelectorAll?.("ha-state-icon[data-room-icon]") || []) {
+        const id = icon.dataset.roomIcon;
+        icon.stateObj = this._hass.states[id];
+      }
       for (const display of this.shadowRoot.querySelectorAll?.("state-display[data-room-status]") || []) {
         const id = display.dataset.roomStatus;
         display.hass = this._hass; display.stateObj = this._hass.states[id];
@@ -388,7 +392,7 @@
       this._busy = false; this._render();
     }
     _click(event) {
-      const button = event.target.closest("button");
+      const button = event.target.closest("button,ha-button");
       if (!button || button.disabled) return;
       if (button.dataset.action === "all-off") { this._allOff(); return; }
       if (button.dataset.action === "all-close") { this._closeAll(); return; }
@@ -531,9 +535,9 @@
       const canOff = rooms.some(r => available(r) && r.state !== "off" && r.attributes.hvac_modes?.includes("off"));
       const canClose = rooms.some(room => isShutter(room) && available(room) && room.state !== "closed" && (room.attributes.supported_features & 2));
       const canTurnOff = type => rooms.some(state => deviceType(state) === type && available(state) && state.state === "on");
-      const allOffAction = section => `<button class="off${section ? " section-action" : ""}" data-action="all-off" ${this._busy || !canOff ? "disabled" : ""} title="Turn all heating off" aria-label="Turn all heating off"><ha-icon icon="mdi:power"></ha-icon>All off</button>`;
-      const closeAllAction = section => `<button class="off close-all${section ? " section-action" : ""}" data-action="all-close" ${this._busy || !canClose ? "disabled" : ""} title="Close all shutters" aria-label="Close all shutters"><ha-icon icon="mdi:window-shutter"></ha-icon>Close all</button>`;
-      const deviceOffAction = (type, section) => `<button class="off device-off${section ? " section-action" : ""}" data-action="all-${type}-off" ${this._busy || !canTurnOff(type) ? "disabled" : ""} title="Turn all ${type === "plugs" ? "smart plugs" : type} off" aria-label="Turn all ${type === "plugs" ? "smart plugs" : type} off"><ha-icon icon="mdi:power"></ha-icon>All off</button>`;
+      const allOffAction = section => `<ha-button class="off${section ? " section-action" : ""}" data-action="all-off" size="m" appearance="plain" variant="danger" ${this._busy || !canOff ? "disabled" : ""} title="Turn all heating off"><ha-icon slot="start" icon="mdi:power"></ha-icon>All off</ha-button>`;
+      const closeAllAction = section => `<ha-button class="off close-all${section ? " section-action" : ""}" data-action="all-close" size="m" appearance="plain" variant="brand" ${this._busy || !canClose ? "disabled" : ""} title="Close all shutters"><ha-icon slot="start" icon="mdi:window-shutter"></ha-icon>Close all</ha-button>`;
+      const deviceOffAction = (type, section) => `<ha-button class="off device-off${section ? " section-action" : ""}" data-action="all-${type}-off" size="m" appearance="plain" variant="brand" ${this._busy || !canTurnOff(type) ? "disabled" : ""} title="Turn all ${type === "plugs" ? "smart plugs" : type} off"><ha-icon slot="start" icon="mdi:power"></ha-icon>All off</ha-button>`;
       const headerAction = grouped ? "" : singleType === "shutters" ? closeAllAction(false) : singleType === "lights" ? deviceOffAction("lights", false) : singleType === "plugs" ? deviceOffAction("plugs", false) : allOffAction(false);
       const unit = this._hass.config?.unit_system?.temperature || "°C";
       const groups = grouped
@@ -672,24 +676,11 @@
           outline-offset:2px
         }
         .off {
-          color:var(--error-color);
-          display:flex;
-          align-items:center;
-          gap:8px;
-          font-size:16px;
-          min-height:48px;
-          padding:10px 16px;
-          border-radius:14px;
+          --ha-button-height:48px;
           flex-shrink:0
         }
         .off ha-icon {
           --mdc-icon-size:26px
-        }
-        .off.close-all {
-          color:var(--primary-color)
-        }
-        .off.device-off {
-          color:var(--primary-color)
         }
         .room {
           padding:10px 16px;
@@ -761,7 +752,7 @@
           color:var(--room-state-color);
           background:color-mix(in srgb,var(--room-state-color) 20%,transparent)
         }
-        ha-icon {
+        ha-icon,ha-state-icon {
           --mdc-icon-size:24px;
           pointer-events:none
         }
@@ -898,10 +889,6 @@
           }
           .top .temps small {
             font-size:16px
-          }
-          .off {
-            padding:8px 10px;
-            font-size:14px
           }
         }
         @container room (max-width: 210px) {
@@ -1078,7 +1065,7 @@
           flex-wrap:wrap
         }
       </style><ha-card data-key="card" class="${preview ? "editor-preview" : ""}"><header data-key="header"><div><h2>${escape(this._config.title)}</h2>${grouped || !groups.length ? "" : `<p>${groupStatus(groups[0])}</p>`}</div>${headerAction}</header>
-      ${this._error ? `<div data-key="error" class="message error" role="alert">${escape(this._error)}${this._discoveryFailed ? '<button data-action="retry">Retry</button>' : ""}</div>` : ""}
+          ${this._error ? `<div data-key="error" class="message error" role="alert">${escape(this._error)}${this._discoveryFailed ? '<ha-button data-action="retry" size="s" appearance="outlined" variant="danger">Retry</ha-button>' : ""}</div>` : ""}
       ${!rooms.length ? `<p data-key="empty" class="message">${this._loading ? "Finding Wiser devices…" : "No matching Wiser devices found."}</p>` : groups.map(group => `${grouped ? `<section class="room-section" data-key="section-${group.key}"><div class="section-title" data-key="heading-${group.key}"><div><h3>${group.title}</h3><p>${groupStatus(group)}</p></div>${group.key === "heating" ? allOffAction(true) : group.key === "shutters" ? closeAllAction(true) : deviceOffAction(group.key, true)}</div>` : ""}<div class="rooms ${expandPreview ? "preview-rows" : ""}" data-key="rooms-${group.key}" style="--room-columns:${this._config.room_columns}">${group.rooms.map((room, index) => {
         const options = roomConfig(this._config, room.entity_id);
         const columns = this._config.room_columns;
@@ -1343,7 +1330,7 @@
       this._version.textContent = `Wiser Rooms Card · ${CARD_VERSION}`;
       this._tabs = document.createElement("div");
       this._tabs.addEventListener("click", event => {
-        const button = event.target.closest("button");
+        const button = event.target.closest("[data-room],[data-action]");
         if (!button || button.disabled) return;
         if (button.dataset.room) { this._selectRoom(button.dataset.room); }
         else if (button.dataset.action) this._roomAction(button.dataset.action);
@@ -1373,7 +1360,7 @@
         .room-tabs button.active{color:var(--primary-color);opacity:1;border-bottom-color:var(--primary-color)}
         .room-tabs button.hidden-room{text-decoration:line-through}
         .room-tools{display:flex;flex-wrap:nowrap;gap:4px;margin-left:auto;flex-shrink:0}
-        .room-tools button{display:flex;align-items:center;justify-content:center;width:34px;height:34px;padding:0;border:1px solid var(--divider-color);border-radius:var(--ha-border-radius-lg,12px);background:var(--secondary-background-color)}
+        .room-tools ha-icon-button{--ha-icon-button-size:34px}
         button:disabled{opacity:.35;cursor:default}ha-icon{--mdc-icon-size:20px;pointer-events:none}
         ha-form.room-options{display:block;margin-bottom:24px}
         ha-expansion-panel{display:block;--expansion-panel-content-padding:0;border-radius:var(--ha-border-radius-md);--ha-card-border-radius:var(--ha-border-radius-md)}
@@ -1567,9 +1554,9 @@
         const active = room.entity_id === this._selectedRoom;
         return `<button type="button" role="tab" title="${escape(this._name(room))}${this._shown(room.entity_id) ? "" : " (hidden)"}" data-room="${escape(room.entity_id)}" aria-selected="${active}" tabindex="${active ? 0 : -1}" class="${active ? "active" : ""} ${this._shown(room.entity_id) ? "" : "hidden-room"}" aria-label="${escape(this._name(room))}${this._shown(room.entity_id) ? "" : " (hidden)"}">${tabIndex + 1}</button>`;
       }).join("")}</div><div class="room-tools">
-        <button type="button" data-action="hide" title="${this._shown(selected.entity_id) ? "Hide room" : "Show room"}" aria-label="${this._shown(selected.entity_id) ? "Hide room" : "Show room"}"><ha-icon icon="mdi:${this._shown(selected.entity_id) ? "eye" : "eye-off"}"></ha-icon></button>
-        <button type="button" data-action="left" title="Move left" aria-label="Move left" ${index === 0 ? "disabled" : ""}><ha-icon icon="mdi:arrow-left"></ha-icon></button>
-        <button type="button" data-action="right" title="Move right" aria-label="Move right" ${index === rooms.length - 1 ? "disabled" : ""}><ha-icon icon="mdi:arrow-right"></ha-icon></button>
+        <ha-icon-button data-action="hide" label="${this._shown(selected.entity_id) ? "Hide room" : "Show room"}"><ha-icon icon="mdi:${this._shown(selected.entity_id) ? "eye" : "eye-off"}"></ha-icon></ha-icon-button>
+        <ha-icon-button data-action="left" label="Move left" ${index === 0 ? "disabled" : ""}><ha-icon icon="mdi:arrow-left"></ha-icon></ha-icon-button>
+        <ha-icon-button data-action="right" label="Move right" ${index === rooms.length - 1 ? "disabled" : ""}><ha-icon icon="mdi:arrow-right"></ha-icon></ha-icon-button>
         </div></div>`;
       if (markup !== this._tabsMarkup) {
         const scrollLeft = this._tabs.querySelector?.(".room-tabs")?.scrollLeft || 0;
