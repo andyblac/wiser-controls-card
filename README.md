@@ -80,16 +80,22 @@ npm test
 npm run build:dev
 ```
 
-The bundle is written to `dist/wiser-rooms-card.js`. A sibling Wiser integration
-repository picks up this bundle automatically when running its development build.
+The bundle is written to `dist/wiser-rooms-card.js`, with metadata in
+`dist/build-info.json`. Development builds use the next patch version followed by
+an incrementing `-dev.N` suffix, such as `0.1.1-dev.1`, and print the cache-busting
+dashboard resource URL. The ignored `.dev-build.json` file stores the local build
+counter; `package.json` remains on the stable release version. A sibling Wiser
+integration repository picks up the bundle automatically when running its
+development build.
 
 ## Releases
 
-Run `npm test` and `npm run build` before publishing. Create a GitHub release
-with a semantic version tag such as `v0.1.0`; the release workflow builds from
-that tag and attaches `wiser-rooms-card.js`. The tag supplies the bundle version.
-Prerelease tags such as `v0.1.0-beta.1` should be marked as prereleases on GitHub.
-The integration's release builds download published assets from this repository.
+Run `npm test` and `npm run build` before publishing. Set the stable semantic
+version in `package.json`, then create a matching GitHub release tag such as
+`v0.1.0`. The release workflow rejects mismatched tags, verifies the version
+marker and build metadata, and attaches `wiser-rooms-card.js`. The integration's
+release builds download published assets from this repository. Prerelease
+versions and matching tags such as `0.2.0-beta.1` / `v0.2.0-beta.1` are supported.
 
 ## Heating and shutters
 

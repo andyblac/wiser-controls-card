@@ -5,7 +5,7 @@
   "description": "Wiser room heating controls for Home Assistant",
   "license": "MIT",
   "scripts": {
-    "test": "node --test tests/*.test.cjs",
+    "test": "node --test tests/*.test.cjs tests/*.test.mjs",
     "build": "node scripts/build.mjs",
     "build:dev": "node scripts/build.mjs --dev"
   },

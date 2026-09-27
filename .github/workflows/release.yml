@@ -18,6 +18,10 @@ jobs:
       - run: npm run build
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
+      - name: Check bundle version
+        run: |
+          node --check dist/wiser-rooms-card.js
+          node -e 'const fs = require("node:fs"); const v = require("./package.json").version; const info = require("./dist/build-info.json"); if (!fs.readFileSync("dist/wiser-rooms-card.js", "utf8").startsWith(`/*! WISER-CARD-VERSION wiser-rooms-card ${v} */`)) throw new Error("Bundle version mismatch"); if (info.version !== v) throw new Error("Build info version mismatch");'
       - name: Attach card bundle
         env:
           GH_TOKEN: ${{ github.token }}

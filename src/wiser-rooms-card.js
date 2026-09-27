@@ -1,5 +1,6 @@
 /* Wiser rooms dashboard card. Bundled with the integration. */
 (() => {
+  const CARD_VERSION = "__WISER_CARD_VERSION__";
   const FEATURES = ["modes", "temperature", "advance"];
   const roomConfig = (config, id) => ({...config, ...config.room_options?.[id]});
   const featureOrder = config => FEATURES.map(value => `--feature-${value}:${features(config).indexOf(value)}`).join(";");
@@ -1141,6 +1142,9 @@
       });
       this._message = document.createElement("p");
       this._message.style.cssText = "color:var(--secondary-text-color);font-size:14px";
+      this._version = document.createElement("div");
+      this._version.className = "version";
+      this._version.textContent = `Wiser Rooms Card · ${CARD_VERSION}`;
       this._tabs = document.createElement("div");
       this._tabs.addEventListener("click", event => {
         const button = event.target.closest("button");
@@ -1173,8 +1177,9 @@
         .room-tools button{display:flex;align-items:center;justify-content:center;width:34px;height:34px;padding:0;border:1px solid var(--divider-color);border-radius:var(--ha-border-radius-lg,12px);background:var(--secondary-background-color)}
         button:disabled{opacity:.35;cursor:default}ha-icon{--mdc-icon-size:20px;pointer-events:none}
         ha-expansion-panel{display:block;margin-top:20px}h3{margin:0;font-size:16px;font-weight:500}.native-feature-content{padding:12px}.feature-position{display:block;margin-top:16px}
+        .version{margin-top:24px;color:var(--secondary-text-color);font-size:12px;text-align:right}
       `;
-      this.shadowRoot.append(style, this._hubForm, this._form, this._typeForm, this._tabs, this._contentPanel, this._featureList, this._message);
+      this.shadowRoot.append(style, this._hubForm, this._form, this._typeForm, this._tabs, this._contentPanel, this._featureList, this._message, this._version);
       this._form.computeLabel = schema => schema.label || "Title";
       this._form.addEventListener("value-changed", event => this._changed(event));
     }
