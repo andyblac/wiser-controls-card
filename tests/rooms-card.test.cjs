@@ -553,6 +553,26 @@ test('native features retain per-room config and accept new feature types', () =
   assert.equal(JSON.stringify(host.features), JSON.stringify(list));
 });
 
+test('Secondary status is always first in the native features list', () => {
+  const {card, Editor} = setup();
+  const editor = new Editor();
+  editor._hass = card._hass; editor._entries = card._entries;
+  const list = [
+    {type:'climate-hvac-modes'},
+    {type:'custom:wiser-secondary-status-feature',state_content:['state']},
+    {type:'target-temperature'},
+  ];
+  editor.setConfig({room_options:{'climate.bedroom':{native_features:list}}});
+  editor._selectRoom('climate.bedroom');
+  assert.equal(editor._nativeEditor.features[0].type, 'custom:wiser-secondary-status-feature');
+  editor._nativeEditor.listeners['features-changed']({stopPropagation(){},detail:{features:list}});
+  const saved = editor.lastEvent.detail.config.room_options['climate.bedroom'].native_features;
+  assert.equal(saved[0].type, 'custom:wiser-secondary-status-feature');
+  assert.equal(saved.slice(1).map(feature => feature.type).join(','), 'climate-hvac-modes,target-temperature');
+  const source = fs.readFileSync(path.join(__dirname, '../src/wiser-rooms-card.js'), 'utf8');
+  assert.match(source, /style\.textContent = "\.feature:first-child \.handle\{visibility:hidden!important\}"/);
+});
+
 test('every supported device exposes the same default features that the card renders', () => {
   const {card, Editor} = setup();
   addShutter(card); addLight(card); addPlug(card);

@@ -3,10 +3,15 @@
   const CARD_VERSION = "__WISER_CARD_VERSION__";
   const DEVICE_TYPES = ["heating", "shutters", "lights", "plugs"];
   const FEATURES = ["modes", "temperature", "advance"];
+  const SECONDARY_STATUS_FEATURE = "wiser-secondary-status-feature";
+  const NEXT_SCHEDULE_FEATURE = "wiser-next-schedule-feature";
+  const isSecondaryFeature = feature => feature.type === `custom:${SECONDARY_STATUS_FEATURE}`;
+  const isHeaderFeature = feature => isSecondaryFeature(feature);
+  const orderNativeFeatures = list => [...list.filter(isSecondaryFeature), ...list.filter(feature => !isSecondaryFeature(feature))];
   const roomConfig = (config, id) => ({...config, ...config.room_options?.[id]});
   const featureOrder = config => FEATURES.map(value => `--feature-${value}:${features(config).indexOf(value)}`).join(";");
   const features = config => config.features ?? (config.show_controls === false ? [] : FEATURES);
-  const nativeFeatures = (config, id) => config.native_features ?? features(config).flatMap(value => {
+  const nativeFeatures = (config, id) => orderNativeFeatures(config.native_features ?? features(config).flatMap(value => {
     const cover = id.startsWith("cover.");
     const light = id.startsWith("light.");
     if (light) return value === "modes" ? [{type:"toggle"}] : value === "temperature" ? [{type:"light-brightness"}] : [];
@@ -14,7 +19,7 @@
     if (value === "modes") return [{type: cover ? "cover-open-close" : "climate-hvac-modes"}];
     if (value === "temperature") return [{type: cover ? "cover-position" : "target-temperature"}];
     return cover ? [] : [{type: "climate-preset-modes", preset_modes: ["Advance Schedule"]}];
-  });
+  }));
   const validNativeFeatures = value => Array.isArray(value) && value.every(feature => feature && typeof feature === "object" && typeof feature.type === "string" && feature.type.length);
   const validAction = value => value && typeof value === "object" && !Array.isArray(value) && typeof value.action === "string";
   let nativeLoading;
@@ -1124,10 +1129,6 @@
       this._layoutHeaders();
     }
   }
-  const SECONDARY_STATUS_FEATURE = "wiser-secondary-status-feature";
-  const NEXT_SCHEDULE_FEATURE = "wiser-next-schedule-feature";
-  const isSecondaryFeature = feature => feature.type === `custom:${SECONDARY_STATUS_FEATURE}`;
-  const isHeaderFeature = feature => isSecondaryFeature(feature);
   class WiserSecondaryStatusFeature extends HTMLElement {
     constructor() {
       super();
@@ -1307,7 +1308,7 @@
       this._featureList.querySelector?.(".content")?.append(this._nativeEditor, this._featurePositionForm);
       this._nativeEditor.addEventListener("features-changed", event => {
         event.stopPropagation();
-        this._setRoomOptions({native_features:event.detail.features});
+        this._saveNativeFeatures(this._selectedRoom, event.detail.features);
       });
       this._nativeEditor.addEventListener("edit-detail-element", event => {
         event.stopPropagation();
@@ -1526,10 +1527,23 @@
     }
     _saveNativeFeatures(id, list) {
       if (!id || !validNativeFeatures(list)) return;
+      const ordered = orderNativeFeatures(list);
       this._config = {...this._config, room_options:{...this._config.room_options,
-        [id]:{...this._config.room_options?.[id], native_features:list}}};
+        [id]:{...this._config.room_options?.[id], native_features:ordered}}};
       this._render();
       this._dispatchConfig();
+    }
+    _hidePinnedFeatureMoveHandle() {
+      const root = this._nativeEditor.shadowRoot;
+      if (!root) return;
+      const existing = root.querySelector?.("style[data-wiser-pinned-feature]");
+      const pinned = isSecondaryFeature(this._nativeEditor.features?.[0] || {});
+      if (!pinned) { existing?.remove(); return; }
+      if (existing) return;
+      const style = document.createElement("style");
+      style.dataset.wiserPinnedFeature = "";
+      style.textContent = ".feature:first-child .handle{visibility:hidden!important}";
+      root.append(style);
     }
     _renderFeatures() {
       if (!this._selectedRoom) return;
@@ -1543,6 +1557,8 @@
         this._nativeEditor.features = list;
         this._nativeEditorSignature = signature;
       }
+      this._hidePinnedFeatureMoveHandle();
+      Promise.resolve(this._nativeEditor.updateComplete).then(() => this._hidePinnedFeatureMoveHandle());
       const positionData = {features_position:roomConfig(this._config, this._selectedRoom).features_position || "bottom"};
       if (JSON.stringify(positionData) !== JSON.stringify(this._featurePositionForm.data)) this._featurePositionForm.data = positionData;
     }
