@@ -1708,7 +1708,7 @@
         double_tap_action:selectedOptions.double_tap_action,icon_double_tap_action:selectedOptions.icon_double_tap_action};
       for (const key of Object.keys(roomData)) if (roomData[key] === undefined) delete roomData[key];
       if (JSON.stringify(roomData) !== JSON.stringify(this._roomForm.data)) this._roomForm.data = roomData;
-      this._alignTemperatureFocus();
+      this._styleTemperatureFocus();
       this._roomForm.hidden = !this._selectedRoom;
       this._featureList.hidden = !this._selectedRoom;
       this._renderFeatures();
@@ -1718,7 +1718,7 @@
         : "";
       this._message.hidden = !this._message.textContent;
     }
-    async _alignTemperatureFocus() {
+    async _styleTemperatureFocus() {
       await this._roomForm?.updateComplete;
       const content = [...(this._roomForm?.shadowRoot?.querySelectorAll("ha-form-expandable") || [])]
         .find(item => item.schema?.name === "content");
@@ -1739,13 +1739,6 @@
       field.style.visibility = show ? "" : "hidden";
       field.inert = !show;
       field.setAttribute("aria-hidden", String(!show));
-      await field.updateComplete;
-      const selector = field.shadowRoot?.querySelector("ha-selector");
-      await selector?.updateComplete;
-      const buttonSelector = selector?.shadowRoot?.querySelector("ha-selector-button-toggle");
-      await buttonSelector?.updateComplete;
-      const group = buttonSelector?.shadowRoot?.querySelector("ha-button-toggle-group");
-      if (group) group.size = "s";
     }
     _setRoomOptions(options) {
       if (!this._selectedRoom) return;

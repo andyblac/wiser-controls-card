@@ -43,7 +43,6 @@
   "finding": "Recherche des pièces Wiser…",
   "no_devices": "Aucun appareil Wiser correspondant.",
   "retry_editor": "Impossible de détecter les pièces. Fermez puis rouvrez l’éditeur.",
-  "temperature_emphasis": "Température mise en avant",
   "show_position": "Afficher la position",
   "show_brightness": "Afficher la luminosité",
   "show_status": "Afficher l’état",

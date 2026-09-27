@@ -43,7 +43,6 @@
   "finding": "Finding Wiser rooms…",
   "no_devices": "No matching Wiser devices found.",
   "retry_editor": "Unable to detect rooms. Close and reopen the editor to retry.",
-  "temperature_emphasis": "Temperature emphasis",
   "show_position": "Show position",
   "show_brightness": "Show brightness",
   "show_status": "Show status reading",
