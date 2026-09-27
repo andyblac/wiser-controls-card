@@ -49,5 +49,8 @@
   "show_brightness": "Afficher la luminosité",
   "show_status": "Afficher l’état",
   "show_temperatures": "Afficher la température actuelle / cible",
-  "show_next_schedule": "Afficher le prochain programme"
+  "show_next_schedule": "Afficher le prochain programme",
+  "configuration_mode": "Mode de configuration",
+  "master": "Principal",
+  "individual": "Individuel"
 }

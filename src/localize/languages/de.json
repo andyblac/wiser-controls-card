@@ -49,5 +49,8 @@
   "show_brightness": "Helligkeit anzeigen",
   "show_status": "Statuswert anzeigen",
   "show_temperatures": "Aktuelle / Zieltemperatur anzeigen",
-  "show_next_schedule": "Nächsten Zeitplan anzeigen"
+  "show_next_schedule": "Nächsten Zeitplan anzeigen",
+  "configuration_mode": "Konfigurationsmodus",
+  "master": "Master",
+  "individual": "Individuell"
 }

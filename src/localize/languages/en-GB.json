@@ -49,5 +49,8 @@
   "show_brightness": "Show brightness",
   "show_status": "Show status reading",
   "show_temperatures": "Show current / target temperature",
-  "show_next_schedule": "Show next schedule"
+  "show_next_schedule": "Show next schedule",
+  "configuration_mode": "Configuration mode",
+  "master": "Master",
+  "individual": "Individual"
 }
