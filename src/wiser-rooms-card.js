@@ -736,6 +736,12 @@
         const overrideStatus = overrides.length ? ` · ${overrides.length} ${text(this._hass,`override_${overrides.length === 1 ? "one" : "other"}`)}${remaining.length ? ` · ${text(this._hass,"next_ends",{time:formatDuration(Math.min(...remaining))})}` : ""}` : "";
         return `${text(this._hass,"group_status",{active,total,noun,state})}${overrideStatus}${unavailable ? ` · ${text(this._hass,"unavailable_count",{count:unavailable})}` : ""}`;
       };
+      const configuredTitle = String(this._config.title ?? text(this._hass,"wiser_rooms")).trim();
+      const title = configuredTitle || (!grouped && groups.length ? text(this._hass, singleType) : "");
+      const headerStatus = grouped || !groups.length ? "" : `<p>${groupStatus(groups[0])}</p>`;
+      const cardHeader = title || headerStatus || headerAction
+        ? `<header data-key="header" class="${title ? "" : "titleless"}"><div>${title ? `<h2>${escape(title)}</h2>` : ""}${headerStatus}</div>${headerAction}</header>`
+        : "";
       const preview = isEditorPreview(this);
       const masterPreview = preview && masterMode(this._config);
       const configuredPreviewRoom = this._config[PREVIEW_ROOM];
@@ -1291,7 +1297,7 @@
           align-items:flex-start;
           flex-wrap:wrap
         }
-      </style><ha-card data-key="card" class="${preview ? "editor-preview" : ""}"><header data-key="header"><div><h2>${escape(this._config.title ?? text(this._hass,"wiser_rooms"))}</h2>${grouped || !groups.length ? "" : `<p>${groupStatus(groups[0])}</p>`}</div>${headerAction}</header>
+      </style><ha-card data-key="card" class="${preview ? "editor-preview" : ""}">${cardHeader}
           ${this._error ? `<div data-key="error" class="message error" role="alert">${escape(this._error)}${this._discoveryFailed ? '<ha-button data-action="retry" size="s" appearance="outlined" variant="danger">Retry</ha-button>' : ""}</div>` : ""}
       ${!rooms.length ? `<p data-key="empty" class="message">${this._loading ? text(this._hass,"finding") : text(this._hass,"no_devices")}</p>` : groups.map(group => `${grouped ? `<section class="room-section" data-key="section-${group.key}"><div class="section-title" data-key="heading-${group.key}"><div><h3>${group.title}</h3><p>${groupStatus(group)}</p></div>${group.key === "heating" ? heatingActions(true) : scheduledDeviceActions(group.key, true)}</div>` : ""}<div class="rooms ${expandPreview ? "preview-rows" : ""}" data-key="rooms-${group.key}" style="--room-columns:${masterPreview ? 1 : this._config.room_columns}">${group.rooms.map((room, index) => {
         const options = roomConfig(this._config, room.entity_id);
@@ -2200,7 +2206,8 @@
     _changed(event) {
       event.stopPropagation();
       const data = event.detail.value;
-      const config = {...this._config, title: data.title ?? text(this._hass,"wiser_rooms"), room_columns: data.room_columns ?? 1};
+      const title = Object.hasOwn(data, "title") ? data.title ?? "" : this._config.title ?? text(this._hass,"wiser_rooms");
+      const config = {...this._config, title, room_columns: data.room_columns ?? 1};
       this._config = config;
       this._render();
       this._dispatchConfig();

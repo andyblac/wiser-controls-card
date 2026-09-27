@@ -470,6 +470,26 @@ test('editor preserves legacy selections and layout when updating title', () => 
   assert.equal(card._rooms().length, 2);
 });
 
+test('clearing Title in the UI editor removes it from the card', () => {
+  const {card, Editor} = setup();
+  const editor = new Editor();
+  editor.setConfig({room_type:'all'});
+  editor._entries = card._entries;
+  editor._hass = card._hass;
+  editor._render();
+  editor._changed({stopPropagation() {},detail:{value:{...editor._form.data,title:null}}});
+  const config = editor.lastEvent.detail.config;
+  assert.equal(config.title, '');
+  assert.equal(editor._form.data.title, '');
+  card.setConfig(config);
+  assert.doesNotMatch(card.shadowRoot.innerHTML, /<h2>|data-key="header"/);
+  card.setConfig({room_type:'heating',title:''});
+  assert.match(card.shadowRoot.innerHTML, /<header data-key="header" class=""><div><h2>Heating<\/h2>/);
+  assert.match(card.shadowRoot.innerHTML, /data-action="follow-schedule"/);
+  card.setConfig({room_type:'plugs',title:''});
+  assert.match(card.shadowRoot.innerHTML, /<h2>Smart plugs<\/h2>/);
+});
+
 test('selected room sizing is limited to editor preview and never saved', () => {
   const {card, Editor} = setup();
   const editor = new Editor();
