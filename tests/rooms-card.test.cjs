@@ -542,6 +542,25 @@ function addPlug(card, extra = {}, entity_id = 'switch.lamp') {
   card._entries.push({entity_id,platform:'wiser',config_entry_id:'hub-a'});
   return plug;
 }
+test('card suggestions are offered only for supported Wiser entities', () => {
+  const {card, window} = setup();
+  addShutter(card);
+  addLight(card);
+  addPlug(card);
+  card._hass.states['sensor.outside'] = {entity_id:'sensor.outside',state:'12',attributes:{}};
+  card._hass.states['climate.generic'] = {entity_id:'climate.generic',state:'heat',attributes:{hvac_modes:['heat']}};
+  const registration = window.customCards.find(item => item.type === 'wiser-rooms-card');
+  assert.equal(typeof registration.getEntitySuggestion, 'function');
+  assert.equal(registration.documentationURL, 'https://github.com/andyblac/wiser-rooms-card/wiki');
+  for (const entityId of ['climate.bedroom','cover.office','light.kitchen','switch.lamp']) {
+    assert.deepEqual(JSON.parse(JSON.stringify(registration.getEntitySuggestion(card._hass, entityId))), {
+      config:{type:'custom:wiser-rooms-card',entities:[entityId]},
+    });
+  }
+  assert.equal(registration.getEntitySuggestion(card._hass, 'sensor.outside'), null);
+  assert.equal(registration.getEntitySuggestion(card._hass, 'climate.generic'), null);
+  assert.equal(registration.getEntitySuggestion(card._hass, 'climate.missing'), null);
+});
 function addModeSelect(card, device, state = 'Manual') {
   const entry = card._entries.find(item => item.entity_id === device.entity_id);
   entry.device_id = `device-${device.entity_id}`;

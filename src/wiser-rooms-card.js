@@ -70,6 +70,8 @@
   const isShutter = state => state?.entity_id.startsWith("cover.") && Object.hasOwn(state.attributes, "shutter_id");
   const isLight = state => state?.entity_id.startsWith("light.") && Object.hasOwn(state.attributes, "product_type");
   const isPlug = state => state?.entity_id.startsWith("switch.") && Object.hasOwn(state.attributes, "output_state") && Object.hasOwn(state.attributes, "schedule_id");
+  const isSuggestedEntity = state => (state?.entity_id.startsWith("climate.") && Object.hasOwn(state.attributes, "heating_type"))
+    || isShutter(state) || isLight(state) || isPlug(state);
   const deviceType = state => isShutter(state) ? "shutters" : isLight(state) ? "lights" : isPlug(state) ? "plugs" : "heating";
   const supportsNativeFeature = (feature, id) => {
     const type = feature?.type || "";
@@ -2217,6 +2219,15 @@
   if (!customElements.get("wiser-rooms-card")) {
     customElements.define("wiser-rooms-card", WiserRoomsCard);
     window.customCards = window.customCards || [];
-    window.customCards.push({type:"wiser-rooms-card",name:"Wiser Rooms",description:"Room temperatures, heating states and controls, with all heating off.",preview:true});
+    window.customCards.push({
+      type:"wiser-rooms-card",
+      name:"Wiser Rooms",
+      description:"Room temperatures, heating states and controls, with all heating off.",
+      documentationURL:"https://github.com/andyblac/wiser-rooms-card/wiki",
+      preview:true,
+      getEntitySuggestion:(hass, entityId) => isSuggestedEntity(hass?.states?.[entityId])
+        ? {config:{type:"custom:wiser-rooms-card",entities:[entityId]}}
+        : null,
+    });
   }
 })();
