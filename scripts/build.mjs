@@ -11,6 +11,9 @@ const translations = Object.fromEntries(["en-US", "en-GB", "de", "fr"].map(langu
 const dev = process.argv.includes("--dev");
 const final = process.argv.includes("--release");
 if (dev && final) throw new Error("A build cannot be both development and final release");
+if (final && source.includes("WISER_BETA_CONFIG_MIGRATION")) {
+  throw new Error("Stable release blocked: remove the beta configuration migration code first");
+}
 const build = buildVersion({dev, final, root:fileURLToPath(root), releaseTag:process.env.RELEASE_TAG});
 const versionToken = "__WISER_CARD_VERSION__";
 const translationsToken = "__WISER_ROOMS_TRANSLATIONS__";

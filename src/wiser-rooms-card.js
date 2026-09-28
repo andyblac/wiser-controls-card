@@ -36,8 +36,11 @@
   };
   const masterMode = config => config.room_configuration === "master";
   const typeForEntity = id => id?.startsWith("cover.") ? "shutters" : id?.startsWith("light.") ? "lights" : id?.startsWith("switch.") ? "plugs" : "heating";
+  // WISER_BETA_CONFIG_MIGRATION(master_options): remove the single-type alias in favour of master_options_by_type.
   const masterOptions = (config, id) => config.master_options_by_type?.[typeForEntity(id)] ?? config.master_options;
   const roomConfig = (config, id) => ({...config, ...(masterMode(config) ? masterOptions(config, id) : config.room_options?.[id])});
+  // WISER_BETA_CONFIG_MIGRATION(features): remove native_features and string feature shortcuts before the stable release.
+  // WISER_BETA_CONFIG_MIGRATION(show_controls): replace the old boolean with an empty features list.
   const isNativeFeatureList = value => Array.isArray(value) && value.every(feature => feature && typeof feature === "object" && !Array.isArray(feature));
   const nativeFeatureConfig = config => isNativeFeatureList(config.features) ? config.features : config.native_features;
   const legacyFeatures = config => Array.isArray(config.features) && config.features.every(value => typeof value === "string")
@@ -169,6 +172,7 @@
     if (localized && localized !== key) return localized;
     return content.replaceAll("_", " ").replace(/^./, letter => letter.toLocaleUpperCase(hass?.locale?.language || hass?.language));
   };
+  // WISER_BETA_CONFIG_MIGRATION(room_type): remove the singular filter alias in favour of room_types or an omitted all-types filter.
   const selectedTypes = config => Array.isArray(config?.room_types) && config.room_types.length
     ? DEVICE_TYPES.filter(type => config.room_types.includes(type))
     : config?.room_type && config.room_type !== "all" ? [config.room_type] : DEVICE_TYPES;
