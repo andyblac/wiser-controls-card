@@ -358,7 +358,8 @@ test('master editor mode uses one shared room configuration and one preview card
   assert.equal(config.master_options.name, 'Bedroom custom');
   assert.equal(config.master_options.icon, 'mdi:bed');
   assert.equal(config.master_options.color, 'red');
-  assert.equal(JSON.stringify(config.master_options.native_features), '[{"type":"custom:wiser-secondary-status-feature","state_content":["current_temperature","temperature"],"entities":{"climate.bedroom":"climate.bedroom_itrv","climate.lounge":"climate.lounge_itrv"}},{"type":"target-temperature"}]');
+  assert.equal(JSON.stringify(config.master_options.features), '[{"type":"custom:wiser-secondary-status-feature","entities":{"climate.bedroom":"climate.bedroom_itrv","climate.lounge":"climate.lounge_itrv"},"state_content":["current_temperature","temperature"]},{"type":"target-temperature"}]');
+  assert.equal(config.master_options.native_features, undefined);
   assert.equal(card._headerFeatures.call({...card,_config:config}, card._hass.states['climate.bedroom'])[0].entity, 'climate.bedroom_itrv');
   assert.equal(card._headerFeatures.call({...card,_config:config}, card._hass.states['climate.lounge'])[0].entity, 'climate.lounge_itrv');
   assert.equal(card._headerFeatures.call({...card,_config:config}, card._hass.states['climate.offline'])[0].entity, undefined);
@@ -383,7 +384,7 @@ test('master editor mode uses one shared room configuration and one preview card
   assert.equal(config.master_options.color, 'green');
   assert.equal(config.master_options.hide_state, true);
   assert.equal(config.room_options, undefined);
-  assert.equal(JSON.stringify(config.master_options.native_features), '[{"type":"custom:wiser-secondary-status-feature","state_content":["current_temperature"],"entities":{"climate.bedroom":"climate.bedroom_itrv_new","climate.lounge":"climate.lounge_itrv"}},{"type":"climate-hvac-modes"}]');
+  assert.equal(JSON.stringify(config.master_options.features), '[{"type":"custom:wiser-secondary-status-feature","entities":{"climate.bedroom":"climate.bedroom_itrv_new","climate.lounge":"climate.lounge_itrv"},"state_content":["current_temperature"]},{"type":"climate-hvac-modes"}]');
   card.parentElement = {localName:'hui-dialog-edit-card'};
   card.setConfig(config);
   assert.equal((card.shadowRoot.innerHTML.match(/class="room-content(?: [^"]*)?"/g) || []).length, 1);
@@ -407,10 +408,10 @@ test('master editor mode uses one shared room configuration and one preview card
   assert.equal(config.master_options, undefined);
   assert.equal(config.room_options['climate.bedroom'].color, 'green');
   assert.equal(config.room_options['climate.lounge'].color, 'green');
-  assert.equal(config.room_options['climate.bedroom'].native_features[0].entity, 'climate.bedroom_itrv_new');
-  assert.equal(config.room_options['climate.lounge'].native_features[0].entity, 'climate.lounge_itrv');
-  assert.equal(config.room_options['climate.offline'].native_features[0].entity, undefined);
-  assert.equal(config.room_options['climate.offline'].native_features[0].entities, undefined);
+  assert.equal(config.room_options['climate.bedroom'].features[0].entity, 'climate.bedroom_itrv_new');
+  assert.equal(config.room_options['climate.lounge'].features[0].entity, 'climate.lounge_itrv');
+  assert.equal(config.room_options['climate.offline'].features[0].entity, undefined);
+  assert.equal(config.room_options['climate.offline'].features[0].entities, undefined);
   assert.equal(editor._tabs.hidden, false);
   assert.equal(editor._hiddenRoomsForm.hidden, true);
 });
@@ -434,7 +435,7 @@ test('master mode gives each newly added room type clean defaults', () => {
   assert.deepEqual(Array.from(config.room_types), ['heating','plugs']);
   assert.equal(editor._modeForm.hidden, false);
   assert.equal(config.master_options, undefined);
-  assert.equal(config.master_options_by_type.heating.native_features[0].type, 'custom:wiser-secondary-status-feature');
+  assert.equal(config.master_options_by_type.heating.features[0].type, 'custom:wiser-secondary-status-feature');
   assert.equal(JSON.stringify(config.master_options_by_type.plugs), '{}');
   assert.match(editor._tabs.innerHTML, />Heating<\/button>/);
   assert.match(editor._tabs.innerHTML, />Smart plugs<\/button>/);
@@ -449,7 +450,7 @@ test('master mode gives each newly added room type clean defaults', () => {
     state_content:['state'],
   },{type:'toggle'}]);
   config = editor.lastEvent.detail.config;
-  assert.equal(JSON.stringify(config.master_options_by_type.plugs.native_features[0].entities),
+  assert.equal(JSON.stringify(config.master_options_by_type.plugs.features[0].entities),
     '{"switch.lamp":"sensor.lamp_power"}');
   editor._typeForm.listeners.click({target:{closest:()=>({dataset:{roomType:'plugs'}})}});
   assert.equal(editor.lastEvent.detail.config.master_options_by_type.plugs, undefined);
@@ -461,7 +462,7 @@ test('master mode gives each newly added room type clean defaults', () => {
   editor._modeForm.listeners['value-changed']({stopPropagation(){},detail:{value:{room_configuration:'individual'}}});
   config = editor.lastEvent.detail.config;
   assert.equal(config.room_options['switch.lamp'].native_features, undefined);
-  assert.equal(config.room_options['climate.bedroom'].native_features.map(feature => feature.type).join(','),
+  assert.equal(config.room_options['climate.bedroom'].features.map(feature => feature.type).join(','),
     'custom:wiser-secondary-status-feature,climate-hvac-modes,target-temperature');
 });
 test('editor preserves legacy selections and layout when updating title', () => {
@@ -480,6 +481,39 @@ test('editor preserves legacy selections and layout when updating title', () => 
   editor._roomAction('hide');
   card.setConfig(editor.lastEvent.detail.config);
   assert.equal(card._rooms().length, 2);
+});
+
+test('editor emits card and room YAML settings in a stable logical order', () => {
+  const {Editor} = setup();
+  const editor = new Editor();
+  editor.setConfig({
+    grid_options:{columns:'full'},
+    room_options:{'climate.bedroom':{
+      icon_tap_action:{action:'more-info'},
+      native_features:[{state_content:['state'],entity:'sensor.bedroom',type:'custom:wiser-secondary-status-feature'}],
+      show_next_schedule:true,
+      color:'state',
+      name:[{type:'area'}],
+    }},
+    room_configuration:'individual',
+    room_order:['climate.bedroom'],
+    excluded_entities:['climate.lounge'],
+    room_types:['heating'],
+    room_columns:3,
+    title:'Heating',
+    type:'custom:wiser-rooms-card',
+  });
+  editor._dispatchConfig();
+  const config = editor.lastEvent.detail.config;
+  assert.deepEqual(Object.keys(config), [
+    'type','title','room_columns','room_types','excluded_entities','room_order','room_configuration','room_options','grid_options',
+  ]);
+  assert.deepEqual(Object.keys(config.room_options['climate.bedroom']), [
+    'name','color','show_next_schedule','features','icon_tap_action',
+  ]);
+  assert.deepEqual(Object.keys(config.room_options['climate.bedroom'].features[0]), [
+    'type','entity','state_content',
+  ]);
 });
 
 test('clearing Title in the UI editor removes it from the card', () => {
@@ -798,8 +832,12 @@ test('additional features independently control room rows and retain legacy defa
   editor._entries = card._entries;
   editor._selectRoom('climate.bedroom');
   editor._setRoomOptions({features:['modes']});
-  card.setConfig(editor.lastEvent.detail.config);
-  assert.match(card.shadowRoot.innerHTML, /data-action="mode"/);
+  const migrated = editor.lastEvent.detail.config;
+  assert.equal(migrated.room_options['climate.bedroom'].features[0].type, 'climate-hvac-modes');
+  assert.equal(migrated.room_options['climate.bedroom'].native_features, undefined);
+  card._nativeReady = true;
+  card.setConfig(migrated);
+  assert.match(card.shadowRoot.innerHTML, /data-room-features="climate\.bedroom"/);
   assert.doesNotMatch(card.shadowRoot.innerHTML, /data-field="temperature"/);
 });
 
@@ -865,7 +903,7 @@ test('Secondary status is always first in the native features list', () => {
   editor._selectRoom('climate.bedroom');
   assert.equal(editor._nativeEditor.features[0].type, 'custom:wiser-secondary-status-feature');
   editor._nativeEditor.listeners['features-changed']({stopPropagation(){},detail:{features:list}});
-  const saved = editor.lastEvent.detail.config.room_options['climate.bedroom'].native_features;
+  const saved = editor.lastEvent.detail.config.room_options['climate.bedroom'].features;
   assert.equal(saved[0].type, 'custom:wiser-secondary-status-feature');
   assert.equal(saved.slice(1).map(feature => feature.type).join(','), 'climate-hvac-modes,target-temperature');
   const source = fs.readFileSync(path.join(__dirname, '../src/wiser-rooms-card.js'), 'utf8');
@@ -908,7 +946,7 @@ test('native feature edit callback saves to original room after changing tabs', 
   assert.equal(detail.context.entity_id, 'climate.bedroom');
   editor._selectRoom('climate.lounge');
   detail.saveConfig({type:'climate-hvac-modes',hvac_modes:['off']});
-  assert.equal(editor._config.room_options['climate.bedroom'].native_features[0].hvac_modes[0], 'off');
+  assert.equal(editor._config.room_options['climate.bedroom'].features[0].hvac_modes[0], 'off');
   assert.equal(editor._config.room_options['climate.lounge'], undefined);
 });
 
@@ -920,7 +958,7 @@ test('feature position is configured per room and renders native features inline
   editor._featurePositionForm.listeners['value-changed']({stopPropagation(){},detail:{value:{features_position:'inline'}}});
   assert.equal(editor.lastEvent.detail.config.room_options['climate.bedroom'].features_position, 'inline');
   const nativeFeatures = [{type:'target-temperature'},{type:'climate-hvac-modes'},{type:'custom:wiser-next-schedule-feature'}];
-  card.setConfig({entities:['climate.bedroom'],room_options:{'climate.bedroom':{features_position:'inline',native_features:nativeFeatures}}});
+  card.setConfig({entities:['climate.bedroom'],room_options:{'climate.bedroom':{features_position:'inline',features:nativeFeatures}}});
   assert.match(card.shadowRoot.innerHTML, /class="room-content"/);
   assert.doesNotMatch(card.shadowRoot.innerHTML, /class="room-content features-inline"/);
   assert.match(card.shadowRoot.innerHTML, /class="features-inline-row"/);
@@ -939,7 +977,7 @@ test('feature position is configured per room and renders native features inline
 test('bottom feature position attaches Next schedule to its previous feature row', () => {
   const {card} = setup();
   const nativeFeatures = [{type:'climate-hvac-modes'},{type:'custom:wiser-next-schedule-feature'},{type:'target-temperature'}];
-  card.setConfig({entities:['climate.bedroom'],room_options:{'climate.bedroom':{features_position:'bottom',native_features:nativeFeatures}}});
+  card.setConfig({entities:['climate.bedroom'],room_options:{'climate.bedroom':{features_position:'bottom',features:nativeFeatures}}});
   assert.equal((card.shadowRoot.innerHTML.match(/class="features-bottom(?: |")/g) || []).length, 3);
   assert.equal((card.shadowRoot.innerHTML.match(/class="features-bottom-row"/g) || []).length, 1);
   assert.match(card.shadowRoot.innerHTML, /class="features-bottom-row">.*data-feature-index="0".*data-feature-index="1".*<\/div><hui-card-features[^>]*data-feature-index="2"/);
