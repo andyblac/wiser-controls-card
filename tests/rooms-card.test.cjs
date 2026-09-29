@@ -484,7 +484,11 @@ test('editor preserves legacy selections and layout when updating title', () => 
 });
 
 test('editor emits card and room YAML settings in a stable logical order', () => {
-  const {Editor} = setup();
+  const {Editor, elements} = setup();
+  const Card = elements['wiser-rooms-card'];
+  assert.deepEqual(Object.keys(Card.orderConfig({hubs:['entry-a'],room_columns:3,type:'custom:wiser-rooms-card'})), [
+    'type','room_columns','hubs',
+  ]);
   const editor = new Editor();
   editor.setConfig({
     grid_options:{columns:'full'},
@@ -534,6 +538,9 @@ test('clearing Title in the UI editor removes it from the card', () => {
   assert.match(card.shadowRoot.innerHTML, /data-action="follow-schedule"/);
   card.setConfig({room_type:'plugs',title:''});
   assert.match(card.shadowRoot.innerHTML, /<h2>Smart plugs<\/h2>/);
+  card.setConfig({room_type:'heating',title:'Wiser rooms',_panel_hide_title:true});
+  assert.doesNotMatch(card.shadowRoot.innerHTML, /<h2>/);
+  assert.match(card.shadowRoot.innerHTML, /data-action="follow-schedule"/);
 });
 
 test('selected room sizing is limited to editor preview and never saved', () => {
@@ -544,13 +551,13 @@ test('selected room sizing is limited to editor preview and never saved', () => 
   editor._entries = card._entries;
   editor._selectRoom('climate.lounge');
   const config = editor.lastEvent.detail.config;
-  card.parentElement = {localName:'hui-dialog-edit-card'};
+  card.hasAttribute = name => name === 'editor-preview';
   card.setConfig(config);
   assert.match(card.shadowRoot.innerHTML, /class="rooms preview-rows"/);
   assert.match(card.shadowRoot.innerHTML, /data-key="climate.lounge" class="room  preview-selected"/);
   assert.match(card.shadowRoot.innerHTML, /data-key="climate.bedroom" class="room preview-placeholder"/);
   assert.equal((card.shadowRoot.innerHTML.match(/class="room-content(?: [^"]*)?"/g) || []).length, 1);
-  card.parentElement = null;
+  card.hasAttribute = () => false;
   card._render();
   assert.doesNotMatch(card.shadowRoot.innerHTML, /class="room preview-placeholder"/);
   assert.doesNotMatch(card.shadowRoot.innerHTML, /class="rooms preview-rows"/);

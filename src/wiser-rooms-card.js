@@ -183,6 +183,7 @@
 
 
   const isEditorPreview = element => {
+    if (element.hasAttribute?.("editor-preview")) return true;
     for (let current = element; current; current = current.parentElement || current.assignedSlot || current.getRootNode?.()?.host || null) {
       if (["hui-dialog-edit-card", "hui-dialog-edit-badge"].includes(current.localName)) return true;
     }
@@ -195,6 +196,8 @@
   };
 
   class WiserRoomsCard extends HTMLElement {
+    static panelApiVersion = 1;
+    static orderConfig(config) { return orderedCardConfig(config); }
     constructor() {
       super();
       this.attachShadow({mode: "open"});
@@ -793,7 +796,9 @@
         return `${text(this._hass,"group_status",{active,total,noun,state})}${overrideStatus}${unavailable ? ` · ${text(this._hass,"unavailable_count",{count:unavailable})}` : ""}`;
       };
       const configuredTitle = String(this._config.title ?? text(this._hass,"wiser_rooms")).trim();
-      const title = configuredTitle || (!grouped && groups.length ? text(this._hass, singleType) : "");
+      const title = this._config._panel_hide_title
+        ? ""
+        : configuredTitle || (!grouped && groups.length ? text(this._hass, singleType) : "");
       const headerStatus = grouped || !groups.length ? "" : `<p>${groupStatus(groups[0])}</p>`;
       const cardHeader = title || headerStatus || headerAction
         ? `<header data-key="header" class="${title ? "" : "titleless"}"><div>${title ? `<h2>${escape(title)}</h2>` : ""}${headerStatus}</div>${headerAction}</header>`
@@ -1941,15 +1946,19 @@
       if (hubSignature !== this._hubSchemaSignature) { this._hubForm.schema = hubSchema; this._hubSchemaSignature = hubSignature; }
       const hubData = {hubs:this._config.hubs || hubs.map(hub => hub.value)};
       if (JSON.stringify(hubData) !== JSON.stringify(this._hubForm.data)) this._hubForm.data = hubData;
-      this._hubForm.hidden = !hubs.length;
+      this._hubForm.hidden = this.hideHubSelector || !hubs.length;
       this._form.hass = this._hass;
-      const schema = [
-        {name: "title", selector: {text: {}}},
+      const appearanceSchema = [
+        ...(this.hideTitle ? [] : [{name: "title", selector: {text: {}}}]),
         {name: "room_columns", label: text(this._hass,"devices_per_row"), selector: {number: {min: 1, max: 6, step: 1, mode: "box"}}},
-        {name: "room_type", label: text(this._hass,"show"), selector: {select: {mode: "box", options: [
+      ];
+      const roomTypeSchema = {name: "room_type", label: text(this._hass,"show"), selector: {select: {mode: "box", options: [
           {value: "all", label: text(this._hass,"all")}, {value: "heating", label: text(this._hass,"heating")}, {value: "shutters", label: text(this._hass,"shutters")},
           {value: "lights", label: text(this._hass,"lights")}, {value: "plugs", label: text(this._hass,"plugs")},
-        ]}}},
+        ]}}};
+      const schema = [
+        ...appearanceSchema,
+        roomTypeSchema,
         {name: "temperature_focus", label:"", selector: {button_toggle: {options: [
           {value: "current", label: text(this._hass,"current")}, {value: "target", label: text(this._hass,"target")},
         ]}}},
@@ -1958,16 +1967,18 @@
       // Retain the form schema during state updates so edits keep their focus.
       const signature = JSON.stringify(schema);
       if (signature !== this._schemaSignature) {
-        this._form.schema = schema.slice(0, 2);
-        this._typeForm.schema = schema.slice(2, 3);
+        this._form.schema = appearanceSchema;
+        this._typeForm.schema = [roomTypeSchema];
 
         this._schemaSignature = signature;
       }
-      const data = {title: this._config.title ?? text(this._hass,"wiser_rooms"), room_columns: this._config.room_columns ?? 1};
+      this._form.style.maxWidth = this.hideTitle ? "130px" : "";
+      const data = {room_columns: this._config.room_columns ?? 1};
+      if (!this.hideTitle) data.title = this._config.title ?? text(this._hass,"wiser_rooms");
       if (JSON.stringify(data) !== JSON.stringify(this._form.data)) this._form.data = data;
       const activeTypes = selectedTypes(this._config);
       this._typeForm.data = {room_types:activeTypes};
-      const typeOptions = schema[2].selector.select.options;
+      const typeOptions = roomTypeSchema.selector.select.options;
       const typeMarkup = `<span class="show-label" id="show-label">${escape(text(this._hass,"show"))}</span><div class="show-options" role="group" aria-labelledby="show-label">${typeOptions.map(option => {
         const active = option.value === "all" ? activeTypes.length === DEVICE_TYPES.length : activeTypes.includes(option.value);
         return `<ha-button size="s" variant="${active ? "brand" : "neutral"}" appearance="${active ? "filled" : "outlined"}" data-room-type="${option.value}" aria-pressed="${active}">${option.label}</ha-button>`;
