@@ -21,7 +21,7 @@ export default function buildVersion({dev = false, final = false, root = process
     if (betaDevelopment) version = `${betaDevelopment[1]}-dev.${BigInt(betaDevelopment[2]) + 1n}`;
     else if (development) version = `${development[1]}-dev.${BigInt(development[2]) + 1n}`;
     else if (beta) version = `${beta[1]}.${BigInt(beta[2]) + 1n}-dev.1`;
-    else if (release) version = `${release[1]}.${release[2]}.${BigInt(release[3]) + 1n}-dev.1`;
+    else if (release) version = `${release[1]}.${release[2]}.${BigInt(release[3]) + 1n}-beta.1-dev.1`;
     else throw new Error(`Cannot create a dev build from version ${packageVersion}`);
   } else {
     const development = DEVELOPMENT.exec(packageVersion);

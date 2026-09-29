@@ -30,17 +30,17 @@ test("successful builds advance package versions through stable and beta develop
   };
   try {
     setRelease("1.2.3");
-    assert.equal(run(true, false).version, "1.2.4-dev.1");
+    assert.equal(run(true, false).version, "1.2.4-beta.1-dev.1");
     assert.equal(JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version, "1.2.3");
-    assert.equal(run(true).version, "1.2.4-dev.1");
-    assert.equal(run(true).version, "1.2.4-dev.2");
+    assert.equal(run(true).version, "1.2.4-beta.1-dev.1");
+    assert.equal(run(true).version, "1.2.4-beta.1-dev.2");
     const release = run(false);
-    assert.equal(release.version, "1.2.4");
-    assert.equal(JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version, "1.2.4");
-    assert.equal(run(true).version, "1.2.5-dev.1");
+    assert.equal(release.version, "1.2.4-beta.1");
+    assert.equal(JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version, "1.2.4-beta.1");
+    assert.equal(run(true).version, "1.2.4-beta.2-dev.1");
     assert.deepEqual(JSON.parse(readFileSync(join(output, "build-info.json"), "utf8")), {
-      version:"1.2.5-dev.1",
-      resourceUrl:"/wiser/wiser-rooms-card.js?v=1.2.5-dev.1",
+      version:"1.2.4-beta.2-dev.1",
+      resourceUrl:"/wiser/wiser-rooms-card.js?v=1.2.4-beta.2-dev.1",
     });
     setRelease("1.3.1-beta.1");
     assert.equal(run(true).version, "1.3.1-beta.2-dev.1");
