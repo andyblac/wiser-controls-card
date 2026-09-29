@@ -3,20 +3,7 @@ import assert from "node:assert/strict";
 import {mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
-import {spawnSync} from "node:child_process";
-import {fileURLToPath} from "node:url";
 import buildVersion from "../scripts/build-version.mjs";
-
-test("stable builds are blocked while beta configuration migrations remain", () => {
-  const root = fileURLToPath(new URL("../", import.meta.url));
-  const source = readFileSync(join(root, "src/wiser-rooms-card.js"), "utf8");
-  for (const migration of ["features", "show_controls", "room_type", "master_options"]) {
-    assert.match(source, new RegExp(`WISER_BETA_CONFIG_MIGRATION\\(${migration}\\)`));
-  }
-  const result = spawnSync(process.execPath, ["scripts/build.mjs", "--release"], {cwd:root,encoding:"utf8"});
-  assert.notEqual(result.status, 0);
-  assert.match(`${result.stdout}${result.stderr}`, /remove the beta configuration migration code first/);
-});
 
 test("successful builds advance package versions through stable and beta development cycles", () => {
   const root = mkdtempSync(join(tmpdir(), "wiser-rooms-version-"));
