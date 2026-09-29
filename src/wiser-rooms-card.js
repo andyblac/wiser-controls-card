@@ -750,13 +750,23 @@
       const canClose = rooms.some(room => isShutter(room) && available(room) && room.state !== "closed" && (room.attributes.supported_features & 2));
       const canTurnOff = type => rooms.some(state => deviceType(state) === type && available(state) && state.state === "on");
       const canResume = type => this._scheduleModeTargets(type).length > 0;
-      const allOffAction = section => `<ha-button class="off${section ? " section-action" : ""}" data-action="all-off" size="m" appearance="filled" variant="danger" ${this._busy || !canOff ? "disabled" : ""} title="${escape(text(this._hass,"turn_all_off",{devices:text(this._hass,"heating")}))}"><ha-icon slot="start" icon="mdi:power"></ha-icon>${escape(text(this._hass,"all_off"))}</ha-button>`;
-      const cancelOverridesAction = section => `<ha-button class="off cancel-overrides${section ? " section-action" : ""}" data-action="cancel-overrides" size="m" appearance="filled" variant="brand" ${this._busy || !canCancelOverrides ? "disabled" : ""} title="${escape(text(this._hass,"cancel_all_title"))}"><ha-icon slot="start" icon="mdi:restore"></ha-icon>${escape(text(this._hass,"cancel_overrides"))}${overriddenRooms.length ? ` (${overriddenRooms.length})` : ""}</ha-button>`;
-      const followScheduleAction = section => `<ha-button class="off follow-schedule${section ? " section-action" : ""}" data-action="follow-schedule" size="m" appearance="filled" variant="brand" ${this._busy || !canFollowSchedule ? "disabled" : ""} title="${escape(text(this._hass,"follow_schedule_title"))}"><ha-icon slot="start" icon="mdi:calendar-sync"></ha-icon>${escape(text(this._hass,"follow_schedule"))}</ha-button>`;
+      const allOffTitle = escape(text(this._hass,"turn_all_off",{devices:text(this._hass,"heating")}));
+      const allOffAction = section => `<ha-button class="off${section ? " section-action" : ""}" data-action="all-off" size="m" appearance="filled" variant="danger" ${this._busy || !canOff ? "disabled" : ""} title="${allOffTitle}" aria-label="${allOffTitle}"><ha-icon slot="start" icon="mdi:power"></ha-icon><span class="action-label">${escape(text(this._hass,"all_off"))}</span></ha-button>`;
+      const cancelOverridesTitle = escape(text(this._hass,"cancel_all_title"));
+      const cancelOverridesAction = section => `<ha-button class="off cancel-overrides${section ? " section-action" : ""}" data-action="cancel-overrides" size="m" appearance="filled" variant="brand" ${this._busy || !canCancelOverrides ? "disabled" : ""} title="${cancelOverridesTitle}" aria-label="${cancelOverridesTitle}"><ha-icon slot="start" icon="mdi:restore"></ha-icon><span class="action-label">${escape(text(this._hass,"cancel_overrides"))}${overriddenRooms.length ? ` (${overriddenRooms.length})` : ""}</span></ha-button>`;
+      const followScheduleTitle = escape(text(this._hass,"follow_schedule_title"));
+      const followScheduleAction = section => `<ha-button class="off follow-schedule${section ? " section-action" : ""}" data-action="follow-schedule" size="m" appearance="filled" variant="brand" ${this._busy || !canFollowSchedule ? "disabled" : ""} title="${followScheduleTitle}" aria-label="${followScheduleTitle}"><ha-icon slot="start" icon="mdi:calendar-sync"></ha-icon><span class="action-label">${escape(text(this._hass,"follow_schedule"))}</span></ha-button>`;
       const heatingActions = section => `<div class="bulk-actions">${followScheduleAction(section)}${cancelOverridesAction(section)}${allOffAction(section)}</div>`;
-      const closeAllAction = section => `<ha-button class="off close-all${section ? " section-action" : ""}" data-action="all-close" size="m" appearance="filled" variant="brand" ${this._busy || !canClose ? "disabled" : ""} title="${escape(text(this._hass,"close_all_title"))}"><ha-icon slot="start" icon="mdi:window-shutter"></ha-icon>${escape(text(this._hass,"close_all"))}</ha-button>`;
-      const deviceOffAction = (type, section) => `<ha-button class="off device-off${section ? " section-action" : ""}" data-action="all-${type}-off" size="m" appearance="filled" variant="brand" ${this._busy || !canTurnOff(type) ? "disabled" : ""} title="${escape(text(this._hass,"turn_all_off",{devices:text(this._hass,type)}))}"><ha-icon slot="start" icon="mdi:power"></ha-icon>${escape(text(this._hass,"all_off"))}</ha-button>`;
-      const resumeSchedulesAction = (type, section) => `<ha-button class="off resume-schedules${section ? " section-action" : ""}" data-action="resume-${type}" size="m" appearance="filled" variant="brand" ${this._busy || !canResume(type) ? "disabled" : ""} title="${escape(text(this._hass,"return_schedules",{devices:text(this._hass,type)}))}"><ha-icon slot="start" icon="mdi:calendar-sync"></ha-icon>${escape(text(this._hass,"resume_schedules"))}</ha-button>`;
+      const closeAllTitle = escape(text(this._hass,"close_all_title"));
+      const closeAllAction = section => `<ha-button class="off close-all${section ? " section-action" : ""}" data-action="all-close" size="m" appearance="filled" variant="brand" ${this._busy || !canClose ? "disabled" : ""} title="${closeAllTitle}" aria-label="${closeAllTitle}"><ha-icon slot="start" icon="mdi:window-shutter"></ha-icon><span class="action-label">${escape(text(this._hass,"close_all"))}</span></ha-button>`;
+      const deviceOffAction = (type, section) => {
+        const title = escape(text(this._hass,"turn_all_off",{devices:text(this._hass,type)}));
+        return `<ha-button class="off device-off${section ? " section-action" : ""}" data-action="all-${type}-off" size="m" appearance="filled" variant="brand" ${this._busy || !canTurnOff(type) ? "disabled" : ""} title="${title}" aria-label="${title}"><ha-icon slot="start" icon="mdi:power"></ha-icon><span class="action-label">${escape(text(this._hass,"all_off"))}</span></ha-button>`;
+      };
+      const resumeSchedulesAction = (type, section) => {
+        const title = escape(text(this._hass,"return_schedules",{devices:text(this._hass,type)}));
+        return `<ha-button class="off resume-schedules${section ? " section-action" : ""}" data-action="resume-${type}" size="m" appearance="filled" variant="brand" ${this._busy || !canResume(type) ? "disabled" : ""} title="${title}" aria-label="${title}"><ha-icon slot="start" icon="mdi:calendar-sync"></ha-icon><span class="action-label">${escape(text(this._hass,"resume_schedules"))}</span></ha-button>`;
+      };
       const scheduledDeviceActions = (type, section) => `<div class="bulk-actions">${resumeSchedulesAction(type, section)}${type === "shutters" ? closeAllAction(section) : deviceOffAction(type, section)}</div>`;
       const headerAction = grouped ? "" : singleType === "heating" ? heatingActions(false) : scheduledDeviceActions(singleType, false);
       const unit = this._hass.config?.unit_system?.temperature || "°C";
@@ -1118,7 +1128,7 @@
         @container (max-width: 480px) {
           header {
             display:grid;
-            grid-template-columns:minmax(0,1fr);
+            grid-template-columns:minmax(0,1fr) auto;
             align-items:start;
             gap:10px
           }
@@ -1126,13 +1136,25 @@
             white-space:nowrap
           }
           header .bulk-actions {
-            width:100%;
-            flex-wrap:nowrap
+            width:auto;
+            flex-wrap:nowrap;
+            justify-content:flex-end
           }
           header .bulk-actions .off {
             --ha-button-height:40px;
-            flex:1 1 0;
-            min-width:0
+            flex:0 0 44px;
+            width:44px;
+            min-width:44px;
+            position:relative
+          }
+          .bulk-actions .action-label {
+            display:none
+          }
+          header .bulk-actions .off ha-icon {
+            position:absolute;
+            inset:50% auto auto 50%;
+            margin:0;
+            transform:translate(-50%,-50%)
           }
           .section-title {
             align-items:flex-start;
@@ -1144,8 +1166,16 @@
           }
           .section-title .bulk-actions .off {
             --ha-button-height:40px;
-            flex:1 1 0;
-            min-width:0
+            flex:0 0 44px;
+            width:44px;
+            min-width:44px;
+            position:relative
+          }
+          .section-title .bulk-actions .off ha-icon {
+            position:absolute;
+            inset:50% auto auto 50%;
+            margin:0;
+            transform:translate(-50%,-50%)
           }
         }
         @container (max-width: 340px) {

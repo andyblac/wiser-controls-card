@@ -84,7 +84,7 @@ test('cancel overrides action targets only eligible overridden heating rooms', a
   Object.assign(states['climate.offline'].attributes, {is_override:true,preset_modes:['Cancel Overrides']});
   card.setConfig({room_type:'heating'});
   assert.match(card.shadowRoot.innerHTML, /2 overrides · next ends in 25m/);
-  assert.match(card.shadowRoot.innerHTML, /data-action="follow-schedule"[^]*?data-action="cancel-overrides"[^>]*appearance="filled"[^>]*>[^]*Cancel overrides \(2\)<\/ha-button>[^]*data-action="all-off"[^>]*appearance="filled"/);
+  assert.match(card.shadowRoot.innerHTML, /data-action="follow-schedule"[^]*?data-action="cancel-overrides"[^>]*appearance="filled"[^>]*>[^]*<span class="action-label">Cancel overrides \(2\)<\/span><\/ha-button>[^]*data-action="all-off"[^>]*appearance="filled"/);
   await card._cancelAllOverrides();
   assert.equal(calls.length, 2);
   assert.equal(calls.every(call => call[0] === 'climate' && call[1] === 'set_preset_mode'), true);
@@ -683,7 +683,7 @@ test('Shutters filter replaces All off with Close all and closes eligible shutte
   card.setConfig({room_type:'shutters'});
   assert.match(card.shadowRoot.innerHTML, /data-action="all-close"/);
   assert.match(card.shadowRoot.innerHTML, /mdi:window-shutter/);
-  assert.match(card.shadowRoot.innerHTML, /<ha-button[^>]*data-action="all-close"[^>]*>.*Close all<\/ha-button>/);
+  assert.match(card.shadowRoot.innerHTML, /<ha-button[^>]*data-action="all-close"[^>]*>.*<span class="action-label">Close all<\/span><\/ha-button>/);
   assert.doesNotMatch(card.shadowRoot.innerHTML, /data-action="all-off"/);
   await card._closeAll();
   assert.equal(calls.length,1);
@@ -1318,10 +1318,14 @@ test('card uses native Home Assistant entity icons and action buttons', () => {
   assert.equal(icon.stateObj.entity_id, 'climate.bedroom');
 });
 
-test('mobile headers stack copy above compact native bulk actions', () => {
+test('mobile headers use compact icon-only native bulk actions', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/wiser-rooms-card.js'), 'utf8');
-  assert.match(source, /@container \(max-width: 480px\)[\s\S]*?header \{[\s\S]*?display:grid;[\s\S]*?grid-template-columns:minmax\(0,1fr\)/);
-  assert.match(source, /header \.bulk-actions \.off \{[\s\S]*?--ha-button-height:40px;[\s\S]*?flex:1 1 0/);
+  assert.match(source, /@container \(max-width: 480px\)[\s\S]*?header \{[\s\S]*?display:grid;[\s\S]*?grid-template-columns:minmax\(0,1fr\) auto/);
+  assert.match(source, /header \.bulk-actions \{[\s\S]*?width:auto;[\s\S]*?justify-content:flex-end/);
+  assert.match(source, /header \.bulk-actions \.off \{[\s\S]*?--ha-button-height:40px;[\s\S]*?flex:0 0 44px;[\s\S]*?position:relative/);
+  assert.match(source, /\.bulk-actions \.action-label \{[\s\S]*?display:none/);
+  assert.match(source, /data-action="follow-schedule"[\s\S]*?aria-label="\$\{followScheduleTitle\}"[\s\S]*?<span class="action-label">/);
+  assert.match(source, /header \.bulk-actions \.off ha-icon \{[\s\S]*?position:absolute;[\s\S]*?inset:50% auto auto 50%;[\s\S]*?transform:translate\(-50%,-50%\)/);
   assert.match(source, /\.section-title \{[\s\S]*?flex-direction:column/);
 });
 
