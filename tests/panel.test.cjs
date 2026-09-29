@@ -38,7 +38,7 @@ test("rooms panel creates one filtered card per hub",()=>{
   const panel=setup();
   const hass={user:{is_admin:true}};
   panel.hass=hass;
-  panel.panel={config:{hubs:["Downstairs","Upstairs"],hub_ids:{Downstairs:"entry-a",Upstairs:"entry-b"},card_configs:{Upstairs:{room_columns:3}}}};
+  panel.panel={config:{panel_id: "registry-panel",hubs:["Downstairs","Upstairs"],hub_ids:{Downstairs:"entry-a",Upstairs:"entry-b"},card_configs:{Upstairs:{room_columns:3}}}};
   const cards=panel.shadowRoot.querySelector("main").children;
   assert.equal(cards.length,2);
   assert.deepEqual(Array.from(cards[0].config.hubs),["entry-a"]);
@@ -52,7 +52,7 @@ test("rooms panel creates one filtered card per hub",()=>{
 test("rooms panel editor saves settings through the integration",async()=>{
   const panel=setup(),calls=[];
   panel.hass={user:{is_admin:true},callWS:async message=>calls.push(message)};
-  panel.panel={config:{hubs:["Home"],hub_ids:{Home:"entry-a"},card_configs:{}}};
+  panel.panel={config:{panel_id: "registry-panel",hubs:["Home"],hub_ids:{Home:"entry-a"},card_configs:{}}};
   await panel._openEditor();
   assert.equal(panel._editors[0].hideHubSelector,true);
   assert.equal(panel._editors[0].hideTitle,true);
@@ -64,7 +64,8 @@ test("rooms panel editor saves settings through the integration",async()=>{
   assert.equal(panel._previews[0].config.room_columns,4);
   assert.deepEqual(Array.from(panel._previews[0].config.hubs),["entry-a"]);
   await panel._saveEditor();
-  assert.equal(calls[0].type,"wiser/rooms_panel/configure");
+  assert.equal(calls[0].type,"wiser/panel/configure");
+  assert.equal(calls[0].panel_id, "registry-panel");
   assert.deepEqual(Array.from(calls[0].configs.Home.hubs),["entry-a"]);
   assert.equal(calls[0].configs.Home.room_columns,4);
 });
@@ -75,7 +76,7 @@ test("rooms panel editor switches between visual and YAML modes",async()=>{
     user:{is_admin:true},
     localize:key=>key.endsWith("show_code_editor")?"Show code editor":"Show visual editor",
   };
-  panel.panel={config:{hubs:["Home"],hub_ids:{Home:"entry-a"},card_configs:{}}};
+  panel.panel={config:{panel_id: "registry-panel",hubs:["Home"],hub_ids:{Home:"entry-a"},card_configs:{}}};
   await panel._openEditor();
 
   await panel._toggleEditorMode();

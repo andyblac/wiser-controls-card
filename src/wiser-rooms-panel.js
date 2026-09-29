@@ -664,7 +664,8 @@ class WiserRoomsPanel extends HTMLElement {
 
     try {
       await this._hass.callWS({
-        type: "wiser/rooms_panel/configure",
+        type: "wiser/panel/configure",
+        panel_id: this._config.panel_id,
         configs: this._drafts,
       });
       this._config = {
