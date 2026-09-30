@@ -632,6 +632,7 @@ test('All Heating Shutters filters include only detected Wiser entities', () => 
 test('Show uses compact native buttons and supports multiple device types', () => {
   const {card,Editor} = setup(); addShutter(card); addLight(card); addPlug(card);
   const editor = new Editor(); editor._hass = card._hass; editor._entries = card._entries; editor.setConfig({});
+  assert.match(editor._typeForm.innerHTML, /data-room-type="all"[^]*data-room-type="plugs"[^]*data-room-type="heating"[^]*data-room-type="lights"[^]*data-room-type="shutters"/);
   assert.match(editor._typeForm.innerHTML, /<ha-button[^>]*data-room-type="all"/);
   assert.match(editor._typeForm.innerHTML, /<ha-button[^>]*variant="brand"[^>]*appearance="filled"[^>]*data-room-type="heating"/);
   assert.match(fs.readFileSync(path.join(__dirname, '../src/wiser-rooms-card.js'), 'utf8'), /\.show-options ha-button\[appearance="filled"\]::part\(base\)[^{]*\{[^}]*border-color:currentColor/);

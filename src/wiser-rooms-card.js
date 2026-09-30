@@ -167,6 +167,8 @@
   };
   const selectedTypes = config => Array.isArray(config?.room_types) && config.room_types.length
     ? DEVICE_TYPES.filter(type => config.room_types.includes(type)) : DEVICE_TYPES;
+  const sortedDeviceTypes = hass => [...DEVICE_TYPES].sort((left, right) =>
+    text(hass,left).localeCompare(text(hass,right), languageFor(hass), {sensitivity:"base"}));
   const isRoom = (entry, state) => entry.platform === "wiser" && !entry.disabled_by && state &&
     (entry.entity_id.startsWith("climate.") && Object.hasOwn(state.attributes, "heating_type") || isShutter(state) || isLight(state) || isPlug(state));
   const matchesType = (state, types = DEVICE_TYPES) => types.includes(deviceType(state));
@@ -1920,8 +1922,8 @@
         ...(this.hideRoomColumns ? [] : [{name: "room_columns", label: text(this._hass,"devices_per_row"), selector: {number: {min: 1, max: 6, step: 1, mode: "box"}}}]),
       ];
       const roomTypeSchema = {name: "room_types", label: text(this._hass,"show"), selector: {select: {mode: "box", options: [
-          {value: "all", label: text(this._hass,"all")}, {value: "heating", label: text(this._hass,"heating")}, {value: "shutters", label: text(this._hass,"shutters")},
-          {value: "lights", label: text(this._hass,"lights")}, {value: "plugs", label: text(this._hass,"plugs")},
+          {value: "all", label: text(this._hass,"all")},
+          ...sortedDeviceTypes(this._hass).map(value => ({value, label:text(this._hass,value)})),
         ]}}};
       const schema = [
         ...appearanceSchema,
@@ -2181,7 +2183,9 @@
     }
     _tabRooms(rooms) {
       if (!masterMode(this._config)) return rooms;
-      return selectedTypes(this._config).map(roomType => rooms.find(room => deviceType(room) === roomType)).filter(Boolean);
+      const selected = selectedTypes(this._config);
+      return sortedDeviceTypes(this._hass).filter(roomType => selected.includes(roomType))
+        .map(roomType => rooms.find(room => deviceType(room) === roomType)).filter(Boolean);
     }
     _renderTabs(rooms) {
       if (!rooms.some(room => room.entity_id === this._selectedRoom)) this._selectedRoom = rooms[0]?.entity_id;
