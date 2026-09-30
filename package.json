@@ -1,6 +1,6 @@
 {
   "name": "wiser-rooms-card",
-  "version": "0.1.2-beta.1-dev.18",
+  "version": "0.1.2-beta.1",
   "private": true,
   "description": "Wiser room heating controls for Home Assistant",
   "license": "MIT",
