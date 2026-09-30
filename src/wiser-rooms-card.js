@@ -2304,11 +2304,10 @@
     _tabRooms(rooms) {
       if (!masterMode(this._config)) return rooms;
       const selected = selectedTypes(this._config);
-      const representatives = [...new Set(rooms.map(deviceType))]
-        .filter(roomType => selected.includes(roomType))
-        .map(roomType => rooms.find(room => deviceType(room) === roomType));
-      return representatives.sort((left, right) =>
-        compareDeviceTypes(this._hass, deviceType(left), deviceType(right)));
+      return selected.map(roomType =>
+        rooms.find(room => deviceType(room) === roomType && this._shown(room.entity_id))
+          || rooms.find(room => deviceType(room) === roomType))
+        .filter(Boolean);
     }
     _renderTabs(rooms) {
       if (!rooms.some(room => room.entity_id === this._selectedRoom)) this._selectedRoom = rooms[0]?.entity_id;

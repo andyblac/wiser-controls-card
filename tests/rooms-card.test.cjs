@@ -469,7 +469,7 @@ test('master mode gives each newly added room type clean defaults', () => {
   assert.equal(JSON.stringify(config.master_options_by_type.plugs), '{}');
   assert.match(editor._tabs.innerHTML, />Heating<\/button>/);
   assert.match(editor._tabs.innerHTML, />Appliances<\/button>/);
-  assert.match(editor._tabs.innerHTML, />Appliances<\/button>[^]*>Heating<\/button>/);
+  assert.match(editor._tabs.innerHTML, />Heating<\/button>[^]*>Appliances<\/button>/);
   editor._tabs.listeners.click({target:{closest:()=>({dataset:{room:'switch.lamp'}})},stopPropagation(){}});
   assert.equal(editor._selectedRoom, 'switch.lamp');
   assert.equal(editor._nativeEditor.features.map(feature => feature.type).join(','), 'toggle');
@@ -494,6 +494,23 @@ test('master mode gives each newly added room type clean defaults', () => {
   config = editor.lastEvent.detail.config;
   assert.equal(config.room_options['climate.bedroom'].features.map(feature => feature.type).join(','),
     'custom:wiser-secondary-status-feature,climate-hvac-modes,target-temperature');
+});
+test('master type tabs select a visible representative when the first room is hidden', () => {
+  const {card, Editor} = setup();
+  addPlug(card);
+  const editor = new Editor();
+  editor._entries = card._entries;
+  editor._hass = card._hass;
+  editor.setConfig({
+    room_types:['heating','plugs'],
+    room_configuration:'master',
+    excluded_entities:['climate.bedroom'],
+    master_options_by_type:{heating:{},plugs:{}},
+  });
+  assert.match(editor._tabs.innerHTML, /title="Heating" data-room="climate\.lounge"/);
+  editor._tabs.listeners.click({target:{closest:()=>({dataset:{room:'climate.lounge'}})}});
+  assert.equal(editor._selectedRoom, 'climate.lounge');
+  assert.match(editor._tabs.innerHTML, /data-room="climate\.lounge" aria-selected="true"/);
 });
 test('editor preserves explicit selections and layout when updating title', () => {
   const {card, Editor} = setup();
