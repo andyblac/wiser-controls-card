@@ -290,9 +290,23 @@ class WiserRoomsPanel extends HTMLElement {
     this._yamlMode = false;
     this._generation = 0;
     this._mobileMedia = window.matchMedia?.("(max-width: 600px)");
-    this._mobileMedia?.addEventListener?.("change", () => {
+    this._handleMobileMediaChange = () => {
       this._refreshResponsiveColumns();
-    });
+    };
+  }
+
+  connectedCallback() {
+    this._mobileMedia?.addEventListener?.(
+      "change",
+      this._handleMobileMediaChange,
+    );
+  }
+
+  disconnectedCallback() {
+    this._mobileMedia?.removeEventListener?.(
+      "change",
+      this._handleMobileMediaChange,
+    );
   }
 
   set hass(hass) {
@@ -327,7 +341,8 @@ class WiserRoomsPanel extends HTMLElement {
   }
 
   _storedCardConfig(hub) {
-    const stored = this._config.card_configs?.[hub] || {};
+    const {room_type: _unusedRoomType, ...stored} =
+      this._config.card_configs?.[hub] || {};
     return {
       title: this._config.hubs.length > 1 ? hub : "Wiser rooms",
       ...stored,
@@ -493,6 +508,7 @@ class WiserRoomsPanel extends HTMLElement {
       hubs: [this._hubId(hub)],
       _panel_hide_title: true,
     };
+    delete normalized.room_type;
     const Card = customElements.get("wiser-rooms-card");
     return Card?.orderConfig?.(normalized) || normalized;
   }

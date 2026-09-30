@@ -5,7 +5,7 @@
   const DEVICE_TYPES = ["heating", "shutters", "lights", "plugs"];
   const FEATURES = ["modes", "temperature", "advance"];
   const CARD_CONFIG_ORDER = [
-    "type", "title", "room_columns", "mobile_room_columns", "hubs", "room_type", "room_types", "entities", "excluded_entities", "room_order",
+    "type", "title", "room_columns", "mobile_room_columns", "hubs", "room_types", "entities", "excluded_entities", "room_order",
     "temperature_focus", "room_configuration", "master_options_by_type", "room_options",
     "features", "tap_action", "hold_action", "double_tap_action",
     "icon_tap_action", "icon_hold_action", "icon_double_tap_action", "grid_options",

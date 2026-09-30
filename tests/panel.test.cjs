@@ -20,7 +20,7 @@ function setup() {
   class Card extends Element {
     static panelApiVersion=1;
     static orderConfig(config){
-      const order=["type","title","room_columns","mobile_room_columns","hubs","room_type","room_types"];
+      const order=["type","title","room_columns","mobile_room_columns","hubs","room_types"];
       return Object.fromEntries([
         ...order.filter(key=>Object.hasOwn(config,key)).map(key=>[key,config[key]]),
         ...Object.keys(config).filter(key=>!order.includes(key)).map(key=>[key,config[key]]),
@@ -29,11 +29,12 @@ function setup() {
     static async getConfigElement(){return new Element()}
   }
   const registry=new Map([["wiser-rooms-card",Card],["ha-yaml-editor",Element]]);
-  const media={matches:false,listeners:{},addEventListener(name,listener){this.listeners[name]=listener}};
+  const media={matches:false,listeners:{},addEventListener(name,listener){this.listeners[name]=listener},removeEventListener(name,listener){if(this.listeners[name]===listener)delete this.listeners[name]}};
   const context=vm.createContext({HTMLElement:Element,window:{loadCardHelpers:async()=>({}),matchMedia:()=>media},setTimeout,clearTimeout,CustomEvent:class{constructor(type,options){Object.assign(this,{type},options)}},customElements:{get:key=>registry.get(key),define:(key,value)=>registry.set(key,value)},document:{createElement:name=>name==="wiser-rooms-card"?new Card():new Element()},console:{error(){}}});
   vm.runInContext(readFileSync(resolve(__dirname,"../src/wiser-rooms-panel.js"),"utf8"),context);
   const panel=new (registry.get("wiser-rooms-panel"))();
   panel._testMedia=media;
+  panel.connectedCallback();
   return panel;
 }
 
@@ -60,6 +61,18 @@ test("rooms panel defaults mobile layouts to one device per row",()=>{
   const card=panel.shadowRoot.querySelector("main").children[0];
   assert.equal(card.config.room_columns,1);
   assert.equal(card.config.mobile_room_columns,undefined);
+});
+
+test("rooms panel removes obsolete room_type and releases its media listener",async()=>{
+  const panel=setup();
+  panel.hass={user:{is_admin:true}};
+  panel.panel={config:{panel_id:"registry-panel",hubs:["Home"],hub_ids:{Home:"entry-a"},card_configs:{Home:{room_type:"all"}}}};
+  assert.equal(panel.shadowRoot.querySelector("main").children[0].config.room_type,undefined);
+  await panel._openEditor();
+  assert.equal(panel._drafts.Home.room_type,undefined);
+  assert.equal(typeof panel._testMedia.listeners.change,"function");
+  panel.disconnectedCallback();
+  assert.equal(panel._testMedia.listeners.change,undefined);
 });
 
 test("rooms panel editor saves settings through the integration",async()=>{
