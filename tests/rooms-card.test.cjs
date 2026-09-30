@@ -436,7 +436,7 @@ test('master mode gives each newly added room type clean defaults', () => {
   assert.equal(config.master_options_by_type.heating.features[0].type, 'custom:wiser-secondary-status-feature');
   assert.equal(JSON.stringify(config.master_options_by_type.plugs), '{}');
   assert.match(editor._tabs.innerHTML, />Heating<\/button>/);
-  assert.match(editor._tabs.innerHTML, />Smart plugs<\/button>/);
+  assert.match(editor._tabs.innerHTML, />Appliances<\/button>/);
   editor._tabs.listeners.click({target:{closest:()=>({dataset:{room:'switch.lamp'}})},stopPropagation(){}});
   assert.equal(editor._selectedRoom, 'switch.lamp');
   assert.equal(editor._nativeEditor.features.map(feature => feature.type).join(','), 'toggle');
@@ -534,7 +534,7 @@ test('clearing Title in the UI editor removes it from the card', () => {
   assert.match(card.shadowRoot.innerHTML, /<header data-key="header" class=""><div><h2>Heating<\/h2>/);
   assert.match(card.shadowRoot.innerHTML, /data-action="follow-schedule"/);
   card.setConfig({room_types:['plugs'],title:''});
-  assert.match(card.shadowRoot.innerHTML, /<h2>Smart plugs<\/h2>/);
+  assert.match(card.shadowRoot.innerHTML, /<h2>Appliances<\/h2>/);
   card.setConfig({room_types:['heating'],title:'Wiser rooms',_panel_hide_title:true});
   assert.doesNotMatch(card.shadowRoot.innerHTML, /<h2>/);
   assert.match(card.shadowRoot.innerHTML, /data-action="follow-schedule"/);
