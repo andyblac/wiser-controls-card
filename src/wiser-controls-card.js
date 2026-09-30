@@ -1,12 +1,20 @@
-/* Wiser rooms dashboard card. Bundled with the integration. */
+/* Wiser controls dashboard card. Bundled with the integration. */
 (() => {
   const CARD_VERSION = "__WISER_CARD_VERSION__";
   const {localize:text, languageFor} = window.WiserRoomsLocalize;
   const DEVICE_TYPES = ["heating", "shutters", "lights", "plugs"];
   const FEATURES = ["modes", "temperature", "advance"];
+  const LEGACY_CONFIG_KEYS = {
+    room_columns:"device_columns",
+    mobile_room_columns:"mobile_device_columns",
+    room_types:"device_types",
+    room_order:"device_order",
+    room_configuration:"device_configuration",
+    room_options:"device_options",
+  };
   const CARD_CONFIG_ORDER = [
-    "type", "title", "room_columns", "mobile_room_columns", "hubs", "room_types", "entities", "excluded_entities", "room_order",
-    "temperature_focus", "room_configuration", "master_options_by_type", "room_options",
+    "type", "title", "device_columns", "mobile_device_columns", "hubs", "device_types", "entities", "excluded_entities", "device_order",
+    "temperature_focus", "device_configuration", "master_options_by_type", "device_options",
     "features", "tap_action", "hold_action", "double_tap_action",
     "icon_tap_action", "icon_hold_action", "icon_double_tap_action", "grid_options",
   ];
@@ -34,10 +42,19 @@
     else delete resolved.entity;
     return resolved;
   };
-  const masterMode = config => config.room_configuration === "master";
+  const normalizeConfig = value => {
+    const config = {...(value || {})};
+    for (const [legacy, current] of Object.entries(LEGACY_CONFIG_KEYS)) {
+      if (!Object.hasOwn(config, current) && Object.hasOwn(config, legacy)) config[current] = config[legacy];
+      delete config[legacy];
+    }
+    if (config.type === "custom:wiser-rooms-card") config.type = "custom:wiser-controls-card";
+    return config;
+  };
+  const masterMode = config => config.device_configuration === "master";
   const typeForEntity = id => id?.startsWith("cover.") ? "shutters" : id?.startsWith("light.") ? "lights" : id?.startsWith("switch.") ? "plugs" : "heating";
   const masterOptions = (config, id) => config.master_options_by_type?.[typeForEntity(id)];
-  const roomConfig = (config, id) => ({...config, ...(masterMode(config) ? masterOptions(config, id) : config.room_options?.[id])});
+  const roomConfig = (config, id) => ({...config, ...(masterMode(config) ? masterOptions(config, id) : config.device_options?.[id])});
   const isNativeFeatureList = value => Array.isArray(value) && value.every(feature => feature && typeof feature === "object" && !Array.isArray(feature));
   const fallbackFeatures = config => config.features === undefined ? FEATURES : [];
   const featureOrder = () => FEATURES.map((value, index) => `--feature-${value}:${index}`).join(";");
@@ -75,7 +92,7 @@
   const orderedMasterTypes = value => orderedObject(value, DEVICE_TYPES, Object.fromEntries(DEVICE_TYPES.map(type => [type, orderedRoomConfig])));
   const orderedCardConfig = value => orderedObject(value, CARD_CONFIG_ORDER, {
     master_options_by_type:orderedMasterTypes,
-    room_options:orderedRoomMap,
+    device_options:orderedRoomMap,
     features:orderedNativeFeatures,
   });
   let nativeLoading;
@@ -165,8 +182,8 @@
     if (localized && localized !== key) return localized;
     return content.replaceAll("_", " ").replace(/^./, letter => letter.toLocaleUpperCase(hass?.locale?.language || hass?.language));
   };
-  const selectedTypes = config => Array.isArray(config?.room_types) && config.room_types.length
-    ? DEVICE_TYPES.filter(type => config.room_types.includes(type)) : DEVICE_TYPES;
+  const selectedTypes = config => Array.isArray(config?.device_types) && config.device_types.length
+    ? DEVICE_TYPES.filter(type => config.device_types.includes(type)) : DEVICE_TYPES;
   const compareDeviceTypes = (hass, left, right) =>
     text(hass,left).localeCompare(text(hass,right), languageFor(hass), {sensitivity:"base"});
   const sortedDeviceTypes = hass => [...DEVICE_TYPES].sort((left, right) =>
@@ -192,7 +209,7 @@
 
   class WiserRoomsCard extends HTMLElement {
     static panelApiVersion = 1;
-    static orderConfig(config) { return orderedCardConfig(config); }
+    static orderConfig(config) { return orderedCardConfig(normalizeConfig(config)); }
     constructor() {
       super();
       this.attachShadow({mode: "open"});
@@ -222,7 +239,7 @@
       for (const header of headers) {
         const room = header.closest(".room");
         const roomId = room?.getAttribute("data-key");
-        const sizeKey = `${this._config?.room_columns || 1}:${roomId}`;
+        const sizeKey = `${this._config?.device_columns || 1}:${roomId}`;
         const bounds = room?.getBoundingClientRect?.();
         if (!preview && bounds?.width > 0 && bounds?.height > 0) roomSizeCache.set(sizeKey, {width:bounds.width, height:bounds.height});
         if (preview && room?.classList.contains("preview-selected")) {
@@ -244,27 +261,28 @@
       this._observedHeaders = headers;
     }
     setConfig(config) {
+      config = normalizeConfig(config);
       if (config.entities !== undefined && (!Array.isArray(config.entities) || config.entities.some(id => typeof id !== "string" || !/^(climate|cover|light|switch)\./.test(id)))) {
         throw new Error("entities must be a list of supported Wiser entity IDs");
       }
       if (config.excluded_entities !== undefined && (!Array.isArray(config.excluded_entities) || config.excluded_entities.some(id => typeof id !== "string" || !/^(climate|cover|light|switch)\./.test(id)))) {
         throw new Error("excluded_entities must be a list of supported Wiser entity IDs");
       }
-      if (config.room_order !== undefined && (!Array.isArray(config.room_order) || config.room_order.some(id => typeof id !== "string" || !/^(climate|cover|light|switch)\./.test(id)))) {
-        throw new Error("room_order must be a list of supported Wiser entity IDs");
+      if (config.device_order !== undefined && (!Array.isArray(config.device_order) || config.device_order.some(id => typeof id !== "string" || !/^(climate|cover|light|switch)\./.test(id)))) {
+        throw new Error("device_order must be a list of supported Wiser entity IDs");
       }
       if (config.hubs !== undefined && (!Array.isArray(config.hubs) || config.hubs.some(id => typeof id !== "string" || !id.length))) {
         throw new Error("hubs must be a list of Wiser config entry IDs");
       }
-      if (config.room_columns !== undefined && (!Number.isInteger(config.room_columns) || config.room_columns < 1 || config.room_columns > 6)) {
-        throw new Error("room_columns must be a whole number from 1 to 6");
+      if (config.device_columns !== undefined && (!Number.isInteger(config.device_columns) || config.device_columns < 1 || config.device_columns > 6)) {
+        throw new Error("device_columns must be a whole number from 1 to 6");
       }
-      if (config.room_types !== undefined && (!Array.isArray(config.room_types) || !config.room_types.length || new Set(config.room_types).size !== config.room_types.length || config.room_types.some(type => !DEVICE_TYPES.includes(type)))) throw new Error("room_types must contain one or more unique supported device types");
+      if (config.device_types !== undefined && (!Array.isArray(config.device_types) || !config.device_types.length || new Set(config.device_types).size !== config.device_types.length || config.device_types.some(type => !DEVICE_TYPES.includes(type)))) throw new Error("device_types must contain one or more unique supported device types");
       if (config.temperature_focus !== undefined && !["current", "target"].includes(config.temperature_focus)) throw new Error("temperature_focus must be current or target");
       if (config.features !== undefined && !validNativeFeatures(config.features)) throw new Error("features must contain native feature objects");
-      if (config.room_options !== undefined) {
-        if (!config.room_options || typeof config.room_options !== "object" || Array.isArray(config.room_options)) throw new Error("room_options must be an entity settings map");
-        for (const [id, options] of Object.entries(config.room_options)) {
+      if (config.device_options !== undefined) {
+        if (!config.device_options || typeof config.device_options !== "object" || Array.isArray(config.device_options)) throw new Error("device_options must be an entity settings map");
+        for (const [id, options] of Object.entries(config.device_options)) {
           if (!/^(climate|cover|light|switch)\./.test(id) || !options || typeof options !== "object" || Array.isArray(options)) throw new Error("Invalid room options");
           if (options.features !== undefined && !validNativeFeatures(options.features)) throw new Error("Invalid room features");
           if (options.features_position !== undefined && !["bottom", "inline"].includes(options.features_position)) throw new Error("Invalid room features_position");
@@ -273,12 +291,12 @@
         }
       }
       for (const key of ["tap_action","icon_tap_action","hold_action","icon_hold_action","double_tap_action","icon_double_tap_action"]) if (config[key] !== undefined && !validAction(config[key])) throw new Error(`Invalid ${key}`);
-      this._config = {room_columns: 1, temperature_focus: "current", ...config};
+      this._config = {device_columns: 1, temperature_focus: "current", ...config};
       this._render();
     }
-    static getStubConfig() { return {type: "custom:wiser-rooms-card", title: "Wiser rooms"}; }
-    static async getConfigElement() { await loadNativeFeatures(); return document.createElement("wiser-rooms-card-editor"); }
-    getCardSize() { return 2 + Math.ceil(this._rooms().length / (this._config?.room_columns || 1)) * 1.6; }
+    static getStubConfig() { return {type: "custom:wiser-controls-card", title: "Wiser controls"}; }
+    static async getConfigElement() { await loadNativeFeatures(); return document.createElement("wiser-controls-card-editor"); }
+    getCardSize() { return 2 + Math.ceil(this._rooms().length / (this._config?.device_columns || 1)) * 1.6; }
     getGridOptions() { return {columns: 9, min_columns: 9}; }
     set hass(hass) {
       this._hass = hass;
@@ -300,14 +318,14 @@
         this._entries = await this._hass.callWS({type: "config/entity_registry/list"});
       } catch (error) {
         this._discoveryFailed = true;
-        this._error = `Unable to find Wiser rooms: ${error.message || error}`;
+        this._error = `Unable to find Wiser devices: ${error.message || error}`;
       } finally { this._loading = false; this._render(); }
     }
     _rooms() {
       if (!this._hass || !this._entries) return [];
       const rooms = this._entries.filter(entry => isRoom(entry, this._hass.states[entry.entity_id]) && matchesHub(entry, this._config?.hubs) && matchesType(this._hass.states[entry.entity_id], selectedTypes(this._config)) && !this._config?.excluded_entities?.includes(entry.entity_id)).map(entry => this._hass.states[entry.entity_id]);
       if (this._config?.entities?.length) return this._config.entities.map(id => rooms.find(room => room.entity_id === id)).filter(Boolean);
-      return orderRooms(rooms, this._config?.room_order);
+      return orderRooms(rooms, this._config?.device_order);
     }
     _name(room) {
       const name = roomConfig(this._config || {}, room.entity_id).name;
@@ -858,7 +876,7 @@
         const overrideStatus = overrides.length ? ` · ${overrides.length} ${text(this._hass,`override_${overrides.length === 1 ? "one" : "other"}`)}${remaining.length ? ` · ${text(this._hass,"next_ends",{time:formatDuration(Math.min(...remaining))})}` : ""}` : "";
         return `${text(this._hass,"group_status",{active,total,noun,state})}${overrideStatus}${unavailable ? ` · ${text(this._hass,"unavailable_count",{count:unavailable})}` : ""}`;
       };
-      const configuredTitle = String(this._config.title ?? text(this._hass,"wiser_rooms")).trim();
+      const configuredTitle = String(this._config.title ?? text(this._hass,"wiser_controls")).trim();
       const title = this._config._panel_hide_title
         ? ""
         : configuredTitle || (!grouped && groups.length ? text(this._hass, singleType) : "");
@@ -872,7 +890,7 @@
       const previewRoom = configuredPreviewRoom && rooms.some(room => room.entity_id === configuredPreviewRoom)
         ? configuredPreviewRoom : masterPreview ? rooms[0]?.entity_id : configuredPreviewRoom;
       // Orbit expands a selected item to its normal grid width (six of twelve by default).
-      const expandPreview = preview && !masterPreview && this._config.room_columns > 2;
+      const expandPreview = preview && !masterPreview && this._config.device_columns > 2;
       const markup = `<style data-key="style">
         :host {
           display:block;
@@ -1485,9 +1503,9 @@
         }
       </style><ha-card data-key="card" class="${preview ? "editor-preview" : ""}">${cardHeader}
           ${this._error ? `<div data-key="error" class="message error" role="alert">${escape(this._error)}${this._discoveryFailed ? '<ha-button data-action="retry" size="s" appearance="outlined" variant="danger">Retry</ha-button>' : ""}</div>` : ""}
-      ${!rooms.length ? `<p data-key="empty" class="message">${this._loading ? text(this._hass,"finding") : text(this._hass,"no_devices")}</p>` : groups.map(group => `${grouped ? `<section class="room-section" data-key="section-${group.key}"><div class="section-title" data-key="heading-${group.key}"><div><h3>${group.title}</h3><p>${groupStatus(group)}</p></div>${group.key === "heating" ? heatingActions(true) : scheduledDeviceActions(group.key, true)}</div>` : ""}<div class="rooms ${expandPreview ? "preview-rows" : ""}" data-key="rooms-${group.key}" style="--room-columns:${masterPreview ? 1 : this._config.room_columns}">${group.rooms.map((room, index) => {
+      ${!rooms.length ? `<p data-key="empty" class="message">${this._loading ? text(this._hass,"finding") : text(this._hass,"no_devices")}</p>` : groups.map(group => `${grouped ? `<section class="room-section" data-key="section-${group.key}"><div class="section-title" data-key="heading-${group.key}"><div><h3>${group.title}</h3><p>${groupStatus(group)}</p></div>${group.key === "heating" ? heatingActions(true) : scheduledDeviceActions(group.key, true)}</div>` : ""}<div class="rooms ${expandPreview ? "preview-rows" : ""}" data-key="rooms-${group.key}" style="--room-columns:${masterPreview ? 1 : this._config.device_columns}">${group.rooms.map((room, index) => {
         const options = roomConfig(this._config, room.entity_id);
-        const columns = this._config.room_columns;
+        const columns = this._config.device_columns;
         const rowStart = expandPreview && index % columns === 0 ? `<div class="preview-row" data-key="preview-row-${Math.floor(index / columns)}">` : "";
         const rowEnd = expandPreview && (index % columns === columns - 1 || index === group.rooms.length - 1)
           ? `${index === group.rooms.length - 1 ? '<div class="preview-spacer"></div>'.repeat((columns - group.rooms.length % columns) % columns) : ""}</div>` : "";
@@ -1811,8 +1829,8 @@
         else if (current.includes(type)) next = current.length > 1 ? current.filter(value => value !== type) : current;
         else next = DEVICE_TYPES.filter(value => current.includes(value) || value === type);
         const config = {...this._config};
-        if (next.length === DEVICE_TYPES.length) delete config.room_types;
-        else config.room_types = next;
+        if (next.length === DEVICE_TYPES.length) delete config.device_types;
+        else config.device_types = next;
         if (masterMode(config)) {
           const existing = config.master_options_by_type || {};
           const byType = {};
@@ -1831,22 +1849,22 @@
       this._modeForm.computeLabel = schema => schema.label;
       this._modeForm.addEventListener("value-changed", event => {
         event.stopPropagation();
-        const mode = event.detail.value.room_configuration || "individual";
+        const mode = event.detail.value.device_configuration || "individual";
         const config = {...this._config};
         if (mode === "master") {
           const enteringMaster = !masterMode(config);
-          config.room_configuration = "master";
+          config.device_configuration = "master";
           const activeTypes = selectedTypes(config);
           if (enteringMaster) {
             config.master_options_by_type = Object.fromEntries(activeTypes.map(roomType => {
               const room = this._rooms().find(item => deviceType(item) === roomType);
-              const options = {...(room ? config.room_options?.[room.entity_id] : {})};
+              const options = {...(room ? config.device_options?.[room.entity_id] : {})};
               if (room) options.features = nativeFeatures({...config,...options}, room.entity_id, room);
               if (options.features) options.features = this._masterNativeFeatures(config, options.features, roomType);
               return [roomType, options];
             }));
           } else if (!config.master_options_by_type) config.master_options_by_type = {};
-          delete config.room_options;
+          delete config.device_options;
         } else {
           if (masterMode(config)) {
             const roomOptions = {};
@@ -1858,10 +1876,10 @@
               }
               roomOptions[room.entity_id] = options;
             }
-            config.room_options = roomOptions;
+            config.device_options = roomOptions;
             delete config.master_options_by_type;
           }
-          delete config.room_configuration;
+          delete config.device_configuration;
         }
         this._config = config;
         this._render();
@@ -1929,7 +1947,7 @@
       this._message.style.cssText = "color:var(--secondary-text-color);font-size:14px";
       this._version = document.createElement("div");
       this._version.className = "version";
-      this._version.textContent = `Wiser Rooms Card · ${CARD_VERSION}`;
+      this._version.textContent = `Wiser Controls Card · ${CARD_VERSION}`;
       this._tabs = document.createElement("div");
       this._tabs.addEventListener("click", event => {
         const button = event.target.closest("[data-room],[data-action]");
@@ -1983,8 +2001,11 @@
       this._form.addEventListener("value-changed", event => this._changed(event));
     }
     setConfig(config) {
-      this._config = {...config};
+      const normalized = normalizeConfig(config);
+      const migrated = JSON.stringify(normalized) !== JSON.stringify(config);
+      this._config = normalized;
       this._render();
+      if (migrated) this._dispatchConfig();
     }
     set hass(hass) {
       this._hass = hass;
@@ -2012,7 +2033,7 @@
     _allRooms() {
       if (!this._hass || !this._entries) return [];
       return orderRooms(this._entries.filter(entry => isRoom(entry, this._hass.states[entry.entity_id]) && matchesHub(entry, this._config?.hubs))
-        .map(entry => this._hass.states[entry.entity_id]), this._config?.room_order || this._config?.entities);
+        .map(entry => this._hass.states[entry.entity_id]), this._config?.device_order || this._config?.entities);
     }
     _rooms() { return this._allRooms().filter(room => matchesType(room, selectedTypes(this._config))); }
     _detectedHubs() {
@@ -2039,9 +2060,9 @@
       this._form.hass = this._hass;
       const appearanceSchema = [
         ...(this.hideTitle ? [] : [{name: "title", selector: {text: {}}}]),
-        ...(this.hideRoomColumns ? [] : [{name: "room_columns", label: text(this._hass,"devices_per_row"), selector: {number: {min: 1, max: 6, step: 1, mode: "box"}}}]),
+        ...(this.hideRoomColumns ? [] : [{name: "device_columns", label: text(this._hass,"devices_per_row"), selector: {number: {min: 1, max: 6, step: 1, mode: "box"}}}]),
       ];
-      const roomTypeSchema = {name: "room_types", label: text(this._hass,"show"), selector: {select: {mode: "box", options: [
+      const roomTypeSchema = {name: "device_types", label: text(this._hass,"show"), selector: {select: {mode: "box", options: [
           {value: "all", label: text(this._hass,"all")},
           ...sortedDeviceTypes(this._hass).map(value => ({value, label:text(this._hass,value)})),
         ]}}};
@@ -2063,11 +2084,11 @@
       }
       this._form.style.maxWidth = this.hideTitle && !this.hideRoomColumns ? "130px" : "";
       const data = {};
-      if (!this.hideRoomColumns) data.room_columns = this._config.room_columns ?? 1;
-      if (!this.hideTitle) data.title = this._config.title ?? text(this._hass,"wiser_rooms");
+      if (!this.hideRoomColumns) data.device_columns = this._config.device_columns ?? 1;
+      if (!this.hideTitle) data.title = this._config.title ?? text(this._hass,"wiser_controls");
       if (JSON.stringify(data) !== JSON.stringify(this._form.data)) this._form.data = data;
       const activeTypes = selectedTypes(this._config);
-      this._typeForm.data = {room_types:activeTypes};
+      this._typeForm.data = {device_types:activeTypes};
       const typeOptions = roomTypeSchema.selector.select.options;
       const typeMarkup = `<span class="show-label" id="show-label">${escape(text(this._hass,"show"))}</span><div class="show-options" role="group" aria-labelledby="show-label">${typeOptions.map(option => {
         const active = option.value === "all" ? activeTypes.length === DEVICE_TYPES.length : activeTypes.includes(option.value);
@@ -2075,16 +2096,16 @@
       }).join("")}</div>`;
       if (typeMarkup !== this._typeMarkup) { this._typeForm.innerHTML = typeMarkup; this._typeMarkup = typeMarkup; }
       this._modeForm.hass = this._hass;
-      const modeSchema = [{name:"room_configuration",label:text(this._hass,"configuration_mode"),selector:{button_toggle:{options:[
+      const modeSchema = [{name:"device_configuration",label:text(this._hass,"configuration_mode"),selector:{button_toggle:{options:[
         {value:"master",label:text(this._hass,"master")},{value:"individual",label:text(this._hass,"individual")},
       ]}}}];
       if (JSON.stringify(modeSchema) !== this._modeSchemaSignature) { this._modeForm.schema = modeSchema; this._modeSchemaSignature = JSON.stringify(modeSchema); }
-      const modeData = {room_configuration:masterMode(this._config) ? "master" : "individual"};
+      const modeData = {device_configuration:masterMode(this._config) ? "master" : "individual"};
       if (JSON.stringify(modeData) !== JSON.stringify(this._modeForm.data)) this._modeForm.data = modeData;
       this._modeForm.hidden = !rooms.length;
       this._modeForm.style.marginBottom = masterMode(this._config) ? "12px" : "";
       this._hiddenRoomsForm.hass = this._hass;
-      const hiddenRoomsSchema = [{name:"hidden_rooms",label:text(this._hass,"hide_rooms"),selector:{select:{multiple:true,mode:"dropdown",options:rooms.map(room => ({value:room.entity_id,label:this._name(room)}))}}}];
+      const hiddenRoomsSchema = [{name:"hidden_rooms",label:text(this._hass,"hide_devices"),selector:{select:{multiple:true,mode:"dropdown",options:rooms.map(room => ({value:room.entity_id,label:this._name(room)}))}}}];
       const hiddenRoomsSignature = JSON.stringify(hiddenRoomsSchema);
       if (hiddenRoomsSignature !== this._hiddenRoomsSchemaSignature) {
         this._hiddenRoomsForm.schema = hiddenRoomsSchema;
@@ -2180,7 +2201,7 @@
     _setRoomOptions(options) {
       if (!this._selectedRoom) return;
       const master = masterMode(this._config);
-      const current = {...(master ? masterOptions(this._config, this._selectedRoom) : this._config.room_options?.[this._selectedRoom])};
+      const current = {...(master ? masterOptions(this._config, this._selectedRoom) : this._config.device_options?.[this._selectedRoom])};
       for (const [key, value] of Object.entries(options)) {
         if (value === undefined) delete current[key];
         else current[key] = value;
@@ -2188,7 +2209,7 @@
       if (master) this._config = {...this._config,master_options_by_type:{
         ...this._config.master_options_by_type,[typeForEntity(this._selectedRoom)]:current,
       }};
-      else this._config = {...this._config,room_options:{...this._config.room_options,[this._selectedRoom]:current}};
+      else this._config = {...this._config,device_options:{...this._config.device_options,[this._selectedRoom]:current}};
       this._render();
       this._dispatchConfig();
     }
@@ -2199,7 +2220,7 @@
         const index = secondaryIndex++;
         const entities = {};
         for (const room of this._rooms().filter(item => deviceType(item) === roomType)) {
-          const configured = config.room_options?.[room.entity_id]?.features;
+          const configured = config.device_options?.[room.entity_id]?.features;
           const candidate = Array.isArray(configured) ? configured.filter(isSecondaryFeature)[index] : undefined;
           const entity = candidate?.entities?.[room.entity_id] || candidate?.entity;
           if (typeof entity === "string" && entity) entities[room.entity_id] = entity;
@@ -2256,8 +2277,8 @@
           [roomType]:options,
         }};
       } else {
-        const options = {...this._config.room_options?.[id],features:ordered};
-        this._config = {...this._config,room_options:{...this._config.room_options,[id]:options}};
+        const options = {...this._config.device_options?.[id],features:ordered};
+        this._config = {...this._config,device_options:{...this._config.device_options,[id]:options}};
       }
       this._render();
       this._dispatchConfig();
@@ -2383,7 +2404,7 @@
       }
       delete config.entities;
       config.excluded_entities = [...excluded];
-      config.room_order = [...order, ...(config.room_order || []).filter(id => !order.includes(id))];
+      config.device_order = [...order, ...(config.device_order || []).filter(id => !order.includes(id))];
       this._config = config;
       this._render();
       this._dispatchConfig();
@@ -2391,26 +2412,28 @@
     _changed(event) {
       event.stopPropagation();
       const data = event.detail.value;
-      const title = Object.hasOwn(data, "title") ? data.title ?? "" : this._config.title ?? text(this._hass,"wiser_rooms");
+      const title = Object.hasOwn(data, "title") ? data.title ?? "" : this._config.title ?? text(this._hass,"wiser_controls");
       const config = {...this._config, title};
-      if (!this.hideRoomColumns) config.room_columns = data.room_columns ?? 1;
+      if (!this.hideRoomColumns) config.device_columns = data.device_columns ?? 1;
       this._config = config;
       this._render();
       this._dispatchConfig();
     }
   }
-  if (!customElements.get("wiser-rooms-card-editor")) customElements.define("wiser-rooms-card-editor", WiserRoomsCardEditor);
-  if (!customElements.get("wiser-rooms-card")) {
-    customElements.define("wiser-rooms-card", WiserRoomsCard);
+  if (!customElements.get("wiser-controls-card-editor")) customElements.define("wiser-controls-card-editor", WiserRoomsCardEditor);
+  if (!customElements.get("wiser-rooms-card-editor")) customElements.define("wiser-rooms-card-editor", class extends WiserRoomsCardEditor {});
+  if (!customElements.get("wiser-controls-card")) {
+    customElements.define("wiser-controls-card", WiserRoomsCard);
+    if (!customElements.get("wiser-rooms-card")) customElements.define("wiser-rooms-card", class extends WiserRoomsCard {});
     window.customCards = window.customCards || [];
     window.customCards.push({
-      type:"wiser-rooms-card",
-      name:"Wiser Rooms",
-      description:"Room temperatures, heating states and controls, with all heating off.",
-      documentationURL:"https://github.com/andyblac/wiser-rooms-card/wiki",
+      type:"wiser-controls-card",
+      name:"Wiser Controls",
+      description:"Heating, shutter, light and appliance controls for Wiser devices.",
+      documentationURL:"https://github.com/andyblac/wiser-controls-card/wiki",
       preview:true,
       getEntitySuggestion:(hass, entityId) => isSuggestedEntity(hass?.states?.[entityId])
-        ? {config:{type:"custom:wiser-rooms-card",entities:[entityId]}}
+        ? {config:{type:"custom:wiser-controls-card",entities:[entityId]}}
         : null,
     });
   }

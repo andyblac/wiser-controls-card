@@ -20,10 +20,11 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
       - name: Check bundle version
         run: |
+          node --check dist/wiser-controls-card.js
           node --check dist/wiser-rooms-card.js
-          node -e 'const fs = require("node:fs"); const v = require("./package.json").version; const info = require("./dist/build-info.json"); if (!fs.readFileSync("dist/wiser-rooms-card.js", "utf8").startsWith(`/*! WISER-CARD-VERSION wiser-rooms-card ${v} */`)) throw new Error("Bundle version mismatch"); if (info.version !== v) throw new Error("Build info version mismatch");'
+          node -e 'const fs = require("node:fs"); const v = require("./package.json").version; const info = require("./dist/build-info.json"); const bundle = fs.readFileSync("dist/wiser-controls-card.js", "utf8"); const legacy = fs.readFileSync("dist/wiser-rooms-card.js", "utf8"); if (!bundle.startsWith(`/*! WISER-CARD-VERSION wiser-controls-card ${v} */`)) throw new Error("Bundle version mismatch"); if (!legacy.startsWith(`/*! WISER-CARD-VERSION wiser-rooms-card ${v} */`)) throw new Error("Legacy bundle version mismatch"); if (legacy.slice(legacy.indexOf("\n") + 1) !== bundle.slice(bundle.indexOf("\n") + 1)) throw new Error("Legacy bundle content mismatch"); if (info.version !== v) throw new Error("Build info version mismatch");'
       - name: Attach card bundle
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: gh release upload "$RELEASE_TAG" dist/wiser-rooms-card.js --clobber
+        run: gh release upload "$RELEASE_TAG" dist/wiser-controls-card.js dist/wiser-rooms-card.js --clobber

@@ -27,7 +27,7 @@ test("successful builds advance package versions through stable and beta develop
     assert.equal(run(true).version, "1.2.4-beta.2-dev.1");
     assert.deepEqual(JSON.parse(readFileSync(join(output, "build-info.json"), "utf8")), {
       version:"1.2.4-beta.2-dev.1",
-      resourceUrl:"/wiser/wiser-rooms-card.js?v=1.2.4-beta.2-dev.1",
+      resourceUrl:"/wiser/wiser-controls-card.js?v=1.2.4-beta.2-dev.1",
     });
     setRelease("1.3.1-beta.1");
     assert.equal(run(true).version, "1.3.1-beta.2-dev.1");

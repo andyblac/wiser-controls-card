@@ -41,7 +41,7 @@ export default function buildVersion({dev = false, final = false, root = process
     throw new Error(`Release tag ${releaseTag} does not match package version v${version}`);
   }
 
-  const resourceUrl = `/wiser/wiser-rooms-card.js?v=${version}`;
+  const resourceUrl = `/wiser/wiser-controls-card.js?v=${version}`;
   return {
     version,
     resourceUrl,

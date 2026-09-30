@@ -1,4 +1,4 @@
-/** Sidebar host for the Wiser rooms card. */
+/** Sidebar host for the Wiser controls card. */
 class WiserRoomsPanel extends HTMLElement {
   constructor() {
     super();
@@ -58,7 +58,7 @@ class WiserRoomsPanel extends HTMLElement {
         }
 
         #hub-tabs[hidden],
-        wiser-rooms-card[hidden] {
+        wiser-controls-card[hidden] {
           display: none;
         }
 
@@ -94,7 +94,7 @@ class WiserRoomsPanel extends HTMLElement {
           padding: 16px;
         }
 
-        wiser-rooms-card {
+        wiser-controls-card {
           display: block;
           min-width: 0;
         }
@@ -224,7 +224,7 @@ class WiserRoomsPanel extends HTMLElement {
         <ha-button id="menu" appearance="plain" aria-label="Toggle sidebar">
           <ha-icon icon="mdi:menu"></ha-icon>
         </ha-button>
-        <h1>Wiser Rooms</h1>
+        <h1>Controls</h1>
         <nav id="hub-tabs" role="tablist" aria-label="Wiser hubs" hidden></nav>
         <ha-button
           id="settings"
@@ -251,7 +251,7 @@ class WiserRoomsPanel extends HTMLElement {
         </div>
       </ha-dialog>
       <main>
-        <p role="status">Loading Wiser rooms…</p>
+        <p role="status">Loading Wiser controls…</p>
       </main>
     `;
 
@@ -355,21 +355,23 @@ class WiserRoomsPanel extends HTMLElement {
   _storedCardConfig(hub) {
     const {room_type: _unusedRoomType, ...stored} =
       this._config.card_configs?.[hub] || {};
-    return {
-      title: this._config.hubs.length > 1 ? hub : "Wiser rooms",
-      ...stored,
-      mobile_room_columns: stored.mobile_room_columns ?? 1,
-      type: "custom:wiser-rooms-card",
+    const Card = customElements.get("wiser-controls-card");
+    const normalized = Card?.orderConfig?.(stored) || stored;
+    return Card?.orderConfig?.({
+      title: this._config.hubs.length > 1 ? hub : "Wiser controls",
+      ...normalized,
+      mobile_device_columns: normalized.mobile_device_columns ?? 1,
+      type: "custom:wiser-controls-card",
       hubs: [this._hubId(hub)],
       _panel_hide_title: true,
-    };
+    }) || normalized;
   }
 
   _effectiveCardConfig(config) {
-    const {mobile_room_columns, ...effective} = config;
-    effective.room_columns = this._mobileMedia?.matches
-      ? mobile_room_columns ?? 1
-      : effective.room_columns ?? 1;
+    const {mobile_device_columns, ...effective} = config;
+    effective.device_columns = this._mobileMedia?.matches
+      ? mobile_device_columns ?? 1
+      : effective.device_columns ?? 1;
     return effective;
   }
 
@@ -516,18 +518,18 @@ class WiserRoomsPanel extends HTMLElement {
   _normaliseDraft(hub, config) {
     const normalized = {
       ...config,
-      type: "custom:wiser-rooms-card",
+      type: "custom:wiser-controls-card",
       hubs: [this._hubId(hub)],
       _panel_hide_title: true,
     };
     delete normalized.room_type;
-    const Card = customElements.get("wiser-rooms-card");
+    const Card = customElements.get("wiser-controls-card");
     return Card?.orderConfig?.(normalized) || normalized;
   }
 
   _syncColumnForm(form, config) {
     const mobile = this._mobileMedia?.matches;
-    const key = mobile ? "mobile_room_columns" : "room_columns";
+    const key = mobile ? "mobile_device_columns" : "device_columns";
     form.schema = [{
       name: key,
       label: `Devices per row — ${mobile ? "mobile" : "desktop"}`,
@@ -546,8 +548,8 @@ class WiserRoomsPanel extends HTMLElement {
       event.stopPropagation();
       const value = event.detail.value;
       const key = this._mobileMedia?.matches
-        ? "mobile_room_columns"
-        : "room_columns";
+        ? "mobile_device_columns"
+        : "device_columns";
       this._drafts[hub] = this._normaliseDraft(hub, {
         ...this._drafts[hub],
         [key]: value[key] ?? 1,
@@ -559,7 +561,7 @@ class WiserRoomsPanel extends HTMLElement {
 
   _yamlConfig(hub) {
     const {_panel_hide_title, ...config} = this._drafts[hub];
-    const Card = customElements.get("wiser-rooms-card");
+    const Card = customElements.get("wiser-controls-card");
     return Card?.orderConfig?.(config) || config;
   }
 
@@ -695,7 +697,7 @@ class WiserRoomsPanel extends HTMLElement {
         await routes?.routes?.lovelace?.load?.();
       }
 
-      const Card = customElements.get("wiser-rooms-card");
+      const Card = customElements.get("wiser-controls-card");
       for (const hub of this._config.hubs) {
         const editor = await Card.getConfigElement();
         if (!dialog.open) {
@@ -713,7 +715,7 @@ class WiserRoomsPanel extends HTMLElement {
         editor.hideRoomColumns = true;
         editor.setConfig({...config});
 
-        const preview = document.createElement("wiser-rooms-card");
+        const preview = document.createElement("wiser-controls-card");
         preview.className = "editor-preview";
         preview.hass = this._hass;
         preview.setAttribute("editor-preview", "");
@@ -728,9 +730,9 @@ class WiserRoomsPanel extends HTMLElement {
             hub,
             {
               ...event.detail.config,
-              room_columns: this._drafts[hub].room_columns ?? 1,
-              mobile_room_columns:
-                this._drafts[hub].mobile_room_columns ?? 1,
+              device_columns: this._drafts[hub].device_columns ?? 1,
+              mobile_device_columns:
+                this._drafts[hub].mobile_device_columns ?? 1,
             },
           );
           this._schedulePreview(preview, this._drafts[hub]);
@@ -773,7 +775,7 @@ class WiserRoomsPanel extends HTMLElement {
     } catch (error) {
       errorMessage.textContent =
         "Unable to open the editor. Close this dialog and try again.";
-      console.error("Unable to open Wiser rooms editor", error);
+      console.error("Unable to open Wiser controls editor", error);
     }
   }
 
@@ -799,7 +801,7 @@ class WiserRoomsPanel extends HTMLElement {
     } catch (error) {
       this.shadowRoot.getElementById("editor-error").textContent =
         "Unable to save settings to Home Assistant. Please try again.";
-      console.error("Unable to save Wiser rooms panel settings", error);
+      console.error("Unable to save Wiser controls panel settings", error);
     } finally {
       save.disabled = false;
     }
@@ -810,10 +812,10 @@ class WiserRoomsPanel extends HTMLElement {
     const main = this.shadowRoot.querySelector("main");
 
     try {
-      const Card = customElements.get("wiser-rooms-card");
+      const Card = customElements.get("wiser-controls-card");
       if (Card?.panelApiVersion !== 1) {
         throw new Error(
-          "Wiser Rooms needs its matching rooms card build. Update the card resource and refresh the browser.",
+          "Controls needs its matching Wiser controls card build. Update the card resource and refresh the browser.",
         );
       }
       if (generation !== this._generation) {
@@ -821,7 +823,7 @@ class WiserRoomsPanel extends HTMLElement {
       }
 
       const cards = this._config.hubs.map((hub) => {
-        const card = document.createElement("wiser-rooms-card");
+        const card = document.createElement("wiser-controls-card");
         card.hass = this._hass;
         card.setConfig(this._cardConfig(hub));
         return card;
@@ -842,18 +844,17 @@ class WiserRoomsPanel extends HTMLElement {
 
       const message = document.createElement("p");
       message.setAttribute("role", "alert");
-      message.textContent = error.message || "Unable to load Wiser rooms.";
+      message.textContent = error.message || "Unable to load Wiser controls.";
 
       const retry = document.createElement("ha-button");
       retry.textContent = "Retry";
       retry.addEventListener("click", () => this._loadCards());
 
       main.replaceChildren(message, retry);
-      console.error("Unable to load Wiser rooms", error);
+      console.error("Unable to load Wiser controls", error);
     }
   }
 }
 
-if (!customElements.get("wiser-rooms-panel")) {
-  customElements.define("wiser-rooms-panel", WiserRoomsPanel);
-}
+if (!customElements.get("wiser-controls-panel")) customElements.define("wiser-controls-panel", WiserRoomsPanel);
+if (!customElements.get("wiser-rooms-panel")) customElements.define("wiser-rooms-panel", class extends WiserRoomsPanel {});

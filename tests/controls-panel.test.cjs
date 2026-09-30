@@ -20,7 +20,11 @@ function setup() {
   class Card extends Element {
     static panelApiVersion=1;
     static orderConfig(config){
-      const order=["type","title","room_columns","mobile_room_columns","hubs","room_types"];
+      const legacy={room_columns:"device_columns",mobile_room_columns:"mobile_device_columns",room_types:"device_types",room_order:"device_order",room_configuration:"device_configuration",room_options:"device_options"};
+      config={...config};
+      for(const [oldKey,newKey] of Object.entries(legacy)){if(!Object.hasOwn(config,newKey)&&Object.hasOwn(config,oldKey))config[newKey]=config[oldKey];delete config[oldKey]}
+      if(config.type==="custom:wiser-rooms-card")config.type="custom:wiser-controls-card";
+      const order=["type","title","device_columns","mobile_device_columns","hubs","device_types"];
       return Object.fromEntries([
         ...order.filter(key=>Object.hasOwn(config,key)).map(key=>[key,config[key]]),
         ...Object.keys(config).filter(key=>!order.includes(key)).map(key=>[key,config[key]]),
@@ -28,11 +32,11 @@ function setup() {
     }
     static async getConfigElement(){return new Element()}
   }
-  const registry=new Map([["wiser-rooms-card",Card],["ha-yaml-editor",Element]]);
+  const registry=new Map([["wiser-controls-card",Card],["ha-yaml-editor",Element]]);
   const media={matches:false,listeners:{},addEventListener(name,listener){this.listeners[name]=listener},removeEventListener(name,listener){if(this.listeners[name]===listener)delete this.listeners[name]}};
-  const context=vm.createContext({HTMLElement:Element,window:{loadCardHelpers:async()=>({}),matchMedia:()=>media},setTimeout,clearTimeout,CustomEvent:class{constructor(type,options){Object.assign(this,{type},options)}},customElements:{get:key=>registry.get(key),define:(key,value)=>registry.set(key,value)},document:{createElement:name=>name==="wiser-rooms-card"?new Card():new Element()},console:{error(){}}});
-  vm.runInContext(readFileSync(resolve(__dirname,"../src/wiser-rooms-panel.js"),"utf8"),context);
-  const panel=new (registry.get("wiser-rooms-panel"))();
+  const context=vm.createContext({HTMLElement:Element,window:{loadCardHelpers:async()=>({}),matchMedia:()=>media},setTimeout,clearTimeout,CustomEvent:class{constructor(type,options){Object.assign(this,{type},options)}},customElements:{get:key=>registry.get(key),define:(key,value)=>registry.set(key,value)},document:{createElement:name=>name==="wiser-controls-card"?new Card():new Element()},console:{error(){}}});
+  vm.runInContext(readFileSync(resolve(__dirname,"../src/wiser-controls-panel.js"),"utf8"),context);
+  const panel=new (registry.get("wiser-controls-panel"))();
   panel._testMedia=media;
   panel.connectedCallback();
   return panel;
@@ -42,38 +46,50 @@ test("rooms panel creates one filtered card per hub",()=>{
   const panel=setup();
   const hass={user:{is_admin:true}};
   panel.hass=hass;
-  panel.panel={config:{panel_id: "registry-panel",hubs:["Downstairs","Upstairs"],hub_ids:{Downstairs:"entry-a",Upstairs:"entry-b"},card_configs:{Upstairs:{room_columns:3}}}};
+  panel.panel={config:{panel_id: "registry-panel",hubs:["Downstairs","Upstairs"],hub_ids:{Downstairs:"entry-a",Upstairs:"entry-b"},card_configs:{Upstairs:{device_columns:3}}}};
   const cards=panel.shadowRoot.querySelector("main").children;
   assert.equal(cards.length,2);
   assert.deepEqual(Array.from(cards[0].config.hubs),["entry-a"]);
   assert.equal(cards[0].config._panel_hide_title,true);
   assert.deepEqual(Array.from(cards[1].config.hubs),["entry-b"]);
-  assert.equal(cards[1].config.room_columns,3);
+  assert.equal(cards[1].config.device_columns,3);
   assert.equal(cards[0].hass,hass);
   assert.equal(cards[0].hassWhenConfigured,hass);
+});
+
+test("controls panel migrates legacy room settings before rendering",()=>{
+  const panel=setup();
+  panel.hass={user:{is_admin:true}};
+  panel.panel={config:{panel_id:"registry-panel",hubs:["Home"],hub_ids:{Home:"entry-a"},card_configs:{Home:{room_columns:4,mobile_room_columns:2,room_types:["heating"]}}}};
+  const config=panel._storedCardConfig("Home");
+  assert.equal(config.type,"custom:wiser-controls-card");
+  assert.equal(config.device_columns,4);
+  assert.equal(config.mobile_device_columns,2);
+  assert.deepEqual(Array.from(config.device_types),["heating"]);
+  assert.equal(config.room_columns,undefined);
 });
 
 test("rooms panel defaults mobile layouts to one device per row",()=>{
   const panel=setup();
   panel._testMedia.matches=true;
   panel.hass={user:{is_admin:true}};
-  panel.panel={config:{panel_id:"registry-panel",hubs:["Home"],hub_ids:{Home:"entry-a"},card_configs:{Home:{room_columns:5}}}};
+  panel.panel={config:{panel_id:"registry-panel",hubs:["Home"],hub_ids:{Home:"entry-a"},card_configs:{Home:{device_columns:5}}}};
   const card=panel.shadowRoot.querySelector("main").children[0];
-  assert.equal(card.config.room_columns,1);
-  assert.equal(card.config.mobile_room_columns,undefined);
+  assert.equal(card.config.device_columns,1);
+  assert.equal(card.config.mobile_device_columns,undefined);
 });
 
 test("rooms panel reapplies the mobile default when startup misses the media change",async()=>{
   const panel=setup();
   panel.hass={user:{is_admin:true}};
-  panel.panel={config:{panel_id:"registry-panel",hubs:["Home"],hub_ids:{Home:"entry-a"},card_configs:{Home:{room_columns:5}}}};
+  panel.panel={config:{panel_id:"registry-panel",hubs:["Home"],hub_ids:{Home:"entry-a"},card_configs:{Home:{device_columns:5}}}};
   const card=panel.shadowRoot.querySelector("main").children[0];
-  assert.equal(card.config.room_columns,5);
+  assert.equal(card.config.device_columns,5);
 
   panel._testMedia.matches=true;
   panel.connectedCallback();
   await new Promise(resolve=>setTimeout(resolve,0));
-  assert.equal(card.config.room_columns,1);
+  assert.equal(card.config.device_columns,1);
 });
 
 test("rooms panel removes obsolete room_type and releases its media listener",async()=>{
@@ -99,49 +115,49 @@ test("rooms panel editor saves settings through the integration",async()=>{
   assert.equal(panel._previews.length,1);
   assert.equal(panel._previews[0].hass,panel._hass);
   assert.equal(panel._previews[0].attributes["editor-preview"],"");
-  panel._editorEntries[0].columns.listeners["value-changed"]({stopPropagation(){},detail:{value:{room_columns:4}}});
+  panel._editorEntries[0].columns.listeners["value-changed"]({stopPropagation(){},detail:{value:{device_columns:4}}});
   await new Promise(resolve=>setTimeout(resolve,120));
-  assert.equal(panel._previews[0].config.room_columns,4);
+  assert.equal(panel._previews[0].config.device_columns,4);
   assert.deepEqual(Array.from(panel._previews[0].config.hubs),["entry-a"]);
   await panel._saveEditor();
   assert.equal(calls[0].type,"wiser/panel/configure");
   assert.equal(calls[0].panel_id, "registry-panel");
   assert.deepEqual(Array.from(calls[0].configs.Home.hubs),["entry-a"]);
-  assert.equal(calls[0].configs.Home.room_columns,4);
+  assert.equal(calls[0].configs.Home.device_columns,4);
 });
 
 test("rooms panel uses separate desktop and mobile column counts",async()=>{
   const panel=setup();
   panel.hass={user:{is_admin:true}};
-  panel.panel={config:{panel_id:"registry-panel",hubs:["Home"],hub_ids:{Home:"entry-a"},card_configs:{Home:{room_columns:4,mobile_room_columns:2}}}};
+  panel.panel={config:{panel_id:"registry-panel",hubs:["Home"],hub_ids:{Home:"entry-a"},card_configs:{Home:{device_columns:4,mobile_device_columns:2}}}};
   const card=panel.shadowRoot.querySelector("main").children[0];
-  assert.equal(card.config.room_columns,4);
-  assert.equal(card.config.mobile_room_columns,undefined);
+  assert.equal(card.config.device_columns,4);
+  assert.equal(card.config.mobile_device_columns,undefined);
 
   panel._testMedia.matches=true;
   panel._testMedia.listeners.change();
-  assert.equal(card.config.room_columns,2);
-  assert.equal(card.config.mobile_room_columns,undefined);
+  assert.equal(card.config.device_columns,2);
+  assert.equal(card.config.mobile_device_columns,undefined);
 
   panel._testMedia.matches=false;
   panel._testMedia.listeners.change();
   await panel._openEditor();
   const entry=panel._editorEntries[0];
-  assert.equal(entry.columns.data.room_columns,4);
-  assert.equal(entry.columns.data.mobile_room_columns,undefined);
-  assert.equal(entry.columns.schema[0].name,"room_columns");
+  assert.equal(entry.columns.data.device_columns,4);
+  assert.equal(entry.columns.data.mobile_device_columns,undefined);
+  assert.equal(entry.columns.schema[0].name,"device_columns");
 
   panel._testMedia.matches=true;
   panel._testMedia.listeners.change();
-  assert.equal(entry.columns.data.room_columns,undefined);
-  assert.equal(entry.columns.data.mobile_room_columns,2);
-  assert.equal(entry.columns.schema[0].name,"mobile_room_columns");
-  entry.columns.listeners["value-changed"]({stopPropagation(){},detail:{value:{mobile_room_columns:1}}});
+  assert.equal(entry.columns.data.device_columns,undefined);
+  assert.equal(entry.columns.data.mobile_device_columns,2);
+  assert.equal(entry.columns.schema[0].name,"mobile_device_columns");
+  entry.columns.listeners["value-changed"]({stopPropagation(){},detail:{value:{mobile_device_columns:1}}});
   await new Promise(resolve=>setTimeout(resolve,120));
-  assert.equal(panel._drafts.Home.room_columns,4);
-  assert.equal(panel._drafts.Home.mobile_room_columns,1);
-  assert.equal(entry.preview.config.room_columns,1);
-  assert.equal(entry.preview.config.mobile_room_columns,undefined);
+  assert.equal(panel._drafts.Home.device_columns,4);
+  assert.equal(panel._drafts.Home.mobile_device_columns,1);
+  assert.equal(entry.preview.config.device_columns,1);
+  assert.equal(entry.preview.config.mobile_device_columns,undefined);
 });
 
 test("rooms panel editor switches between visual and YAML modes",async()=>{
@@ -158,18 +174,18 @@ test("rooms panel editor switches between visual and YAML modes",async()=>{
   const yaml=entry.yaml.children[0];
   assert.equal(entry.visual.hidden,true);
   assert.equal(entry.yaml.hidden,false);
-  assert.equal(yaml.defaultValue.type,"custom:wiser-rooms-card");
-  assert.deepEqual(Object.keys(yaml.defaultValue).slice(0,4),["type","title","mobile_room_columns","hubs"]);
+  assert.equal(yaml.defaultValue.type,"custom:wiser-controls-card");
+  assert.deepEqual(Object.keys(yaml.defaultValue).slice(0,4),["type","title","mobile_device_columns","hubs"]);
   assert.equal(yaml.defaultValue._panel_hide_title,undefined);
 
   yaml.listeners["value-changed"]({
     stopPropagation(){},
-    detail:{isValid:true,value:{room_columns:2,hubs:["wrong"]}},
+    detail:{isValid:true,value:{device_columns:2,hubs:["wrong"]}},
   });
   await new Promise(resolve=>setTimeout(resolve,120));
-  assert.equal(panel._drafts.Home.room_columns,2);
+  assert.equal(panel._drafts.Home.device_columns,2);
   assert.deepEqual(Array.from(panel._drafts.Home.hubs),["entry-a"]);
-  assert.equal(panel._previews[0].config.room_columns,2);
+  assert.equal(panel._previews[0].config.device_columns,2);
 
   yaml.listeners["value-changed"]({
     stopPropagation(){},
@@ -180,6 +196,6 @@ test("rooms panel editor switches between visual and YAML modes",async()=>{
   await panel._toggleEditorMode();
   assert.equal(entry.visual.hidden,false);
   assert.equal(entry.yaml.hidden,true);
-  assert.equal(entry.editor.config.room_columns,2);
+  assert.equal(entry.editor.config.device_columns,2);
   assert.equal(panel.shadowRoot.getElementById("save").disabled,false);
 });
