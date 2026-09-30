@@ -876,10 +876,10 @@ class WiserRoomsPanel extends HTMLElement {
           this._storedCardConfig(hub),
         );
         this._drafts[hub] = config;
-        editor.hass = this._hass;
         editor.hideHubSelector = true;
         editor.hideTitle = true;
         editor.hideRoomColumns = true;
+        editor.hass = this._hass;
         editor.setConfig({...config});
 
         const preview = document.createElement("wiser-controls-card");

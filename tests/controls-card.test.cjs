@@ -325,6 +325,57 @@ test('heating room icons distinguish active heating from idle', () => {
   assert.match(html, /data-room-icon="climate\.lounge" icon="mdi:radiator-disabled"/);
 });
 
+test('card editors share entity discovery and hidden hub selectors skip config entry discovery', async () => {
+  const {card, Editor} = setup();
+  let entityRegistryCalls = 0;
+  let configEntryCalls = 0;
+  const hass = {
+    ...card._hass,
+    connection: {},
+    callWS: async message => {
+      if (message.type === 'config/entity_registry/list') {
+        entityRegistryCalls += 1;
+        return card._entries;
+      }
+      configEntryCalls += 1;
+      return [];
+    },
+  };
+  const editors = [new Editor(), new Editor()];
+  for (const editor of editors) {
+    editor.hideHubSelector = true;
+    editor.setConfig({});
+    editor.hass = hass;
+  }
+
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(entityRegistryCalls, 1);
+  assert.equal(configEntryCalls, 0);
+  assert.equal(editors.every(editor => editor._entries === card._entries), true);
+});
+
+test('card editor waits for hub titles before exposing discovered hubs', async () => {
+  const {card, Editor} = setup();
+  let resolveHubs;
+  const hubs = new Promise(resolve => { resolveHubs = resolve; });
+  const hass = {
+    ...card._hass,
+    connection: {},
+    callWS: async message => message.type === 'config/entity_registry/list' ? card._entries : hubs,
+  };
+  const editor = new Editor();
+  editor.setConfig({});
+  editor.hass = hass;
+
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(editor._entries, undefined);
+
+  resolveHubs([{entry_id:'hub-a',title:'Downstairs hub'},{entry_id:'hub-b',title:'Upstairs hub'}]);
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.deepEqual(Array.from(editor._hubForm.schema[0].selector.select.options, option => option.label), ['Downstairs hub','Upstairs hub']);
+});
 
 test('room tabs include all detected heating rooms and hide/show without losing tabs', async () => {
   const {card, Editor} = setup();

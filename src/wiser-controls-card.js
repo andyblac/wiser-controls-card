@@ -28,6 +28,19 @@
   const SECONDARY_STATUS_FEATURE = "wiser-secondary-status-feature";
   const OVERRIDE_STATUS_FEATURE = "wiser-override-status-feature";
   const NEXT_SCHEDULE_FEATURE = "wiser-next-schedule-feature";
+  const entityRegistryRequests = new WeakMap();
+  const entityRegistryEntries = hass => {
+    const key = hass.connection || hass;
+    let request = entityRegistryRequests.get(key);
+    if (!request) {
+      request = hass.callWS({type: "config/entity_registry/list"}).catch(error => {
+        entityRegistryRequests.delete(key);
+        throw error;
+      });
+      entityRegistryRequests.set(key, request);
+    }
+    return request;
+  };
   const isSecondaryFeature = feature => feature.type === `custom:${SECONDARY_STATUS_FEATURE}`;
   const isOverrideStatusFeature = feature => feature.type === `custom:${OVERRIDE_STATUS_FEATURE}`;
   const isHeaderFeature = feature => isSecondaryFeature(feature) || isOverrideStatusFeature(feature);
@@ -315,7 +328,7 @@
       this._discoveryFailed = false;
       this._error = "";
       try {
-        this._entries = await this._hass.callWS({type: "config/entity_registry/list"});
+        this._entries = await entityRegistryEntries(this._hass);
       } catch (error) {
         this._discoveryFailed = true;
         this._error = `Unable to find Wiser devices: ${error.message || error}`;
@@ -1996,6 +2009,7 @@
       const style = document.createElement("style");
       style.textContent = `
         ha-form.hubs{display:block;margin-bottom:16px}
+        ha-form.hubs[hidden]{display:none}
         ha-form.settings::part(root){display:grid;grid-template-columns:minmax(0,1fr) 130px;column-gap:8px;align-items:start}
         .show-filter{display:block;margin-top:16px}
         ha-form.configuration-mode{display:block;margin-top:16px}
@@ -2044,13 +2058,16 @@
     async _discover() {
       this._loading = true;
       try {
-        this._entries = await this._hass.callWS({type: "config/entity_registry/list"});
-        try {
-          const entries = await this._hass.callWS({type: "config_entries/get", domain: "wiser"});
-          this._hubs = Array.isArray(entries) ? entries : [];
-        } catch (_) {
-          this._hubs = [];
+        const entries = await entityRegistryEntries(this._hass);
+        let hubs = [];
+        if (!this.hideHubSelector) {
+          try {
+            const configEntries = await this._hass.callWS({type: "config_entries/get", domain: "wiser"});
+            hubs = Array.isArray(configEntries) ? configEntries : [];
+          } catch (_) {}
         }
+        this._entries = entries;
+        this._hubs = hubs;
       } catch (_) {
         this._failed = true;
       } finally {
