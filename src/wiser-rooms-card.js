@@ -167,8 +167,10 @@
   };
   const selectedTypes = config => Array.isArray(config?.room_types) && config.room_types.length
     ? DEVICE_TYPES.filter(type => config.room_types.includes(type)) : DEVICE_TYPES;
+  const compareDeviceTypes = (hass, left, right) =>
+    text(hass,left).localeCompare(text(hass,right), languageFor(hass), {sensitivity:"base"});
   const sortedDeviceTypes = hass => [...DEVICE_TYPES].sort((left, right) =>
-    text(hass,left).localeCompare(text(hass,right), languageFor(hass), {sensitivity:"base"}));
+    compareDeviceTypes(hass, left, right));
   const isRoom = (entry, state) => entry.platform === "wiser" && !entry.disabled_by && state &&
     (entry.entity_id.startsWith("climate.") && Object.hasOwn(state.attributes, "heating_type") || isShutter(state) || isLight(state) || isPlug(state));
   const matchesType = (state, types = DEVICE_TYPES) => types.includes(deviceType(state));
@@ -2187,8 +2189,11 @@
     _tabRooms(rooms) {
       if (!masterMode(this._config)) return rooms;
       const selected = selectedTypes(this._config);
-      return sortedDeviceTypes(this._hass).filter(roomType => selected.includes(roomType))
-        .map(roomType => rooms.find(room => deviceType(room) === roomType)).filter(Boolean);
+      const representatives = [...new Set(rooms.map(deviceType))]
+        .filter(roomType => selected.includes(roomType))
+        .map(roomType => rooms.find(room => deviceType(room) === roomType));
+      return representatives.sort((left, right) =>
+        compareDeviceTypes(this._hass, deviceType(left), deviceType(right)));
     }
     _renderTabs(rooms) {
       if (!rooms.some(room => room.entity_id === this._selectedRoom)) this._selectedRoom = rooms[0]?.entity_id;

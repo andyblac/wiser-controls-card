@@ -437,6 +437,7 @@ test('master mode gives each newly added room type clean defaults', () => {
   assert.equal(JSON.stringify(config.master_options_by_type.plugs), '{}');
   assert.match(editor._tabs.innerHTML, />Heating<\/button>/);
   assert.match(editor._tabs.innerHTML, />Appliances<\/button>/);
+  assert.match(editor._tabs.innerHTML, />Appliances<\/button>[^]*>Heating<\/button>/);
   editor._tabs.listeners.click({target:{closest:()=>({dataset:{room:'switch.lamp'}})},stopPropagation(){}});
   assert.equal(editor._selectedRoom, 'switch.lamp');
   assert.equal(editor._nativeEditor.features.map(feature => feature.type).join(','), 'toggle');
