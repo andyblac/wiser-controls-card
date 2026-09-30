@@ -581,6 +581,24 @@ function addPlug(card, extra = {}, entity_id = 'switch.lamp') {
   card._entries.push({entity_id,platform:'wiser',config_entry_id:'hub-a'});
   return plug;
 }
+test('appliances show related power usage as their primary reading', () => {
+  const {card} = setup();
+  addPlug(card);
+  const plugEntry = card._entries.find(entry => entry.entity_id === 'switch.lamp');
+  plugEntry.device_id = 'device-lamp';
+  card._hass.states['sensor.lamp_power'] = {entity_id:'sensor.lamp_power',state:'1360',attributes:{device_class:'power',unit_of_measurement:'W'}};
+  card._entries.push({entity_id:'sensor.lamp_power',platform:'wiser',config_entry_id:'hub-a',device_id:'device-lamp'});
+  card.setConfig({room_types:['plugs']});
+  assert.match(card.shadowRoot.innerHTML, /class="temps">1\.36kW<\/div>/);
+
+  card._hass.states['sensor.lamp_power'].state = '42.567';
+  card.setConfig({room_types:['plugs']});
+  assert.match(card.shadowRoot.innerHTML, /class="temps">42\.57W<\/div>/);
+
+  card._hass.states['sensor.lamp_power'].state = 'unavailable';
+  card.setConfig({room_types:['plugs']});
+  assert.match(card.shadowRoot.innerHTML, /class="temps">On<\/div>/);
+});
 test('card suggestions are offered only for supported Wiser entities', () => {
   const {card, window} = setup();
   addShutter(card);

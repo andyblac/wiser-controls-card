@@ -470,13 +470,48 @@
       const time = date && Number.isFinite(date.getTime()) ? date.toLocaleString(this._hass.locale?.language || this._hass.language, {weekday:"short",hour:"2-digit",minute:"2-digit"}) : state.attributes.next_schedule_change;
       return state.attributes.schedule_id && time ? `${text(this._hass,"next")} ${time} · ${state.attributes.next_schedule_state ?? ""}` : state.attributes.schedule_id ? state.attributes.schedule_name : text(this._hass,"no_schedule");
     }
+    _formatPower(value, unit = "W") {
+      const reading = String(value).trim();
+      const numeric = Number(reading);
+      if (!Number.isFinite(numeric)) return reading;
+      const normalizedUnit = String(unit).trim().toLowerCase();
+      const watts = normalizedUnit === "kw" ? numeric * 1000 : numeric;
+      const useKilowatts = ["w", "kw"].includes(normalizedUnit) && Math.abs(watts) >= 1000;
+      const displayed = useKilowatts ? watts / 1000 : numeric;
+      const formatted = displayed.toLocaleString(languageFor(this._hass), {
+        maximumFractionDigits: 2,
+        useGrouping: false,
+      });
+      return `${formatted}${useKilowatts ? "kW" : unit}`;
+    }
+    _powerReading(device) {
+      for (const key of ["power", "current_power", "power_usage"]) {
+        const value = device.attributes[key];
+        if (value !== undefined && value !== null && value !== "") {
+          const unit = device.attributes[`${key}_unit`] || device.attributes.power_unit || "W";
+          return this._formatPower(value, unit);
+        }
+      }
+      const entry = this._entries?.find(item => item.entity_id === device.entity_id);
+      if (!entry?.device_id) return "";
+      for (const candidate of this._entries) {
+        if (candidate.disabled_by || !candidate.entity_id?.startsWith("sensor.")
+          || candidate.device_id !== entry.device_id
+          || candidate.config_entry_id && entry.config_entry_id && candidate.config_entry_id !== entry.config_entry_id) continue;
+        const state = this._hass.states[candidate.entity_id];
+        if (!available(state) || state.attributes.device_class !== "power") continue;
+        const unit = state.attributes.unit_of_measurement || "W";
+        return this._formatPower(state.state, unit);
+      }
+      return "";
+    }
     _renderPoweredDevice(state, preview, previewRoom) {
       const options = roomConfig(this._config, state.entity_id);
       const id = escape(state.entity_id), light = isLight(state), on = state.state === "on";
       const status = !available(state) ? text(this._hass,"unavailable") : on ? text(this._hass,"on") : text(this._hass,"off");
       const disabled = this._busy || !available(state) ? "disabled" : "";
       const brightness = light && typeof state.attributes.brightness === "number" ? Math.round(state.attributes.brightness / 255 * 100) : null;
-      const reading = light ? (brightness === null ? "—" : `${brightness}%`) : status;
+      const reading = light ? (brightness === null ? "—" : `${brightness}%`) : this._powerReading(state) || status;
       const icon = light ? (on ? "mdi:lightbulb" : "mdi:lightbulb-outline") : (on ? "mdi:power-socket-uk" : "mdi:power-socket-uk");
       const color = available(state) && on ? "var(--state-light-active-color,var(--primary-color))" : "var(--secondary-text-color)";
       const useNative = this._nativeReady || options.features !== undefined;
