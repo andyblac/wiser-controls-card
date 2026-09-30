@@ -20,7 +20,7 @@ function setup() {
   class Card extends Element {
     static panelApiVersion=1;
     static orderConfig(config){
-      const order=["type","title","room_columns","hubs"];
+      const order=["type","title","room_columns","mobile_room_columns","hubs","room_type","room_types"];
       return Object.fromEntries([
         ...order.filter(key=>Object.hasOwn(config,key)).map(key=>[key,config[key]]),
         ...Object.keys(config).filter(key=>!order.includes(key)).map(key=>[key,config[key]]),
@@ -29,9 +29,12 @@ function setup() {
     static async getConfigElement(){return new Element()}
   }
   const registry=new Map([["wiser-rooms-card",Card],["ha-yaml-editor",Element]]);
-  const context=vm.createContext({HTMLElement:Element,window:{loadCardHelpers:async()=>({})},setTimeout,clearTimeout,CustomEvent:class{constructor(type,options){Object.assign(this,{type},options)}},customElements:{get:key=>registry.get(key),define:(key,value)=>registry.set(key,value)},document:{createElement:name=>name==="wiser-rooms-card"?new Card():new Element()},console:{error(){}}});
+  const media={matches:false,listeners:{},addEventListener(name,listener){this.listeners[name]=listener}};
+  const context=vm.createContext({HTMLElement:Element,window:{loadCardHelpers:async()=>({}),matchMedia:()=>media},setTimeout,clearTimeout,CustomEvent:class{constructor(type,options){Object.assign(this,{type},options)}},customElements:{get:key=>registry.get(key),define:(key,value)=>registry.set(key,value)},document:{createElement:name=>name==="wiser-rooms-card"?new Card():new Element()},console:{error(){}}});
   vm.runInContext(readFileSync(resolve(__dirname,"../src/wiser-rooms-panel.js"),"utf8"),context);
-  return new (registry.get("wiser-rooms-panel"))();
+  const panel=new (registry.get("wiser-rooms-panel"))();
+  panel._testMedia=media;
+  return panel;
 }
 
 test("rooms panel creates one filtered card per hub",()=>{
@@ -49,6 +52,16 @@ test("rooms panel creates one filtered card per hub",()=>{
   assert.equal(cards[0].hassWhenConfigured,hass);
 });
 
+test("rooms panel defaults mobile layouts to one device per row",()=>{
+  const panel=setup();
+  panel._testMedia.matches=true;
+  panel.hass={user:{is_admin:true}};
+  panel.panel={config:{panel_id:"registry-panel",hubs:["Home"],hub_ids:{Home:"entry-a"},card_configs:{Home:{room_columns:5}}}};
+  const card=panel.shadowRoot.querySelector("main").children[0];
+  assert.equal(card.config.room_columns,1);
+  assert.equal(card.config.mobile_room_columns,undefined);
+});
+
 test("rooms panel editor saves settings through the integration",async()=>{
   const panel=setup(),calls=[];
   panel.hass={user:{is_admin:true},callWS:async message=>calls.push(message)};
@@ -56,10 +69,11 @@ test("rooms panel editor saves settings through the integration",async()=>{
   await panel._openEditor();
   assert.equal(panel._editors[0].hideHubSelector,true);
   assert.equal(panel._editors[0].hideTitle,true);
+  assert.equal(panel._editors[0].hideRoomColumns,true);
   assert.equal(panel._previews.length,1);
   assert.equal(panel._previews[0].hass,panel._hass);
   assert.equal(panel._previews[0].attributes["editor-preview"],"");
-  panel._editors[0].listeners["config-changed"]({stopPropagation(){},detail:{config:{room_columns:4,hubs:["wrong"]}}});
+  panel._editorEntries[0].columns.listeners["value-changed"]({stopPropagation(){},detail:{value:{room_columns:4}}});
   await new Promise(resolve=>setTimeout(resolve,120));
   assert.equal(panel._previews[0].config.room_columns,4);
   assert.deepEqual(Array.from(panel._previews[0].config.hubs),["entry-a"]);
@@ -68,6 +82,40 @@ test("rooms panel editor saves settings through the integration",async()=>{
   assert.equal(calls[0].panel_id, "registry-panel");
   assert.deepEqual(Array.from(calls[0].configs.Home.hubs),["entry-a"]);
   assert.equal(calls[0].configs.Home.room_columns,4);
+});
+
+test("rooms panel uses separate desktop and mobile column counts",async()=>{
+  const panel=setup();
+  panel.hass={user:{is_admin:true}};
+  panel.panel={config:{panel_id:"registry-panel",hubs:["Home"],hub_ids:{Home:"entry-a"},card_configs:{Home:{room_columns:4,mobile_room_columns:2}}}};
+  const card=panel.shadowRoot.querySelector("main").children[0];
+  assert.equal(card.config.room_columns,4);
+  assert.equal(card.config.mobile_room_columns,undefined);
+
+  panel._testMedia.matches=true;
+  panel._testMedia.listeners.change();
+  assert.equal(card.config.room_columns,2);
+  assert.equal(card.config.mobile_room_columns,undefined);
+
+  panel._testMedia.matches=false;
+  panel._testMedia.listeners.change();
+  await panel._openEditor();
+  const entry=panel._editorEntries[0];
+  assert.equal(entry.columns.data.room_columns,4);
+  assert.equal(entry.columns.data.mobile_room_columns,undefined);
+  assert.equal(entry.columns.schema[0].name,"room_columns");
+
+  panel._testMedia.matches=true;
+  panel._testMedia.listeners.change();
+  assert.equal(entry.columns.data.room_columns,undefined);
+  assert.equal(entry.columns.data.mobile_room_columns,2);
+  assert.equal(entry.columns.schema[0].name,"mobile_room_columns");
+  entry.columns.listeners["value-changed"]({stopPropagation(){},detail:{value:{mobile_room_columns:1}}});
+  await new Promise(resolve=>setTimeout(resolve,120));
+  assert.equal(panel._drafts.Home.room_columns,4);
+  assert.equal(panel._drafts.Home.mobile_room_columns,1);
+  assert.equal(entry.preview.config.room_columns,1);
+  assert.equal(entry.preview.config.mobile_room_columns,undefined);
 });
 
 test("rooms panel editor switches between visual and YAML modes",async()=>{
@@ -85,7 +133,7 @@ test("rooms panel editor switches between visual and YAML modes",async()=>{
   assert.equal(entry.visual.hidden,true);
   assert.equal(entry.yaml.hidden,false);
   assert.equal(yaml.defaultValue.type,"custom:wiser-rooms-card");
-  assert.deepEqual(Object.keys(yaml.defaultValue).slice(0,3),["type","title","hubs"]);
+  assert.deepEqual(Object.keys(yaml.defaultValue).slice(0,4),["type","title","mobile_room_columns","hubs"]);
   assert.equal(yaml.defaultValue._panel_hide_title,undefined);
 
   yaml.listeners["value-changed"]({

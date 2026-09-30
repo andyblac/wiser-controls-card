@@ -5,7 +5,7 @@
   const DEVICE_TYPES = ["heating", "shutters", "lights", "plugs"];
   const FEATURES = ["modes", "temperature", "advance"];
   const CARD_CONFIG_ORDER = [
-    "type", "title", "room_columns", "hubs", "room_types", "entities", "excluded_entities", "room_order",
+    "type", "title", "room_columns", "mobile_room_columns", "hubs", "room_type", "room_types", "entities", "excluded_entities", "room_order",
     "temperature_focus", "room_configuration", "master_options_by_type", "room_options",
     "features", "tap_action", "hold_action", "double_tap_action",
     "icon_tap_action", "icon_hold_action", "icon_double_tap_action", "grid_options",
@@ -1917,7 +1917,7 @@
       this._form.hass = this._hass;
       const appearanceSchema = [
         ...(this.hideTitle ? [] : [{name: "title", selector: {text: {}}}]),
-        {name: "room_columns", label: text(this._hass,"devices_per_row"), selector: {number: {min: 1, max: 6, step: 1, mode: "box"}}},
+        ...(this.hideRoomColumns ? [] : [{name: "room_columns", label: text(this._hass,"devices_per_row"), selector: {number: {min: 1, max: 6, step: 1, mode: "box"}}}]),
       ];
       const roomTypeSchema = {name: "room_types", label: text(this._hass,"show"), selector: {select: {mode: "box", options: [
           {value: "all", label: text(this._hass,"all")}, {value: "heating", label: text(this._hass,"heating")}, {value: "shutters", label: text(this._hass,"shutters")},
@@ -1939,8 +1939,9 @@
 
         this._schemaSignature = signature;
       }
-      this._form.style.maxWidth = this.hideTitle ? "130px" : "";
-      const data = {room_columns: this._config.room_columns ?? 1};
+      this._form.style.maxWidth = this.hideTitle && !this.hideRoomColumns ? "130px" : "";
+      const data = {};
+      if (!this.hideRoomColumns) data.room_columns = this._config.room_columns ?? 1;
       if (!this.hideTitle) data.title = this._config.title ?? text(this._hass,"wiser_rooms");
       if (JSON.stringify(data) !== JSON.stringify(this._form.data)) this._form.data = data;
       const activeTypes = selectedTypes(this._config);
@@ -2265,7 +2266,8 @@
       event.stopPropagation();
       const data = event.detail.value;
       const title = Object.hasOwn(data, "title") ? data.title ?? "" : this._config.title ?? text(this._hass,"wiser_rooms");
-      const config = {...this._config, title, room_columns: data.room_columns ?? 1};
+      const config = {...this._config, title};
+      if (!this.hideRoomColumns) config.room_columns = data.room_columns ?? 1;
       this._config = config;
       this._render();
       this._dispatchConfig();

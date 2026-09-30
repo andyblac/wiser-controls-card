@@ -483,8 +483,8 @@ test('editor preserves explicit selections and layout when updating title', () =
 test('editor emits card and room YAML settings in a stable logical order', () => {
   const {Editor, elements} = setup();
   const Card = elements['wiser-rooms-card'];
-  assert.deepEqual(Object.keys(Card.orderConfig({hubs:['entry-a'],room_columns:3,type:'custom:wiser-rooms-card'})), [
-    'type','room_columns','hubs',
+  assert.deepEqual(Object.keys(Card.orderConfig({hubs:['entry-a'],mobile_room_columns:1,room_columns:3,type:'custom:wiser-rooms-card'})), [
+    'type','room_columns','mobile_room_columns','hubs',
   ]);
   const editor = new Editor();
   editor.setConfig({

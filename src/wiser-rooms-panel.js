@@ -147,6 +147,11 @@ class WiserRoomsPanel extends HTMLElement {
           min-width: 0;
         }
 
+        .panel-columns {
+          display: block;
+          margin-bottom: 16px;
+        }
+
         .editor-preview {
           position: sticky;
           top: 0;
@@ -284,6 +289,10 @@ class WiserRoomsPanel extends HTMLElement {
     this._yamlErrors = new Set();
     this._yamlMode = false;
     this._generation = 0;
+    this._mobileMedia = window.matchMedia?.("(max-width: 600px)");
+    this._mobileMedia?.addEventListener?.("change", () => {
+      this._refreshResponsiveColumns();
+    });
   }
 
   set hass(hass) {
@@ -317,14 +326,42 @@ class WiserRoomsPanel extends HTMLElement {
     return this._config.hub_ids?.[hub] || hub;
   }
 
-  _cardConfig(hub) {
+  _storedCardConfig(hub) {
+    const stored = this._config.card_configs?.[hub] || {};
     return {
       title: this._config.hubs.length > 1 ? hub : "Wiser rooms",
-      ...this._config.card_configs?.[hub],
+      ...stored,
+      mobile_room_columns: stored.mobile_room_columns ?? 1,
       type: "custom:wiser-rooms-card",
       hubs: [this._hubId(hub)],
       _panel_hide_title: true,
     };
+  }
+
+  _effectiveCardConfig(config) {
+    const {mobile_room_columns, ...effective} = config;
+    effective.room_columns = this._mobileMedia?.matches
+      ? mobile_room_columns ?? 1
+      : effective.room_columns ?? 1;
+    return effective;
+  }
+
+  _cardConfig(hub) {
+    return this._effectiveCardConfig(this._storedCardConfig(hub));
+  }
+
+  _refreshResponsiveColumns() {
+    this._cards.forEach((card, index) => {
+      const hub = this._config?.hubs?.[index];
+      if (hub) card.setConfig(this._cardConfig(hub));
+    });
+    this._editorEntries.forEach((entry) => {
+      const config = this._drafts?.[entry.hub];
+      if (config) {
+        this._syncColumnForm(entry.columns, config);
+        this._schedulePreview(entry.preview, config);
+      }
+    });
   }
 
   _selectHub(hub) {
@@ -414,7 +451,7 @@ class WiserRoomsPanel extends HTMLElement {
   }
 
   _schedulePreview(preview, config) {
-    preview._wiserPendingConfig = {...config};
+    preview._wiserPendingConfig = this._effectiveCardConfig(config);
     if (preview._wiserPreviewTimer !== undefined) {
       clearTimeout(preview._wiserPreviewTimer);
     }
@@ -458,6 +495,38 @@ class WiserRoomsPanel extends HTMLElement {
     };
     const Card = customElements.get("wiser-rooms-card");
     return Card?.orderConfig?.(normalized) || normalized;
+  }
+
+  _syncColumnForm(form, config) {
+    const mobile = this._mobileMedia?.matches;
+    const key = mobile ? "mobile_room_columns" : "room_columns";
+    form.schema = [{
+      name: key,
+      label: `Devices per row — ${mobile ? "mobile" : "desktop"}`,
+      selector: {number: {min: 1, max: 6, step: 1, mode: "box"}},
+    }];
+    form.data = {[key]: config[key] ?? 1};
+  }
+
+  _createColumnForm(hub, preview) {
+    const form = document.createElement("ha-form");
+    form.className = "panel-columns";
+    form.hass = this._hass;
+    form.computeLabel = (schema) => schema.label;
+    this._syncColumnForm(form, this._drafts[hub]);
+    form.addEventListener("value-changed", (event) => {
+      event.stopPropagation();
+      const value = event.detail.value;
+      const key = this._mobileMedia?.matches
+        ? "mobile_room_columns"
+        : "room_columns";
+      this._drafts[hub] = this._normaliseDraft(hub, {
+        ...this._drafts[hub],
+        [key]: value[key] ?? 1,
+      });
+      this._schedulePreview(preview, this._drafts[hub]);
+    });
+    return form;
   }
 
   _yamlConfig(hub) {
@@ -534,6 +603,10 @@ class WiserRoomsPanel extends HTMLElement {
       } else {
         for (const entry of this._editorEntries) {
           entry.editor.setConfig({...this._drafts[entry.hub]});
+          this._syncColumnForm(
+            entry.columns,
+            this._drafts[entry.hub],
+          );
           entry.yaml.hidden = true;
           entry.visual.hidden = false;
         }
@@ -601,11 +674,15 @@ class WiserRoomsPanel extends HTMLElement {
           return;
         }
 
-        const config = this._normaliseDraft(hub, this._cardConfig(hub));
+        const config = this._normaliseDraft(
+          hub,
+          this._storedCardConfig(hub),
+        );
         this._drafts[hub] = config;
         editor.hass = this._hass;
         editor.hideHubSelector = true;
         editor.hideTitle = true;
+        editor.hideRoomColumns = true;
         editor.setConfig({...config});
 
         const preview = document.createElement("wiser-rooms-card");
@@ -613,13 +690,20 @@ class WiserRoomsPanel extends HTMLElement {
         preview.hass = this._hass;
         preview.setAttribute("editor-preview", "");
         preview.setAttribute("aria-label", `${hub} card preview`);
-        preview.setConfig({...config});
+        preview.setConfig(this._effectiveCardConfig(config));
+
+        const columns = this._createColumnForm(hub, preview);
 
         editor.addEventListener("config-changed", (event) => {
           event.stopPropagation();
           this._drafts[hub] = this._normaliseDraft(
             hub,
-            event.detail.config,
+            {
+              ...event.detail.config,
+              room_columns: this._drafts[hub].room_columns ?? 1,
+              mobile_room_columns:
+                this._drafts[hub].mobile_room_columns ?? 1,
+            },
           );
           this._schedulePreview(preview, this._drafts[hub]);
         });
@@ -636,7 +720,7 @@ class WiserRoomsPanel extends HTMLElement {
         visual.className = "visual-editor";
         yaml.className = "yaml-editor";
         yaml.hidden = true;
-        visual.append(editor);
+        visual.append(columns, editor);
         form.append(visual);
         form.append(yaml);
         layout.replaceChildren(form, preview);
@@ -645,7 +729,14 @@ class WiserRoomsPanel extends HTMLElement {
         );
         container.append(section);
         this._editors.push(editor);
-        this._editorEntries.push({hub, editor, preview, visual, yaml});
+        this._editorEntries.push({
+          hub,
+          editor,
+          preview,
+          columns,
+          visual,
+          yaml,
+        });
         this._previews.push(preview);
       }
 
