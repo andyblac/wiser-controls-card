@@ -80,11 +80,11 @@ test('master off attempts every eligible room and reports partial failure', asyn
 test('cancel overrides action targets only eligible overridden heating rooms', async () => {
   const {card,calls,states} = setup();
   Object.assign(states['climate.bedroom'].attributes, {is_override:true,preset_modes:['Cancel Overrides']});
-  Object.assign(states['climate.lounge'].attributes, {is_boosted:true,boost_time_remaining:25,preset_modes:['Cancel Overrides']});
+  Object.assign(states['climate.lounge'].attributes, {is_override:true,next_schedule_datetime:new Date(Date.now() + 25 * 60000).toISOString(),preset_modes:['Cancel Overrides']});
   Object.assign(states['climate.offline'].attributes, {is_override:true,preset_modes:['Cancel Overrides']});
   card.setConfig({room_types:['heating']});
   assert.match(card.shadowRoot.innerHTML, /2 overrides · next ends in 25m/);
-  assert.match(card.shadowRoot.innerHTML, /data-action="follow-schedule"[^]*?data-action="cancel-overrides"[^>]*appearance="filled"[^>]*>[^]*<span class="action-label">Cancel overrides \(2\)<\/span><\/ha-button>[^]*data-action="all-off"[^>]*appearance="filled"/);
+  assert.match(card.shadowRoot.innerHTML, /data-action="boost-all"[^]*data-action="follow-schedule"[^]*?data-action="cancel-overrides"[^>]*appearance="filled"[^>]*>[^]*<span class="action-label">Cancel overrides \(2\)<\/span><\/ha-button>[^]*data-action="all-off"[^>]*appearance="filled"/);
   await card._cancelAllOverrides();
   assert.equal(calls.length, 2);
   assert.equal(calls.every(call => call[0] === 'climate' && call[1] === 'set_preset_mode'), true);
@@ -105,6 +105,38 @@ test('follow schedule returns every eligible heating room to auto', async () => 
   assert.equal(calls.every(call => call[0] === 'climate' && call[1] === 'set_hvac_mode'), true);
   assert.equal(calls.every(call => call[2].hvac_mode === 'auto'), true);
   assert.equal(calls.map(call => call[2].entity_id).sort().join(','), 'climate.bedroom,climate.lounge');
+});
+test('boost all offers supported durations and becomes cancel all while rooms are boosted', async () => {
+  const {card,calls,states} = setup();
+  const presetModes = ['Boost 30m','Boost 1h','Boost 2h','Boost 3h','Cancel Overrides'];
+  Object.assign(states['climate.bedroom'].attributes, {preset_modes:presetModes});
+  Object.assign(states['climate.lounge'].attributes, {preset_modes:presetModes});
+  Object.assign(states['climate.offline'].attributes, {preset_modes:presetModes});
+  card.setConfig({room_types:['heating']});
+  assert.match(card.shadowRoot.innerHTML, /class="off boost-all[^>]*variant="danger"/);
+  card._click({target:{closest:() => ({dataset:{action:'boost-menu'},disabled:false})}});
+  assert.match(card.shadowRoot.innerHTML, /data-action="boost-all"[^]*data-boost-mode="Boost 30m"[^]*30 minutes[^]*data-boost-mode="Boost 3h"[^]*3 hours[^]*data-action="all-off"/);
+  await card._boostAll('Boost 2h');
+  assert.equal(calls.length, 2);
+  assert.equal(calls.every(call => call[0] === 'climate' && call[1] === 'set_preset_mode' && call[2].preset_mode === 'Boost 2h'), true);
+  assert.equal(calls.map(call => call[2].entity_id).sort().join(','), 'climate.bedroom,climate.lounge');
+
+  Object.assign(states['climate.bedroom'].attributes, {is_boosted:true,boost_time_remaining:125});
+  Object.assign(states['climate.lounge'].attributes, {is_boosted:true,boost_time_remaining:90});
+  card._render();
+  assert.match(card.shadowRoot.innerHTML, /data-action="cancel-all-boosts"[^>]*variant="brand"[^]*<span class="action-label"><span>Cancel all<\/span><small>90 min<\/small><\/span>/);
+  assert.doesNotMatch(card.shadowRoot.innerHTML, /data-action="boost-all"|data-action="cancel-overrides"/);
+  await card._cancelAllBoosts();
+  assert.equal(calls.length, 4);
+  assert.equal(calls.slice(2).every(call => call[2].preset_mode === 'Cancel Overrides'), true);
+});
+test('boost duration menu dispatches the selected preset', () => {
+  const {card} = setup();
+  let selected;
+  card._boostAll = mode => { selected = mode; };
+  const item = {dataset:{action:'boost-duration',boostMode:'Boost 2h'},disabled:false};
+  card._click({target:{closest:() => item}});
+  assert.equal(selected, 'Boost 2h');
 });
 test('explicit room selection limits master control and rejects unrelated climates', async () => {
   const {card,calls} = setup();

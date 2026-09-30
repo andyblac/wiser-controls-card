@@ -202,6 +202,7 @@
       this._busy = false;
       this._temperatureQueue = new Map();
       this._targets = new Map();
+      this._boostMenuOpen = false;
       this._error = "";
       this.shadowRoot.addEventListener("click", event => this._click(event));
       this.shadowRoot.addEventListener("dblclick", event => this._doubleClick(event));
@@ -575,6 +576,29 @@
       if (failed.length) this._error = `Could not follow schedules: ${failed.map(room => this._name(room)).join(", ")}. Please retry.`;
       this._busy = false; this._render();
     }
+    async _boostAll(presetMode) {
+      if (this._busy || !["Boost 30m", "Boost 1h", "Boost 2h", "Boost 3h"].includes(presetMode)
+        || !selectedTypes(this._config).includes("heating")) return;
+      const rooms = this._rooms().filter(room => deviceType(room) === "heating" && available(room)
+        && room.attributes.preset_modes?.includes(presetMode));
+      if (!rooms.length) return;
+      this._busy = true; this._error = ""; this._render();
+      const results = await Promise.allSettled(rooms.map(room => this._hass.callService("climate", "set_preset_mode", {entity_id:room.entity_id, preset_mode:presetMode})));
+      const failed = rooms.filter((_, index) => results[index].status === "rejected");
+      if (failed.length) this._error = `Could not boost: ${failed.map(room => this._name(room)).join(", ")}. Please retry.`;
+      this._busy = false; this._render();
+    }
+    async _cancelAllBoosts() {
+      if (this._busy || !selectedTypes(this._config).includes("heating")) return;
+      const rooms = this._rooms().filter(room => deviceType(room) === "heating" && available(room)
+        && room.attributes.is_boosted && room.attributes.preset_modes?.includes("Cancel Overrides"));
+      if (!rooms.length) return;
+      this._busy = true; this._error = ""; this._render();
+      const results = await Promise.allSettled(rooms.map(room => this._hass.callService("climate", "set_preset_mode", {entity_id:room.entity_id, preset_mode:"Cancel Overrides"})));
+      const failed = rooms.filter((_, index) => results[index].status === "rejected");
+      if (failed.length) this._error = `Could not cancel boosts: ${failed.map(room => this._name(room)).join(", ")}. Please retry.`;
+      this._busy = false; this._render();
+    }
     async _closeAll() {
       if (this._busy || !selectedTypes(this._config).includes("shutters")) return;
       const shutters = this._rooms().filter(room => isShutter(room) && available(room) && room.state !== "closed" && (room.attributes.supported_features & 2));
@@ -625,10 +649,16 @@
     }
     _click(event) {
       const button = event.target.closest("button,ha-button");
-      if (!button || button.disabled) return;
+      if (!button || button.disabled) {
+        if (this._boostMenuOpen) { this._boostMenuOpen = false; this._render(); }
+        return;
+      }
+      if (button.dataset.action === "boost-menu") { this._boostMenuOpen = !this._boostMenuOpen; this._render(); return; }
       if (button.dataset.action === "all-off") { this._allOff(); return; }
       if (button.dataset.action === "cancel-overrides") { this._cancelAllOverrides(); return; }
       if (button.dataset.action === "follow-schedule") { this._followHeatingSchedule(); return; }
+      if (button.dataset.action === "cancel-all-boosts") { this._cancelAllBoosts(); return; }
+      if (button.dataset.action === "boost-duration") { this._boostMenuOpen = false; this._boostAll(button.dataset.boostMode); return; }
       if (button.dataset.action === "all-close") { this._closeAll(); return; }
       if (button.dataset.action === "all-lights-off") { this._allDevicesOff("lights"); return; }
       if (button.dataset.action === "all-plugs-off") { this._allDevicesOff("plugs"); return; }
@@ -769,8 +799,14 @@
       const singleType = types[0];
       const canOff = rooms.some(r => available(r) && r.state !== "off" && r.attributes.hvac_modes?.includes("off"));
       const overriddenRooms = rooms.filter(isHeatingOverride);
+      const boostedRooms = rooms.filter(room => deviceType(room) === "heating" && available(room) && room.attributes.is_boosted);
       const canCancelOverrides = overriddenRooms.some(room =>
         room.attributes.preset_modes?.includes("Cancel Overrides"));
+      const boostModes = [["Boost 30m","30_minutes"], ["Boost 1h","1_hour"], ["Boost 2h","2_hours"], ["Boost 3h","3_hours"]];
+      const canBoostMode = mode => rooms.some(room => deviceType(room) === "heating" && available(room) && room.attributes.preset_modes?.includes(mode));
+      const canCancelBoosts = boostedRooms.some(room => room.attributes.preset_modes?.includes("Cancel Overrides"));
+      const boostRemaining = boostedRooms.map(overrideMinutes).filter(Number.isFinite);
+      const boostCountdown = boostRemaining.length ? text(this._hass,"minutes_short",{count:Math.min(...boostRemaining)}) : "";
       const canFollowSchedule = this._heatingScheduleTargets().length > 0;
       const canClose = rooms.some(room => isShutter(room) && available(room) && room.state !== "closed" && (room.attributes.supported_features & 2));
       const canTurnOff = type => rooms.some(state => deviceType(state) === type && available(state) && state.state === "on");
@@ -778,10 +814,15 @@
       const allOffTitle = escape(text(this._hass,"turn_all_off",{devices:text(this._hass,"heating")}));
       const allOffAction = section => `<ha-button class="off${section ? " section-action" : ""}" data-action="all-off" size="m" appearance="filled" variant="danger" ${this._busy || !canOff ? "disabled" : ""} title="${allOffTitle}" aria-label="${allOffTitle}"><ha-icon slot="start" icon="mdi:power"></ha-icon><span class="action-label">${escape(text(this._hass,"all_off"))}</span></ha-button>`;
       const cancelOverridesTitle = escape(text(this._hass,"cancel_all_title"));
-      const cancelOverridesAction = section => `<ha-button class="off cancel-overrides${section ? " section-action" : ""}" data-action="cancel-overrides" size="m" appearance="filled" variant="brand" ${this._busy || !canCancelOverrides ? "disabled" : ""} title="${cancelOverridesTitle}" aria-label="${cancelOverridesTitle}"><ha-icon slot="start" icon="mdi:restore"></ha-icon><span class="action-label">${escape(text(this._hass,"cancel_overrides"))}${overriddenRooms.length ? ` (${overriddenRooms.length})` : ""}</span></ha-button>`;
+      const cancelOverridesAction = section => boostedRooms.length ? "" : `<ha-button class="off cancel-overrides${section ? " section-action" : ""}" data-action="cancel-overrides" size="m" appearance="filled" variant="brand" ${this._busy || !canCancelOverrides ? "disabled" : ""} title="${cancelOverridesTitle}" aria-label="${cancelOverridesTitle}"><ha-icon slot="start" icon="mdi:restore"></ha-icon><span class="action-label">${escape(text(this._hass,"cancel_overrides"))}${overriddenRooms.length ? ` (${overriddenRooms.length})` : ""}</span></ha-button>`;
       const followScheduleTitle = escape(text(this._hass,"follow_schedule_title"));
       const followScheduleAction = section => `<ha-button class="off follow-schedule${section ? " section-action" : ""}" data-action="follow-schedule" size="m" appearance="filled" variant="brand" ${this._busy || !canFollowSchedule ? "disabled" : ""} title="${followScheduleTitle}" aria-label="${followScheduleTitle}"><ha-icon slot="start" icon="mdi:calendar-sync"></ha-icon><span class="action-label">${escape(text(this._hass,"follow_schedule"))}</span></ha-button>`;
-      const heatingActions = section => `<div class="bulk-actions">${followScheduleAction(section)}${cancelOverridesAction(section)}${allOffAction(section)}</div>`;
+      const boostTitle = escape(text(this._hass,"boost_all_title"));
+      const cancelBoostsTitle = escape(text(this._hass,"cancel_all_boosts_title"));
+      const boostAction = section => boostedRooms.length
+        ? `<ha-button class="off cancel-all-boosts${section ? " section-action" : ""}" data-action="cancel-all-boosts" size="m" appearance="filled" variant="brand" ${this._busy || !canCancelBoosts ? "disabled" : ""} title="${cancelBoostsTitle}" aria-label="${cancelBoostsTitle}"><ha-icon slot="start" icon="mdi:fire-off"></ha-icon><span class="action-label"><span>${escape(text(this._hass,"cancel_all"))}</span>${boostCountdown ? `<small>${escape(boostCountdown)}</small>` : ""}</span></ha-button>`
+        : `<div class="boost-menu" data-action="boost-all"><ha-button class="off boost-all${section ? " section-action" : ""}" data-action="boost-menu" size="m" appearance="filled" variant="danger" ${this._busy || !boostModes.some(([mode]) => canBoostMode(mode)) ? "disabled" : ""} title="${boostTitle}" aria-label="${boostTitle}" aria-haspopup="menu" aria-expanded="${this._boostMenuOpen}"><ha-icon slot="start" icon="mdi:fire"></ha-icon><span class="action-label">${escape(text(this._hass,"boost_all"))}</span></ha-button>${this._boostMenuOpen ? `<div class="boost-options" role="menu">${boostModes.map(([mode,label]) => `<button role="menuitem" data-action="boost-duration" data-boost-mode="${mode}" ${canBoostMode(mode) ? "" : "disabled"}>${escape(text(this._hass,label))}</button>`).join("")}</div>` : ""}</div>`;
+      const heatingActions = section => `<div class="bulk-actions">${boostAction(section)}${followScheduleAction(section)}${cancelOverridesAction(section)}${allOffAction(section)}</div>`;
       const closeAllTitle = escape(text(this._hass,"close_all_title"));
       const closeAllAction = section => `<ha-button class="off close-all${section ? " section-action" : ""}" data-action="all-close" size="m" appearance="filled" variant="brand" ${this._busy || !canClose ? "disabled" : ""} title="${closeAllTitle}" aria-label="${closeAllTitle}"><ha-icon slot="start" icon="mdi:window-shutter"></ha-icon><span class="action-label">${escape(text(this._hass,"close_all"))}</span></ha-button>`;
       const deviceOffAction = (type, section) => {
@@ -960,6 +1001,45 @@
           justify-content:flex-end;
           flex-wrap:wrap;
           gap:4px
+        }
+        .boost-menu {
+          position:relative;
+          flex-shrink:0
+        }
+        .boost-options {
+          position:absolute;
+          z-index:20;
+          inset:calc(100% + 6px) auto auto 0;
+          min-width:140px;
+          padding:6px 0;
+          border:1px solid var(--divider-color);
+          border-radius:10px;
+          background:var(--card-background-color,var(--ha-card-background,var(--primary-background-color)));
+          box-shadow:var(--ha-card-box-shadow,0 2px 8px rgba(0,0,0,.3))
+        }
+        .boost-options button {
+          display:block;
+          width:100%;
+          min-height:40px;
+          padding:8px 16px;
+          border-radius:0;
+          background:transparent;
+          text-align:left;
+          white-space:nowrap
+        }
+        .boost-options button:hover:not(:disabled),.boost-options button:focus-visible {
+          background:var(--secondary-background-color)
+        }
+        .cancel-all-boosts .action-label {
+          display:flex;
+          flex-direction:column;
+          align-items:flex-start;
+          line-height:16px
+        }
+        .cancel-all-boosts .action-label small {
+          color:var(--secondary-text-color);
+          font-size:11px;
+          font-weight:400
         }
         .room {
           padding:10px 16px;
