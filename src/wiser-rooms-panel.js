@@ -296,17 +296,29 @@ class WiserRoomsPanel extends HTMLElement {
   }
 
   connectedCallback() {
-    this._mobileMedia?.addEventListener?.(
-      "change",
-      this._handleMobileMediaChange,
-    );
+    if (this._mobileMedia?.addEventListener) {
+      this._mobileMedia.addEventListener("change", this._handleMobileMediaChange);
+    } else {
+      this._mobileMedia?.addListener?.(this._handleMobileMediaChange);
+    }
+    window.addEventListener?.("resize", this._handleMobileMediaChange);
+    this._refreshResponsiveColumns();
+    clearTimeout(this._responsiveInitTimer);
+    this._responsiveInitTimer = setTimeout(() => {
+      this._responsiveInitTimer = undefined;
+      this._refreshResponsiveColumns();
+    }, 0);
   }
 
   disconnectedCallback() {
-    this._mobileMedia?.removeEventListener?.(
-      "change",
-      this._handleMobileMediaChange,
-    );
+    if (this._mobileMedia?.removeEventListener) {
+      this._mobileMedia.removeEventListener("change", this._handleMobileMediaChange);
+    } else {
+      this._mobileMedia?.removeListener?.(this._handleMobileMediaChange);
+    }
+    window.removeEventListener?.("resize", this._handleMobileMediaChange);
+    clearTimeout(this._responsiveInitTimer);
+    this._responsiveInitTimer = undefined;
   }
 
   set hass(hass) {

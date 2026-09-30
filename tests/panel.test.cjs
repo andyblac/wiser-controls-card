@@ -63,6 +63,19 @@ test("rooms panel defaults mobile layouts to one device per row",()=>{
   assert.equal(card.config.mobile_room_columns,undefined);
 });
 
+test("rooms panel reapplies the mobile default when startup misses the media change",async()=>{
+  const panel=setup();
+  panel.hass={user:{is_admin:true}};
+  panel.panel={config:{panel_id:"registry-panel",hubs:["Home"],hub_ids:{Home:"entry-a"},card_configs:{Home:{room_columns:5}}}};
+  const card=panel.shadowRoot.querySelector("main").children[0];
+  assert.equal(card.config.room_columns,5);
+
+  panel._testMedia.matches=true;
+  panel.connectedCallback();
+  await new Promise(resolve=>setTimeout(resolve,0));
+  assert.equal(card.config.room_columns,1);
+});
+
 test("rooms panel removes obsolete room_type and releases its media listener",async()=>{
   const panel=setup();
   panel.hass={user:{is_admin:true}};
