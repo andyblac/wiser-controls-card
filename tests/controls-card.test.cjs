@@ -673,6 +673,12 @@ test('appliances show related power usage as their primary reading', () => {
   card._hass.states['sensor.lamp_power'].state = 'unavailable';
   card.setConfig({device_types:['plugs']});
   assert.match(card.shadowRoot.innerHTML, /class="temps">On<\/div>/);
+
+  card._hass.states['switch.lamp'].state = 'off';
+  card._hass.states['sensor.lamp_power'].state = '0';
+  card.setConfig({device_types:['plugs']});
+  assert.match(card.shadowRoot.innerHTML, /class="temps">Off<\/div>/);
+  assert.doesNotMatch(card.shadowRoot.innerHTML, /class="temps">0W<\/div>/);
 });
 test('card suggestions are offered only for supported Wiser entities', () => {
   const {card, window} = setup();

@@ -533,7 +533,9 @@
       const status = !available(state) ? text(this._hass,"unavailable") : on ? text(this._hass,"on") : text(this._hass,"off");
       const disabled = this._busy || !available(state) ? "disabled" : "";
       const brightness = light && typeof state.attributes.brightness === "number" ? Math.round(state.attributes.brightness / 255 * 100) : null;
-      const reading = light ? (brightness === null ? "—" : `${brightness}%`) : this._powerReading(state) || status;
+      const reading = light
+        ? (brightness === null ? "—" : `${brightness}%`)
+        : on ? this._powerReading(state) || status : status;
       const icon = light ? (on ? "mdi:lightbulb" : "mdi:lightbulb-outline") : (on ? "mdi:power-socket-uk" : "mdi:power-socket-uk");
       const color = available(state) && on ? "var(--state-light-active-color,var(--primary-color))" : "var(--secondary-text-color)";
       const useNative = this._nativeReady || options.features !== undefined;
