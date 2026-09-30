@@ -1342,6 +1342,15 @@ test('Content supports native composed names and omits the entity-picture option
   assert.match(fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8'), /ha-form\.room-options\{[^}]*--ha-space-6:var\(--ha-space-1,4px\)/);
 });
 
+test('empty composed names fall back to the entity name', () => {
+  const {card, states} = setup();
+  states['climate.bedroom'].attributes.name = 'Bedroom thermostat';
+  card._hass.formatEntityName = () => '';
+  card.setConfig({device_options:{'climate.bedroom':{name:[{type:'area'}]}}});
+  assert.equal(card._name(states['climate.bedroom']), 'Bedroom thermostat');
+  assert.match(card.shadowRoot.innerHTML, />Bedroom thermostat<\/strong>/);
+});
+
 test('Content, Interactions and Features sections start collapsed', () => {
   const {card,Editor} = setup();
   const editor = new Editor();

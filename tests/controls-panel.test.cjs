@@ -32,7 +32,10 @@ function setup() {
     }
     static async getConfigElement(){return new Element()}
   }
-  const registry=new Map([["wiser-controls-card",Card],["ha-yaml-editor",Element]]);
+  class Feature extends Element {
+    static async getConfigElement(){return new Element()}
+  }
+  const registry=new Map([["wiser-controls-card",Card],["ha-yaml-editor",Element],["wiser-secondary-status-feature",Feature]]);
   const media={matches:false,listeners:{},addEventListener(name,listener){this.listeners[name]=listener},removeEventListener(name,listener){if(this.listeners[name]===listener)delete this.listeners[name]}};
   const context=vm.createContext({HTMLElement:Element,window:{loadCardHelpers:async()=>({}),matchMedia:()=>media},setTimeout,clearTimeout,CustomEvent:class{constructor(type,options){Object.assign(this,{type},options)}},customElements:{get:key=>registry.get(key),define:(key,value)=>registry.set(key,value)},document:{createElement:name=>name==="wiser-controls-card"?new Card():new Element()},console:{error(){}}});
   vm.runInContext(readFileSync(resolve(__dirname,"../src/wiser-controls-panel.js"),"utf8"),context);
@@ -198,4 +201,62 @@ test("rooms panel editor switches between visual and YAML modes",async()=>{
   assert.equal(entry.yaml.hidden,true);
   assert.equal(entry.editor.config.device_columns,2);
   assert.equal(panel.shadowRoot.getElementById("save").disabled,false);
+});
+
+test("controls panel opens and saves feature detail editors",async()=>{
+  const panel=setup();
+  panel.hass={
+    user:{is_admin:true},
+    localize:key=>key.endsWith(".back")?"Back":key.endsWith(".feature")?"Feature":"",
+  };
+  panel.panel={config:{panel_id:"registry-panel",hubs:["Home"],hub_ids:{Home:"entry-a"},card_configs:{}}};
+  await panel._openEditor();
+  const entry=panel._editorEntries[0];
+  let saved;
+  entry.editor.listeners["edit-sub-element"]({
+    stopPropagation(){},
+    detail:{
+      type:"feature",
+      config:{type:"custom:wiser-secondary-status-feature",state_content:["state"]},
+      context:{entity_id:"climate.lounge"},
+      saveConfig:config=>{saved=config},
+    },
+  });
+  await new Promise(resolve=>setTimeout(resolve,0));
+  assert.equal(entry.columns.hidden,true);
+  assert.equal(entry.editor.hidden,true);
+  assert.equal(entry.featureDetail.hidden,false);
+  const featureEditor=entry.featureState.featureEditor;
+  assert.equal(featureEditor.hass,panel._hass);
+  assert.equal(featureEditor.context.entity_id,"climate.lounge");
+  assert.equal(featureEditor.config.type,"custom:wiser-secondary-status-feature");
+  featureEditor.listeners["config-changed"]({
+    stopPropagation(){},
+    detail:{config:{type:"custom:wiser-secondary-status-feature",state_content:["temperature"]}},
+  });
+  assert.deepEqual(saved.state_content,["temperature"]);
+  entry.featureState.mode.listeners.click();
+  await new Promise(resolve=>setTimeout(resolve,0));
+  assert.equal(entry.featureState.visual.hidden,true);
+  assert.equal(entry.featureState.code.hidden,false);
+  assert.equal(entry.featureState.yaml.defaultValue.type,"custom:wiser-secondary-status-feature");
+  entry.featureState.yaml.listeners["value-changed"]({
+    stopPropagation(){},
+    detail:{isValid:true,config:undefined,value:{type:"custom:wiser-secondary-status-feature",state_content:["current_temperature"]}},
+  });
+  assert.deepEqual(saved.state_content,["current_temperature"]);
+  entry.featureState.mode.listeners.click();
+  assert.equal(entry.featureState.visual.hidden,false);
+  assert.equal(entry.featureState.code.hidden,true);
+  featureEditor.listeners["config-changed"]({
+    stopPropagation(){},
+    detail:{config:{type:"custom:wiser-secondary-status-feature",state_content:["temperature"]}},
+  });
+  entry.featureState.mode.listeners.click();
+  await new Promise(resolve=>setTimeout(resolve,0));
+  assert.deepEqual(entry.featureState.yaml.defaultValue.state_content,["temperature"]);
+  entry.featureDetail.children[0].children[0].listeners.click();
+  assert.equal(entry.featureDetail.hidden,true);
+  assert.equal(entry.columns.hidden,false);
+  assert.equal(entry.editor.hidden,false);
 });

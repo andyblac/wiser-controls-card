@@ -125,7 +125,35 @@ class WiserRoomsPanel extends HTMLElement {
         }
 
         .yaml-editor[hidden],
-        .visual-editor[hidden] {
+        .visual-editor[hidden],
+        .feature-detail[hidden] {
+          display: none;
+        }
+
+        .feature-detail-header {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 16px;
+        }
+
+        #editors .feature-detail-header h3 {
+          flex: 1;
+          margin: 0;
+          line-height: 40px;
+        }
+
+        .feature-detail-header ha-icon-button {
+          flex: 0 0 40px;
+          --ha-icon-button-size: 40px;
+        }
+
+        .feature-detail-header ha-icon {
+          color: var(--primary-text-color);
+        }
+
+        .feature-code[hidden],
+        .feature-visual[hidden] {
           display: none;
         }
 
@@ -559,6 +587,142 @@ class WiserRoomsPanel extends HTMLElement {
     return form;
   }
 
+  _closeFeatureEditor(entry) {
+    if (entry.featureState?.yamlInvalid) {
+      this.shadowRoot.getElementById("editor-error").textContent = "";
+      this.shadowRoot.getElementById("save").disabled = this._yamlErrors.size > 0;
+    }
+    entry.featureState = undefined;
+    entry.featureDetail.hidden = true;
+    entry.featureDetail.replaceChildren();
+    entry.columns.hidden = false;
+    entry.editor.hidden = false;
+  }
+
+  _setFeatureEditorModeButton(button, showVisual) {
+    const key = showVisual
+      ? "ui.panel.lovelace.editor.edit_card.show_visual_editor"
+      : "ui.panel.lovelace.editor.edit_card.show_code_editor";
+    button.innerHTML = `<ha-icon icon="mdi:${showVisual ? "format-list-bulleted" : "code-braces"}"></ha-icon>`;
+    button.label =
+      this._hass?.localize?.(key) ||
+      (showVisual ? "Show visual editor" : "Show code editor");
+  }
+
+  async _toggleFeatureEditorMode(entry) {
+    const state = entry.featureState;
+    if (!state) return;
+    state.mode.disabled = true;
+    try {
+      if (state.code.hidden) {
+        await this._loadYamlEditor();
+        if (entry.featureState !== state) return;
+        if (!state.yaml) {
+          state.yaml = document.createElement("ha-yaml-editor");
+          state.yaml.inDialog = true;
+          state.yaml.addEventListener("value-changed", (event) => {
+            event.stopPropagation();
+            state.yamlInvalid = !event.detail.isValid;
+            if (state.yamlInvalid) {
+              this.shadowRoot.getElementById("editor-error").textContent =
+                "Fix the feature YAML errors before saving.";
+              this.shadowRoot.getElementById("save").disabled = true;
+              return;
+            }
+            state.config = event.detail.value;
+            state.featureEditor.setConfig(state.config);
+            state.saveConfig(state.config);
+            this.shadowRoot.getElementById("editor-error").textContent = "";
+            this.shadowRoot.getElementById("save").disabled =
+              this._yamlErrors.size > 0;
+          });
+          state.code.replaceChildren(state.yaml);
+        }
+        state.yaml.defaultValue = state.config;
+        state.visual.hidden = true;
+        state.code.hidden = false;
+        this._setFeatureEditorModeButton(state.mode, true);
+        state.yaml.focus?.();
+      } else {
+        state.code.hidden = true;
+        state.visual.hidden = false;
+        this._setFeatureEditorModeButton(state.mode, false);
+      }
+    } catch (error) {
+      this.shadowRoot.getElementById("editor-error").textContent =
+        "Unable to load the feature YAML editor.";
+      console.error("Unable to load Home Assistant YAML editor", error);
+    } finally {
+      state.mode.disabled = false;
+    }
+  }
+
+  async _openFeatureEditor(entry, event) {
+    event.stopPropagation();
+    const {config, context, saveConfig, type} = event.detail || {};
+    if (type !== "feature" || !config?.type || typeof saveConfig !== "function") {
+      return;
+    }
+
+    const featureTag = config.type.startsWith("custom:")
+      ? config.type.slice(7)
+      : `hui-${config.type}-card-feature`;
+    const Feature = customElements.get(featureTag);
+    const featureEditor = await Feature?.getConfigElement?.();
+    if (!featureEditor) {
+      this.shadowRoot.getElementById("editor-error").textContent =
+        "Unable to open this feature editor.";
+      return;
+    }
+
+    const header = document.createElement("div");
+    const back = document.createElement("ha-icon-button");
+    const title = document.createElement("h3");
+    const mode = document.createElement("ha-icon-button");
+    const visual = document.createElement("div");
+    const code = document.createElement("div");
+    header.className = "feature-detail-header";
+    back.label = this._hass?.localize?.("ui.common.back") || "Back";
+    back.innerHTML = '<ha-icon icon="mdi:chevron-left"></ha-icon>';
+    title.textContent =
+      this._hass?.localize?.(
+        "ui.panel.lovelace.editor.sub-element-editor.types.feature",
+      ) || "Feature";
+    this._setFeatureEditorModeButton(mode, false);
+    back.addEventListener("click", () => this._closeFeatureEditor(entry));
+    mode.addEventListener("click", () => this._toggleFeatureEditorMode(entry));
+    header.append(back, title, mode);
+
+    featureEditor.hass = this._hass;
+    featureEditor.context = context;
+    featureEditor.setConfig(config);
+    visual.className = "feature-visual";
+    code.className = "feature-code";
+    code.hidden = true;
+    visual.append(featureEditor);
+    entry.featureState = {
+      config,
+      saveConfig,
+      featureEditor,
+      visual,
+      code,
+      mode,
+      yaml: undefined,
+      yamlInvalid: false,
+    };
+    const state = entry.featureState;
+    featureEditor.addEventListener("config-changed", (changeEvent) => {
+      changeEvent.stopPropagation();
+      state.config = changeEvent.detail.config;
+      saveConfig(state.config);
+    });
+
+    entry.columns.hidden = true;
+    entry.editor.hidden = true;
+    entry.featureDetail.replaceChildren(header, visual, code);
+    entry.featureDetail.hidden = false;
+  }
+
   _yamlConfig(hub) {
     const {_panel_hide_title, ...config} = this._drafts[hub];
     const Card = customElements.get("wiser-controls-card");
@@ -621,6 +785,9 @@ class WiserRoomsPanel extends HTMLElement {
 
     try {
       if (!this._yamlMode) {
+        for (const entry of this._editorEntries) {
+          this._closeFeatureEditor(entry);
+        }
         await this._loadYamlEditor();
         for (const entry of this._editorEntries) {
           const yaml = this._createYamlEditor(entry);
@@ -744,13 +911,16 @@ class WiserRoomsPanel extends HTMLElement {
         const form = document.createElement("div");
         const visual = document.createElement("div");
         const yaml = document.createElement("div");
+        const featureDetail = document.createElement("div");
         title.textContent = hub;
         layout.className = "editor-layout";
         form.className = "editor-form";
         visual.className = "visual-editor";
         yaml.className = "yaml-editor";
+        featureDetail.className = "feature-detail";
         yaml.hidden = true;
-        visual.append(columns, editor);
+        featureDetail.hidden = true;
+        visual.append(columns, editor, featureDetail);
         form.append(visual);
         form.append(yaml);
         layout.replaceChildren(form, preview);
@@ -759,14 +929,19 @@ class WiserRoomsPanel extends HTMLElement {
         );
         container.append(section);
         this._editors.push(editor);
-        this._editorEntries.push({
+        const entry = {
           hub,
           editor,
           preview,
           columns,
           visual,
           yaml,
+          featureDetail,
+        };
+        editor.addEventListener("edit-sub-element", (event) => {
+          this._openFeatureEditor(entry, event);
         });
+        this._editorEntries.push(entry);
         this._previews.push(preview);
       }
 

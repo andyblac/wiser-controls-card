@@ -330,7 +330,10 @@
     _name(room) {
       const name = roomConfig(this._config || {}, room.entity_id).name;
       if (typeof name === "string") return name;
-      if (name && this._hass?.formatEntityName) return this._hass.formatEntityName(room, name);
+      if (name && this._hass?.formatEntityName) {
+        const formatted = this._hass.formatEntityName(room, name);
+        if (typeof formatted === "string" && formatted.trim()) return formatted;
+      }
       return room.attributes.name || room.attributes.friendly_name || room.entity_id;
     }
     _contentClass(options) {
