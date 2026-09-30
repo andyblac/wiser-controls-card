@@ -1147,12 +1147,15 @@
             transform:translate(-50%,-50%)
           }
           .section-title {
+            display:grid;
+            grid-template-columns:minmax(0,1fr) auto;
             align-items:flex-start;
-            flex-direction:column
+            gap:10px
           }
           .section-title .bulk-actions {
-            width:100%;
-            flex-wrap:nowrap
+            width:auto;
+            flex-wrap:nowrap;
+            justify-content:flex-end
           }
           .section-title .bulk-actions .off {
             --ha-button-height:40px;

@@ -1316,7 +1316,8 @@ test('mobile headers use compact icon-only native bulk actions', () => {
   assert.match(source, /\.bulk-actions \.action-label \{[\s\S]*?display:none/);
   assert.match(source, /data-action="follow-schedule"[\s\S]*?aria-label="\$\{followScheduleTitle\}"[\s\S]*?<span class="action-label">/);
   assert.match(source, /header \.bulk-actions \.off ha-icon \{[\s\S]*?position:absolute;[\s\S]*?inset:50% auto auto 50%;[\s\S]*?transform:translate\(-50%,-50%\)/);
-  assert.match(source, /\.section-title \{[\s\S]*?flex-direction:column/);
+  assert.match(source, /\.section-title \{[\s\S]*?display:grid;[\s\S]*?grid-template-columns:minmax\(0,1fr\) auto;[\s\S]*?align-items:flex-start/);
+  assert.match(source, /\.section-title \.bulk-actions \{[\s\S]*?width:auto;[\s\S]*?justify-content:flex-end/);
 });
 
 test('localization follows the other Wiser cards and prefers Home Assistant text', () => {
