@@ -30,7 +30,7 @@ function setup() {
   };
   const nativeText = {
     'ui.components.selectors.automation_behavior.trigger.options.all.label':'All',
-    'ui.common.show':'Show', 'ui.common.name':'Name', 'ui.common.next':'Next', 'ui.card.climate.currently':'Current',
+    'ui.common.show':'Show', 'ui.common.name':'Name', 'ui.common.next':'Next', 'ui.common.state':'State', 'ui.card.climate.currently':'Current',
     'state.default.unavailable':'Unavailable',
     'component.switch.entity_component._.state.on':'On', 'component.switch.entity_component._.state.off':'Off',
     'ui.card.climate.target':'Target',
@@ -45,6 +45,8 @@ function setup() {
     'component.climate.entity_component._.state_attributes.hvac_action.state.heating':'Heating',
     'component.climate.entity_component._.state_attributes.hvac_action.state.cooling':'Cooling',
     'component.climate.entity_component._.state_attributes.hvac_action.state.idle':'Idle',
+    'component.climate.entity_component._.state_attributes.hvac_action.name':'Current action',
+    'component.climate.entity_component._.state_attributes.percentage_demand.name':'Percentage demand',
     'component.climate.entity_component._.state_attributes.current_temperature.name':'Current temperature',
     'component.climate.entity_component._.state_attributes.temperature.name':'Target temperature',
     'panel.light':'Lights',
@@ -1101,24 +1103,25 @@ test('Secondary status uses native state display and supports override end time'
   feature.setConfig({type:'custom:wiser-secondary-status-feature',entity:'climate.lounge',state_content:['current_temperature','hvac_action'],override_end_time:true});
   feature.context = {entity_id:'climate.bedroom'};
   feature.hass = card._hass;
-  assert.equal(feature._display.stateObj.entity_id, 'climate.lounge');
-  assert.equal(feature._display.content.join(','), 'current_temperature,hvac_action,override_end_time');
-  assert.match(feature._display.stateObj.attributes.override_end_time, / · 25m remaining/);
+  assert.equal(feature._unlabelDisplays[0].display.stateObj.entity_id, 'climate.lounge');
+  assert.equal(feature._unlabelDisplays.map(item => item.display.content[0]).join(','), 'current_temperature,hvac_action,override_end_time');
+  assert.match(feature._unlabelDisplays[0].display.stateObj.attributes.override_end_time, / · 25m remaining/);
+  assert.equal(feature._unlabelDisplays.map(item => item.row.title).join(','), 'Current temperature,Current action,Override end time');
   feature._button.listeners.click({stopPropagation(){}});
   assert.equal(feature.lastEvent.detail.entityId, 'climate.lounge');
   feature.setConfig({type:'custom:wiser-secondary-status-feature',entity:'climate.lounge',state_content:['current_temperature','temperature'],show_labels:true});
-  assert.equal(feature._display.hidden, true);
+  assert.equal(feature._unlabelled.hidden, true);
   assert.equal(feature._labelled.hidden, false);
   assert.equal(feature._labelDisplays.map(item => item.label.textContent).join(','), 'Current temperature,Target temperature');
   assert.equal(feature._labelDisplays.map(item => item.display.content[0]).join(','), 'current_temperature,temperature');
   feature.setConfig({type:'custom:wiser-secondary-status-feature'});
-  assert.equal(feature._display.stateObj.entity_id, 'climate.bedroom');
+  assert.equal(feature._unlabelDisplays[0].display.stateObj.entity_id, 'climate.bedroom');
   feature.setConfig({type:'custom:wiser-secondary-status-feature',state_content:'state'});
   assert.equal(feature._config.state_content.join(','), 'state');
-  assert.equal(feature._display.content.join(','), 'state');
+  assert.equal(feature._unlabelDisplays[0].display.content.join(','), 'state');
   feature.setConfig({entity:'climate.missing'});
   assert.equal(feature._button.disabled, true);
-  assert.equal(feature._display.hidden, true);
+  assert.equal(feature._unlabelled.hidden, true);
   const editor = new elements['wiser-secondary-status-feature-editor']();
   editor.setConfig({type:'custom:wiser-secondary-status-feature'});
   editor.context = {entity_id:'climate.bedroom'};
@@ -1215,7 +1218,7 @@ test('Secondary status renders under identity only when configured and not as bo
   card.setConfig({entities:['climate.bedroom'], device_options:{'climate.bedroom':{features:[{type:'custom:wiser-secondary-status-feature'}]}}});
   let html = card.shadowRoot.innerHTML;
   assert.match(html, /class="top has-secondary[^"]*"/);
-  assert.match(html, /class="secondary-primary-line"><span class="status"><state-display[^>]*>[^<]*<\/state-display><\/span><div class="next"[^>]*>[^<]*<\/div><\/div><wiser-secondary-status-feature/);
+  assert.match(html, /class="secondary-primary-line"><span class="status"><span class="status-item"[^>]*><state-display[^>]*><\/state-display><\/span><\/span><div class="next"[^>]*>[^<]*<\/div><\/div><wiser-secondary-status-feature/);
   assert.doesNotMatch(html, /<hui-card-features /);
   const statusHost = {dataset:{secondaryRoom:'climate.bedroom',secondaryIndex:'0'},setConfig(config){this.config=config;}};
   card.shadowRoot.querySelectorAll = selector => selector === '[data-secondary-room]' ? [statusHost] : [];
@@ -1278,7 +1281,7 @@ test('Content options persist per room and change header rendering', () => {
   editor._selectRoom('climate.bedroom');
   assert.equal(editor._roomForm.data.name, 'Bedroom custom');
   assert.equal(editor._roomForm.data.show_next_schedule, false);
-  const display = {dataset:{roomStatus:'climate.bedroom'}};
+  const display = {dataset:{roomStatus:'climate.bedroom',statusContent:'current_temperature'}};
   card.shadowRoot.querySelectorAll = selector => selector === 'state-display[data-room-status]' ? [display] : [];
   card._syncNativeFeatures();
   assert.equal(display.stateObj.entity_id, 'climate.bedroom');
@@ -1392,14 +1395,15 @@ test('editor preview uses the measured dashboard room width with a readable fall
 test('status renders exactly the configured state content with useful defaults', () => {
   const {card} = setup();
   card.setConfig({entities:['climate.bedroom']});
-  assert.match(card.shadowRoot.innerHTML, /<span class="status"><state-display data-room-status="climate.bedroom"><\/state-display><\/span>/);
-  const display = {dataset:{roomStatus:'climate.bedroom'}};
+  assert.match(card.shadowRoot.innerHTML, /title="Current action"><state-display data-room-status="climate.bedroom" data-status-content="hvac_action"><\/state-display>/);
+  const display = {dataset:{roomStatus:'climate.bedroom',statusContent:'hvac_action'}};
   card.shadowRoot.querySelectorAll = selector => selector === 'state-display[data-room-status]' ? [display] : [];
   card._syncNativeFeatures();
   assert.equal(display.content.join(','), 'hvac_action');
   card.setConfig({entities:['climate.bedroom'],device_options:{'climate.bedroom':{state_content:['hvac_action','state']}}});
   card._syncNativeFeatures();
-  assert.equal(display.content.join(','), 'hvac_action,state');
+  assert.equal(display.content.join(','), 'hvac_action');
+  assert.match(card.shadowRoot.innerHTML, /title="Current action"[^]*title="State"/);
   assert.equal(display.stateObj.attributes.override_end_time, 'No override');
   const source = fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8');
   assert.match(source, /current\.localName !== "state-display"/);

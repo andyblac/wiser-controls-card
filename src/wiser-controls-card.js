@@ -344,7 +344,12 @@
       return `<ha-state-icon data-room-icon="${escape(room.entity_id)}" icon="${escape(options.icon || fallback)}"></ha-state-icon>`;
     }
     _contentStatus(room) {
-      return `<state-display data-room-status="${escape(room.entity_id)}"></state-display>`;
+      const configured = roomConfig(this._config, room.entity_id).state_content;
+      const content = configured === undefined
+        ? this._defaultStateContent(room.entity_id)
+        : Array.isArray(configured) ? configured : [configured];
+      return content.map(item => `<span class="status-item" title="${escape(stateContentLabel(this._hass, room, item))}"><state-display data-room-status="${escape(room.entity_id)}" data-status-content="${escape(item)}"></state-display></span>`)
+        .join('<span class="status-separator"> · </span>');
     }
     _defaultStateContent(id) {
       return id.startsWith("climate.") ? ["hvac_action"] : ["state"];
@@ -439,7 +444,9 @@
       for (const display of this.shadowRoot.querySelectorAll?.("state-display[data-room-status]") || []) {
         const id = display.dataset.roomStatus;
         display.hass = this._hass; display.stateObj = withOverrideEnd(this._hass.states[id], this._hass);
-        display.content = roomConfig(this._config, id).state_content ?? this._defaultStateContent(id);
+        display.content = display.dataset.statusContent
+          ? [display.dataset.statusContent]
+          : roomConfig(this._config, id).state_content ?? this._defaultStateContent(id);
       }
       for (const element of this.shadowRoot.querySelectorAll?.("[data-secondary-room]") || []) {
         const id = element.dataset.secondaryRoom;
@@ -1453,6 +1460,9 @@
           text-overflow:ellipsis;
           white-space:nowrap
         }
+        .status-item,.status-separator {
+          display:inline
+        }
         /* Match native ha-control-select / ha-control-number-buttons backgrounds. */
         .controls {
           --wiser-control-background:color-mix(in srgb,var(--disabled-color) 20%,transparent)
@@ -1575,13 +1585,14 @@
       super();
       this.attachShadow({mode:"open"});
       const style = document.createElement("style");
-      style.textContent = `:host{display:block;pointer-events:auto;min-width:0}button{display:block;width:100%;padding:0;border:0;background:none;color:var(--secondary-text-color);font:inherit;font-size:12px;text-align:start;cursor:pointer}button:focus-visible{outline:2px solid var(--primary-color)}state-display{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.labelled{display:flex;min-width:0;gap:6px;overflow:hidden}state-display[hidden],.labelled[hidden]{display:none!important}.labelled-item{display:flex;min-width:0;gap:3px;white-space:nowrap}.label{color:var(--secondary-text-color)}.label::after{content:":"}`;
+      style.textContent = `:host{display:block;pointer-events:auto;min-width:0}button{display:block;width:100%;padding:0;border:0;background:none;color:var(--secondary-text-color);font:inherit;font-size:12px;text-align:start;cursor:pointer}button:focus-visible{outline:2px solid var(--primary-color)}state-display{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.unlabelled,.labelled{display:flex;min-width:0;gap:6px;overflow:hidden}.unlabelled[hidden],.labelled[hidden]{display:none!important}.unlabelled-item,.labelled-item{display:flex;min-width:0;gap:3px;white-space:nowrap}.unlabelled-item+.unlabelled-item::before{content:"·"}.label{color:var(--secondary-text-color)}.label::after{content:":"}`;
       this._button = document.createElement("button");
       this._button.type = "button";
-      this._display = document.createElement("state-display");
+      this._unlabelled = document.createElement("span");
+      this._unlabelled.className = "unlabelled";
       this._labelled = document.createElement("span");
       this._labelled.className = "labelled";
-      this._button.append(this._display, this._labelled);
+      this._button.append(this._unlabelled, this._labelled);
       this._button.addEventListener("click", event => {
         event.stopPropagation();
         const id = this._config?.entity || this._context?.entity_id || this._stateObj?.entity_id;
@@ -1610,23 +1621,35 @@
       const content = normalizedStateContent(this._config.state_content);
       const showLabels = this._config.show_labels === true;
       this._button.disabled = !state;
-      this._display.hidden = !state || showLabels;
+      this._unlabelled.hidden = !state || showLabels;
       this._labelled.hidden = !state || !showLabels;
       this._button.title = state?.attributes?.friendly_name || id || text(this._hass,"secondary_status");
-      this._display.hass = this._hass;
-      this._display.stateObj = withOverrideEnd(state, this._hass);
-      this._display.content = content;
-      this._display.timestampTooltip = true;
+      const displayState = withOverrideEnd(state, this._hass);
+      this._unlabelled.innerHTML = "";
+      this._unlabelDisplays = content.map(item => {
+        const row = document.createElement("span");
+        row.className = "unlabelled-item";
+        row.title = stateContentLabel(this._hass, state, item);
+        const display = document.createElement("state-display");
+        display.hass = this._hass;
+        display.stateObj = displayState;
+        display.content = [item];
+        display.timestampTooltip = true;
+        row.append(display);
+        this._unlabelled.append(row);
+        return {row,display};
+      });
       this._labelled.innerHTML = "";
       this._labelDisplays = content.map(item => {
         const row = document.createElement("span");
         row.className = "labelled-item";
+        row.title = stateContentLabel(this._hass, state, item);
         const label = document.createElement("span");
         label.className = "label";
-        label.textContent = stateContentLabel(this._hass, state, item);
+        label.textContent = row.title;
         const display = document.createElement("state-display");
         display.hass = this._hass;
-        display.stateObj = withOverrideEnd(state, this._hass);
+        display.stateObj = displayState;
         display.content = [item];
         display.timestampTooltip = true;
         row.append(label, display);
