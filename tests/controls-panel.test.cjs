@@ -5,6 +5,24 @@ const {resolve} = require("node:path");
 const vm = require("node:vm");
 
 function setup() {
+  const translations={
+    panel_title:"Controls",panel_menu:"Toggle sidebar",panel_hubs:"Wiser hubs",
+    panel_settings:"Panel settings",panel_edit_settings:"Edit controls card settings",
+    panel_description:"Customize this panel. Dashboard cards keep their own settings.",
+    panel_loading:"Loading Wiser controls…",panel_cancel:"Cancel",panel_save:"Save",
+    panel_retry:"Retry",panel_editor_error:"Unable to open the editor. Close this dialog and try again.",
+    panel_save_error:"Unable to save settings to Home Assistant. Please try again.",
+    panel_load_error:"Unable to load Wiser controls. Please try again.",
+    panel_version_error:"Wiser Controls needs its matching controls card build. Update the card resource and refresh the browser.",
+    panel_yaml_fix:"Fix the YAML errors before saving.",
+    panel_feature_yaml_fix:"Fix the feature YAML errors before saving.",
+    panel_yaml_load_error:"Unable to load the YAML editor.",
+    panel_feature_yaml_load_error:"Unable to load the feature YAML editor.",
+    panel_feature_editor_error:"Unable to load the feature editor.",
+    panel_yaml_label:"YAML configuration for {hub}",panel_preview_label:"Preview for {hub}",
+  };
+  const localize=(_hass,key,values={})=>(translations[key]||key)
+    .replace(/\{(\w+)\}/g,(token,name)=>String(values[name]??token));
   class Element {
     constructor() { this.listeners={}; this.attributes={}; this.children=[]; this.hidden=false; }
     addEventListener(name,listener){this.listeners[name]=listener}
@@ -38,7 +56,7 @@ function setup() {
   const registry=new Map([["wiser-controls-card",Card],["ha-yaml-editor",Element],["wiser-secondary-status-feature",Feature]]);
   const media={matches:false,listeners:{},addEventListener(name,listener){this.listeners[name]=listener},removeEventListener(name,listener){if(this.listeners[name]===listener)delete this.listeners[name]}};
   const frames=[];
-  const context=vm.createContext({HTMLElement:Element,window:{loadCardHelpers:async()=>({}),matchMedia:()=>media,requestAnimationFrame:callback=>{frames.push(callback);return frames.length},cancelAnimationFrame(){}},setTimeout,clearTimeout,CustomEvent:class{constructor(type,options){Object.assign(this,{type},options)}},customElements:{get:key=>registry.get(key),define:(key,value)=>registry.set(key,value)},document:{createElement:name=>name==="wiser-controls-card"?new Card():new Element()},console:{error(){}}});
+  const context=vm.createContext({HTMLElement:Element,window:{WiserRoomsLocalize:{localize},loadCardHelpers:async()=>({}),matchMedia:()=>media,requestAnimationFrame:callback=>{frames.push(callback);return frames.length},cancelAnimationFrame(){}},setTimeout,clearTimeout,CustomEvent:class{constructor(type,options){Object.assign(this,{type},options)}},customElements:{get:key=>registry.get(key),define:(key,value)=>registry.set(key,value)},document:{createElement:name=>name==="wiser-controls-card"?new Card():new Element()},console:{error(){}}});
   vm.runInContext(readFileSync(resolve(__dirname,"../src/wiser-controls-panel.js"),"utf8"),context);
   const panel=new (registry.get("wiser-controls-panel"))();
   panel._testMedia=media;

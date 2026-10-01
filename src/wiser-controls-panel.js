@@ -252,7 +252,7 @@ class WiserRoomsPanel extends HTMLElement {
         <ha-button id="menu" appearance="plain" aria-label="Toggle sidebar">
           <ha-icon icon="mdi:menu"></ha-icon>
         </ha-button>
-        <h1>Controls</h1>
+        <h1 id="panel-title">Controls</h1>
         <nav id="hub-tabs" role="tablist" aria-label="Wiser hubs" hidden></nav>
         <ha-button
           id="settings"
@@ -265,7 +265,7 @@ class WiserRoomsPanel extends HTMLElement {
         </ha-button>
       </header>
       <ha-dialog id="editor-dialog" header-title="Panel settings" width="medium">
-        <p class="dialog-description">
+        <p id="editor-description" class="dialog-description">
           Customize this panel. Dashboard cards keep their own settings.
         </p>
         <div id="editors"></div>
@@ -279,7 +279,7 @@ class WiserRoomsPanel extends HTMLElement {
         </div>
       </ha-dialog>
       <main>
-        <p role="status">Loading Wiser controls…</p>
+        <p id="loading" role="status">Loading Wiser controls…</p>
       </main>
     `;
 
@@ -323,6 +323,30 @@ class WiserRoomsPanel extends HTMLElement {
     };
   }
 
+  _t(key, values = {}) {
+    return window.WiserRoomsLocalize.localize(this._hass, key, values);
+  }
+
+  _localizeControls() {
+    const root = this.shadowRoot;
+    root.getElementById("panel-title").textContent = this._t("panel_title");
+    root.getElementById("hub-tabs").setAttribute("aria-label", this._t("panel_hubs"));
+    for (const [id, key] of [["menu", "panel_menu"], ["settings", "panel_edit_settings"]]) {
+      const element = root.getElementById(id);
+      element.setAttribute("aria-label", this._t(key));
+      element.title = this._t(key);
+    }
+    root.getElementById("editor-description").textContent = this._t("panel_description");
+    const loading = root.getElementById("loading");
+    if (loading) loading.textContent = this._t("panel_loading");
+    root.getElementById("cancel").textContent = this._t("panel_cancel");
+    root.getElementById("save").textContent = this._t("panel_save");
+    root.getElementById("editor-mode").textContent = this._editorModeLabel();
+    const dialog = root.getElementById("editor-dialog");
+    dialog.setAttribute("header-title", this._t("panel_settings"));
+    dialog.heading = this._t("panel_settings");
+  }
+
   connectedCallback() {
     if (this._mobileMedia?.addEventListener) {
       this._mobileMedia.addEventListener("change", this._handleMobileMediaChange);
@@ -356,6 +380,7 @@ class WiserRoomsPanel extends HTMLElement {
   set hass(hass) {
     const scrollTop = this.scrollTop;
     this._hass = hass;
+    this._localizeControls();
     const editing = Boolean(
       this.shadowRoot.getElementById("editor-dialog")?.open,
     );
@@ -642,7 +667,7 @@ class WiserRoomsPanel extends HTMLElement {
             state.yamlInvalid = !event.detail.isValid;
             if (state.yamlInvalid) {
               this.shadowRoot.getElementById("editor-error").textContent =
-                "Fix the feature YAML errors before saving.";
+                this._t("panel_feature_yaml_fix");
               this.shadowRoot.getElementById("save").disabled = true;
               return;
             }
@@ -667,7 +692,7 @@ class WiserRoomsPanel extends HTMLElement {
       }
     } catch (error) {
       this.shadowRoot.getElementById("editor-error").textContent =
-        "Unable to load the feature YAML editor.";
+        this._t("panel_feature_yaml_load_error");
       console.error("Unable to load Home Assistant YAML editor", error);
     } finally {
       state.mode.disabled = false;
@@ -688,7 +713,7 @@ class WiserRoomsPanel extends HTMLElement {
     const featureEditor = await Feature?.getConfigElement?.();
     if (!featureEditor) {
       this.shadowRoot.getElementById("editor-error").textContent =
-        "Unable to open this feature editor.";
+        this._t("panel_feature_editor_error");
       return;
     }
 
@@ -771,13 +796,13 @@ class WiserRoomsPanel extends HTMLElement {
     const yaml = document.createElement("ha-yaml-editor");
     yaml.defaultValue = this._yamlConfig(entry.hub);
     yaml.inDialog = true;
-    yaml.setAttribute("aria-label", `${entry.hub} YAML configuration`);
+    yaml.setAttribute("aria-label", this._t("panel_yaml_label", {hub:entry.hub}));
     yaml.addEventListener("value-changed", (event) => {
       event.stopPropagation();
       if (!event.detail.isValid) {
         this._yamlErrors.add(entry.hub);
         this.shadowRoot.getElementById("editor-error").textContent =
-          "Fix the YAML errors before saving.";
+          this._t("panel_yaml_fix");
         this.shadowRoot.getElementById("save").disabled = true;
         return;
       }
@@ -832,7 +857,7 @@ class WiserRoomsPanel extends HTMLElement {
       mode.textContent = this._editorModeLabel();
     } catch (error) {
       this.shadowRoot.getElementById("editor-error").textContent =
-        "Unable to load the YAML editor. Please try again.";
+        this._t("panel_yaml_load_error");
       console.error("Unable to load Home Assistant YAML editor", error);
     } finally {
       mode.disabled = false;
@@ -861,7 +886,7 @@ class WiserRoomsPanel extends HTMLElement {
     save.disabled = true;
     mode.disabled = true;
     mode.textContent = this._editorModeLabel();
-    dialog.heading = "Panel settings";
+    dialog.heading = this._t("panel_settings");
 
     const dialogPrototype = customElements.get("ha-dialog")?.prototype || {};
     if (!("headerTitle" in dialogPrototype)) {
@@ -903,7 +928,7 @@ class WiserRoomsPanel extends HTMLElement {
         preview.className = "editor-preview";
         preview.hass = this._hass;
         preview.setAttribute("editor-preview", "");
-        preview.setAttribute("aria-label", `${hub} card preview`);
+        preview.setAttribute("aria-label", this._t("panel_preview_label", {hub}));
         preview.setConfig(this._effectiveCardConfig(config));
 
         const columns = this._createColumnForm(hub, preview);
@@ -966,7 +991,7 @@ class WiserRoomsPanel extends HTMLElement {
       mode.disabled = false;
     } catch (error) {
       errorMessage.textContent =
-        "Unable to open the editor. Close this dialog and try again.";
+        this._t("panel_editor_error");
       console.error("Unable to open Wiser controls editor", error);
     }
   }
@@ -992,7 +1017,7 @@ class WiserRoomsPanel extends HTMLElement {
       this._loadCards();
     } catch (error) {
       this.shadowRoot.getElementById("editor-error").textContent =
-        "Unable to save settings to Home Assistant. Please try again.";
+        this._t("panel_save_error");
       console.error("Unable to save Wiser controls panel settings", error);
     } finally {
       save.disabled = false;
@@ -1007,7 +1032,7 @@ class WiserRoomsPanel extends HTMLElement {
       const Card = customElements.get("wiser-controls-card");
       if (Card?.panelApiVersion !== 1) {
         throw new Error(
-          "Controls needs its matching Wiser controls card build. Update the card resource and refresh the browser.",
+          this._t("panel_version_error"),
         );
       }
       if (generation !== this._generation) {
@@ -1036,10 +1061,10 @@ class WiserRoomsPanel extends HTMLElement {
 
       const message = document.createElement("p");
       message.setAttribute("role", "alert");
-      message.textContent = error.message || "Unable to load Wiser controls.";
+      message.textContent = error.message || this._t("panel_load_error");
 
       const retry = document.createElement("ha-button");
-      retry.textContent = "Retry";
+      retry.textContent = this._t("panel_retry");
       retry.addEventListener("click", () => this._loadCards());
 
       main.replaceChildren(message, retry);

@@ -1402,6 +1402,19 @@ test('Content supports native composed names and omits the entity-picture option
   assert.match(fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8'), /ha-form\.room-options\{[^}]*--ha-space-6:var\(--ha-space-1,4px\)/);
 });
 
+test('default entity names use the native Home Assistant formatter', () => {
+  const {card, Editor, states} = setup();
+  card._hass.formatEntityName = (state, name) => name === undefined
+    ? `Native ${state.entity_id}`
+    : String(name);
+  card.setConfig({});
+  assert.equal(card._name(states['climate.bedroom']), 'Native climate.bedroom');
+
+  const editor = new Editor();
+  editor._hass = card._hass;
+  assert.equal(editor._name(states['climate.bedroom']), 'Native climate.bedroom');
+});
+
 test('empty composed names fall back to the entity name', () => {
   const {card, states} = setup();
   states['climate.bedroom'].attributes.name = 'Bedroom thermostat';

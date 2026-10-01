@@ -34,6 +34,9 @@
     opening:"component.cover.entity_component._.state.opening",
     closing:"component.cover.entity_component._.state.closing",
     next:"ui.common.next",
+    panel_cancel:"ui.common.cancel",
+    panel_save:"ui.common.save",
+    panel_retry:"ui.common.retry",
   };
 
   const languageFor = hass => {

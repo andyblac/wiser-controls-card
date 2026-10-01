@@ -127,6 +127,16 @@
   const ROOM_SIZE_CACHE = Symbol.for("wiser-rooms-card-room-size-cache");
   const roomSizeCache = window[ROOM_SIZE_CACHE] ||= new Map();
   const escape = (value) => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const entityDisplayName = (hass, state, configuredName) => {
+    if (state && typeof hass?.formatEntityName === "function") {
+      try {
+        const formatted = hass.formatEntityName(state, configuredName);
+        if (typeof formatted === "string" && formatted.trim()) return formatted;
+      } catch (_) {}
+    }
+    if (typeof configuredName === "string") return configuredName;
+    return state?.attributes?.name || state?.attributes?.friendly_name || state?.entity_id || "";
+  };
   const available = state => state && !["unknown", "unavailable"].includes(state.state);
   const isShutter = state => state?.entity_id.startsWith("cover.") && Object.hasOwn(state.attributes, "shutter_id");
   const isLight = state => state?.entity_id.startsWith("light.") && Object.hasOwn(state.attributes, "product_type");
@@ -342,12 +352,7 @@
     }
     _name(room) {
       const name = roomConfig(this._config || {}, room.entity_id).name;
-      if (typeof name === "string") return name;
-      if (name && this._hass?.formatEntityName) {
-        const formatted = this._hass.formatEntityName(room, name);
-        if (typeof formatted === "string" && formatted.trim()) return formatted;
-      }
-      return room.attributes.name || room.attributes.friendly_name || room.entity_id;
+      return entityDisplayName(this._hass, room, name);
     }
     _contentClass(options) {
       return `${options.hide_state ? "hide-status" : ""} ${options.show_temperatures === false ? "hide-temps" : ""} ${options.show_next_schedule === false ? "hide-next" : ""}`;
@@ -1636,7 +1641,9 @@
       this._button.disabled = !state;
       this._unlabelled.hidden = !state || showLabels;
       this._labelled.hidden = !state || !showLabels;
-      this._button.title = state?.attributes?.friendly_name || id || text(this._hass,"secondary_status");
+      this._button.title = state
+        ? entityDisplayName(this._hass, state)
+        : id || text(this._hass,"secondary_status");
       const displayState = withOverrideEnd(state, this._hass);
       this._unlabelled.innerHTML = "";
       this._unlabelDisplays = content.map(item => {
@@ -1776,7 +1783,9 @@
       const id = this._config.entity || this._context?.entity_id || this._stateObj?.entity_id;
       const state = this._hass.states[id];
       this._button.disabled = !state;
-      this._button.title = state?.attributes?.friendly_name || id || text(this._hass,"override_end_time");
+      this._button.title = state
+        ? entityDisplayName(this._hass, state)
+        : id || text(this._hass,"override_end_time");
       this._value.textContent = state && isHeatingOverride(state) ? text(this._hass,"override_ends",{time:overrideEndValue(state, this._hass)}) : state ? text(this._hass,"no_override") : text(this._hass,"unavailable");
     }
   }
@@ -2086,7 +2095,7 @@
       return [...new Set((this._entries || []).filter(entry => entry.platform === "wiser" && entry.config_entry_id).map(entry => entry.config_entry_id))]
         .map(id => ({value:id, label:titles.get(id) || id}));
     }
-    _name(room) { return room.attributes.name || room.attributes.friendly_name || room.entity_id; }
+    _name(room) { return entityDisplayName(this._hass, room); }
     _shown(id) {
       return !this._config.excluded_entities?.includes(id) &&
         (!this._config.entities?.length || this._config.entities.includes(id));
