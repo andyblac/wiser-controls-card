@@ -347,9 +347,14 @@ class WiserRoomsPanel extends HTMLElement {
     window.removeEventListener?.("resize", this._handleMobileMediaChange);
     clearTimeout(this._responsiveInitTimer);
     this._responsiveInitTimer = undefined;
+    if (this._scrollRestoreFrame !== undefined) {
+      window.cancelAnimationFrame?.(this._scrollRestoreFrame);
+      this._scrollRestoreFrame = undefined;
+    }
   }
 
   set hass(hass) {
+    const scrollTop = this.scrollTop;
     this._hass = hass;
     const editing = Boolean(
       this.shadowRoot.getElementById("editor-dialog")?.open,
@@ -361,6 +366,18 @@ class WiserRoomsPanel extends HTMLElement {
       for (const card of this._cards) {
         card.hass = hass;
       }
+    }
+
+    if (this._scrollRestoreFrame !== undefined) {
+      window.cancelAnimationFrame?.(this._scrollRestoreFrame);
+      this._scrollRestoreFrame = undefined;
+    }
+    if (scrollTop > 0) {
+      this.scrollTop = scrollTop;
+      this._scrollRestoreFrame = window.requestAnimationFrame?.(() => {
+        this.scrollTop = scrollTop;
+        this._scrollRestoreFrame = undefined;
+      });
     }
 
     this.shadowRoot.getElementById("settings").hidden = !hass?.user?.is_admin;

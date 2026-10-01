@@ -37,10 +37,12 @@ function setup() {
   }
   const registry=new Map([["wiser-controls-card",Card],["ha-yaml-editor",Element],["wiser-secondary-status-feature",Feature]]);
   const media={matches:false,listeners:{},addEventListener(name,listener){this.listeners[name]=listener},removeEventListener(name,listener){if(this.listeners[name]===listener)delete this.listeners[name]}};
-  const context=vm.createContext({HTMLElement:Element,window:{loadCardHelpers:async()=>({}),matchMedia:()=>media},setTimeout,clearTimeout,CustomEvent:class{constructor(type,options){Object.assign(this,{type},options)}},customElements:{get:key=>registry.get(key),define:(key,value)=>registry.set(key,value)},document:{createElement:name=>name==="wiser-controls-card"?new Card():new Element()},console:{error(){}}});
+  const frames=[];
+  const context=vm.createContext({HTMLElement:Element,window:{loadCardHelpers:async()=>({}),matchMedia:()=>media,requestAnimationFrame:callback=>{frames.push(callback);return frames.length},cancelAnimationFrame(){}},setTimeout,clearTimeout,CustomEvent:class{constructor(type,options){Object.assign(this,{type},options)}},customElements:{get:key=>registry.get(key),define:(key,value)=>registry.set(key,value)},document:{createElement:name=>name==="wiser-controls-card"?new Card():new Element()},console:{error(){}}});
   vm.runInContext(readFileSync(resolve(__dirname,"../src/wiser-controls-panel.js"),"utf8"),context);
   const panel=new (registry.get("wiser-controls-panel"))();
   panel._testMedia=media;
+  panel._testFrames=frames;
   panel.connectedCallback();
   return panel;
 }
@@ -80,6 +82,20 @@ test("rooms panel defaults mobile layouts to one device per row",()=>{
   const card=panel.shadowRoot.querySelector("main").children[0];
   assert.equal(card.config.device_columns,1);
   assert.equal(card.config.mobile_device_columns,undefined);
+});
+
+test("controls panel preserves mobile scroll across Home Assistant updates",()=>{
+  const panel=setup();
+  panel.hass={user:{is_admin:true}};
+  panel.panel={config:{panel_id:"registry-panel",hubs:["Home"],hub_ids:{Home:"entry-a"},card_configs:{}}};
+  const card=panel.shadowRoot.querySelector("main").children[0];
+  Object.defineProperty(card,"hass",{set(){panel.scrollTop=0}});
+  panel.scrollTop=420;
+  panel.hass={user:{is_admin:true},states:{}};
+  assert.equal(panel.scrollTop,420);
+  panel.scrollTop=0;
+  panel._testFrames.at(-1)();
+  assert.equal(panel.scrollTop,420);
 });
 
 test("rooms panel reapplies the mobile default when startup misses the media change",async()=>{
