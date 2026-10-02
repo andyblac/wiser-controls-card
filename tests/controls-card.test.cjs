@@ -1501,8 +1501,11 @@ test('localization follows the other Wiser cards and prefers Home Assistant text
   const {window} = setup();
   const {localize,languageFor} = window.WiserRoomsLocalize;
   assert.equal(languageFor({locale:{language:'fr-FR'}}), 'fr');
+  assert.equal(languageFor({locale:{language:'en-GB'}}), 'en-GB');
   assert.equal(localize({language:'fr'}, 'resume_schedules'), 'Reprendre les programmes');
   assert.equal(localize({language:'de'}, 'no_schedule'), 'Kein Zeitplan zugewiesen');
+  assert.equal(localize({language:'en-GB'}, 'cancel_overrides'), 'Cancel overrides');
+  assert.equal(localize({language:'en-GB'}, 'panel_description'), 'Customise this panel. Dashboard cards keep their own settings.');
   const hass = {language:'en',localize:key => key === 'ui.components.selectors.automation_behavior.trigger.options.all.label' ? 'Everything' : key};
   assert.equal(localize(hass, 'all'), 'Everything');
   assert.equal(localize(hass, 'cancel_overrides'), 'Cancel overrides');
@@ -1516,4 +1519,10 @@ test('language files contain no Home Assistant-owned labels or states', () => {
     const translations = JSON.parse(fs.readFileSync(path.join(__dirname, `../src/localize/languages/${language}.json`), 'utf8'));
     assert.deepEqual(nativeOwned.filter(key => Object.hasOwn(translations,key)), [], language);
   }
+});
+
+test('British English contains overrides only', () => {
+  const us = JSON.parse(fs.readFileSync(path.join(__dirname, '../src/localize/languages/en-US.json'), 'utf8'));
+  const gb = JSON.parse(fs.readFileSync(path.join(__dirname, '../src/localize/languages/en-GB.json'), 'utf8'));
+  assert.deepEqual(Object.keys(gb).filter(key => gb[key] === us[key]), []);
 });
