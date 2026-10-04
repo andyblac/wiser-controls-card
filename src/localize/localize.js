@@ -37,6 +37,7 @@
     panel_cancel:"ui.common.cancel",
     panel_save:"ui.common.save",
     panel_retry:"ui.common.retry",
+    passive_mode:"component.wiser.entity.switch.passive_mode.name",
   };
 
   const languageFor = hass => {
@@ -54,7 +55,11 @@
     const native = nativeKey && hass?.localize?.(nativeKey);
     const language = languageFor(hass);
     const fallback = languages[language]?.[key] || languages["en-US"]?.[key] || key;
-    const value = nativeKey ? native && native !== nativeKey ? native : "" : fallback;
+    const hasFallback = Object.hasOwn(languages[language] || {}, key)
+      || Object.hasOwn(languages["en-US"] || {}, key);
+    const value = nativeKey
+      ? native && native !== nativeKey ? native : hasFallback ? fallback : ""
+      : fallback;
     return value.replace(/\{(\w+)\}/g, (token, name) => String(values[name] ?? token));
   };
 

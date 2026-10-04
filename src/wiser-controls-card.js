@@ -28,6 +28,7 @@
   const SECONDARY_STATUS_FEATURE = "wiser-secondary-status-feature";
   const OVERRIDE_STATUS_FEATURE = "wiser-override-status-feature";
   const NEXT_SCHEDULE_FEATURE = "wiser-next-schedule-feature";
+  const PASSIVE_MODE_FEATURE = "wiser-passive-mode-feature";
   const entityRegistryRequests = new WeakMap();
   const entityRegistryEntries = hass => {
     const key = hass.connection || hass;
@@ -44,6 +45,8 @@
   const isSecondaryFeature = feature => feature.type === `custom:${SECONDARY_STATUS_FEATURE}`;
   const isOverrideStatusFeature = feature => feature.type === `custom:${OVERRIDE_STATUS_FEATURE}`;
   const isHeaderFeature = feature => isSecondaryFeature(feature) || isOverrideStatusFeature(feature);
+  const isIconFeature = feature => [NEXT_SCHEDULE_FEATURE, PASSIVE_MODE_FEATURE]
+    .includes(feature?.type?.replace(/^custom:/, ""));
   const normalizedStateContent = value => Array.isArray(value) && value.length ? value : typeof value === "string" && value ? [value] : ["state"];
   const orderNativeFeatures = list => [...list.filter(isHeaderFeature), ...list.filter(feature => !isHeaderFeature(feature))];
   const featureForRoom = (feature, id) => {
@@ -147,7 +150,8 @@
   const supportsNativeFeature = (feature, id) => {
     const type = feature?.type || "";
     if (isSecondaryFeature(feature)) return true;
-    if (isOverrideStatusFeature(feature) || type === `custom:${NEXT_SCHEDULE_FEATURE}`) return id.startsWith("climate.");
+    if (isOverrideStatusFeature(feature) || [NEXT_SCHEDULE_FEATURE, PASSIVE_MODE_FEATURE]
+      .some(name => type === `custom:${name}`)) return id.startsWith("climate.");
     if (type === "toggle") return id.startsWith("light.") || id.startsWith("switch.");
     if (type.startsWith("light-")) return id.startsWith("light.");
     if (type.startsWith("cover-")) return id.startsWith("cover.");
@@ -443,11 +447,11 @@
       const position = roomConfig(this._config, room.entity_id).features_position || "bottom";
       const list = configuredNativeFeatures(this._config, room.entity_id, room).filter(feature => !isHeaderFeature(feature));
       if (!list.length) return "";
-      const host = (feature, index) => `<hui-card-features class="features-${position}${feature.type === `custom:${NEXT_SCHEDULE_FEATURE}` ? " feature-icon-only" : ""}" data-key="features-${escape(room.entity_id)}-${index}" data-room-features="${escape(room.entity_id)}" data-feature-index="${index}" style="--feature-height:40px"></hui-card-features>`;
+      const host = (feature, index) => `<hui-card-features class="features-${position}${isIconFeature(feature) ? " feature-icon-only" : ""}" data-key="features-${escape(room.entity_id)}-${index}" data-room-features="${escape(room.entity_id)}" data-feature-index="${index}" style="--feature-height:40px"></hui-card-features>`;
       if (position === "inline") return `<div class="features-inline-row">${list.map(host).join("")}</div>`;
       const rows = [];
       list.forEach((feature, index) => {
-        if (feature.type === `custom:${NEXT_SCHEDULE_FEATURE}` && rows.length) rows.at(-1).push([feature, index]);
+        if (isIconFeature(feature) && rows.length) rows.at(-1).push([feature, index]);
         else rows.push([[feature, index]]);
       });
       return rows.map(row => row.length > 1
@@ -1823,10 +1827,125 @@
       this._button.ariaLabel = this._button.title;
     }
   }
+  class WiserPassiveModeFeature extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({mode:"open"});
+      const style = document.createElement("style");
+      style.textContent = `
+        :host {
+          display: block;
+          height: var(--feature-height, 42px);
+          min-width: 0;
+        }
+
+        ha-control-button {
+          display: block;
+          width: 100%;
+          height: 100%;
+          --control-button-border-radius: var(--feature-border-radius, 12px);
+          --control-button-background-color:
+            var(--control-number-buttons-background-color, var(--disabled-color));
+          --control-button-background-opacity:
+            var(--control-number-buttons-background-opacity, 0.2);
+          --disabled-text-color: var(--secondary-text-color);
+          --mdc-icon-size: 22px;
+        }
+
+        ha-control-button[active] {
+          --control-button-background-color:
+            var(--state-climate-heat-color, var(--primary-color));
+          --control-button-background-opacity: 1;
+          color: var(--text-primary-color, #fff);
+        }
+      `;
+      this._button = document.createElement("ha-control-button");
+      this._icon = document.createElement("ha-icon");
+      this._icon.icon = "mdi:thermostat-box";
+      this._button.append(this._icon);
+      this._button.addEventListener("click", event => {
+        event.stopPropagation();
+        const state = this._hass?.states[this._switchId];
+        if (!state || this._button.disabled) return;
+        const service = state.state === "on" ? "turn_off" : "turn_on";
+        this._hass.callService("switch", service, {entity_id:this._switchId});
+      });
+      this.shadowRoot.append(style, this._button);
+    }
+
+    static getStubConfig() { return {type:`custom:${PASSIVE_MODE_FEATURE}`}; }
+
+    setConfig(config) { this._config = {...config}; this._resolveSwitch(); }
+    set hass(value) { this._hass = value; this._resolveSwitch(); }
+    set context(value) { this._context = value; this._resolveSwitch(); }
+    set stateObj(value) { this._stateObj = value; this._resolveSwitch(); }
+
+    _climateId() {
+      return this._config?.entity || this._context?.entity_id || this._stateObj?.entity_id;
+    }
+
+    _resolveSwitch() {
+      const id = this._climateId();
+      if (!this._hass || !this._config || !id) {
+        this._render();
+        return;
+      }
+      const key = `${id}:${this._hass.connection ? "connection" : "hass"}`;
+      if (key === this._resolvingFor) {
+        this._render();
+        return;
+      }
+      this._resolvingFor = key;
+      this._switchId = undefined;
+      this._render();
+
+      entityRegistryEntries(this._hass).then(entries => {
+        if (this._resolvingFor !== key) return;
+        const climate = entries.find(entry => entry.entity_id === id);
+        const candidate = climate?.device_id && entries.find(entry => {
+          if (
+            entry.device_id !== climate.device_id
+            || entry.platform !== "wiser"
+            || !entry.entity_id.startsWith("switch.")
+          ) return false;
+          const state = this._hass.states[entry.entity_id];
+          const identity = [
+            entry.translation_key,
+            entry.original_name,
+            entry.entity_id,
+            state?.attributes?.friendly_name,
+          ].filter(Boolean).join(" ");
+          return entry.translation_key === "passive_mode" || /passive[ _-]?mode/i.test(identity);
+        });
+        this._switchId = candidate?.entity_id;
+        this._render();
+      }).catch(() => {
+        if (this._resolvingFor === key) {
+          this._switchId = undefined;
+          this._render();
+        }
+      });
+    }
+
+    _render() {
+      if (!this._button) return;
+      const state = this._hass?.states[this._switchId];
+      const enabled = Boolean(state && !["unknown","unavailable"].includes(state.state));
+      const active = enabled && state.state === "on";
+      this._button.disabled = !enabled;
+      this._button.active = active;
+      if (active) this._button.setAttribute?.("active", "");
+      else this._button.removeAttribute?.("active");
+      const status = text(this._hass, enabled ? active ? "on" : "off" : "unavailable");
+      this._button.title = `${text(this._hass, "passive_mode")}: ${status}`;
+      this._button.ariaLabel = this._button.title;
+    }
+  }
   if (!customElements.get(SECONDARY_STATUS_FEATURE)) customElements.define(SECONDARY_STATUS_FEATURE, WiserSecondaryStatusFeature);
   if (!customElements.get("wiser-secondary-status-feature-editor")) customElements.define("wiser-secondary-status-feature-editor", WiserSecondaryStatusFeatureEditor);
   if (!customElements.get(OVERRIDE_STATUS_FEATURE)) customElements.define(OVERRIDE_STATUS_FEATURE, WiserOverrideStatusFeature);
   if (!customElements.get(NEXT_SCHEDULE_FEATURE)) customElements.define(NEXT_SCHEDULE_FEATURE, WiserNextScheduleFeature);
+  if (!customElements.get(PASSIVE_MODE_FEATURE)) customElements.define(PASSIVE_MODE_FEATURE, WiserPassiveModeFeature);
   window.customCardFeatures = window.customCardFeatures || [];
   if (!window.customCardFeatures.some(feature => feature.type === SECONDARY_STATUS_FEATURE)) window.customCardFeatures.push({
     type:SECONDARY_STATUS_FEATURE, name:"Secondary status", configurable:true,
@@ -1843,8 +1962,15 @@
     type:NEXT_SCHEDULE_FEATURE, name:"Next schedule", configurable:false,
     isSupported:(hass, context) => Boolean(context?.entity_id?.startsWith("climate.") && hass.states[context.entity_id]),
   });
+  if (!window.customCardFeatures.some(feature => feature.type === PASSIVE_MODE_FEATURE)) window.customCardFeatures.push({
+    type:PASSIVE_MODE_FEATURE, name:"Passive mode", configurable:false,
+    isSupported:(hass, context) => {
+      const state = hass.states[context?.entity_id];
+      return Boolean(state?.entity_id?.startsWith("climate.") && Object.hasOwn(state.attributes, "is_passive"));
+    },
+  });
   const updateFeatureTranslations = hass => {
-    const names = {[SECONDARY_STATUS_FEATURE]:"secondary_status",[OVERRIDE_STATUS_FEATURE]:"override_end_time",[NEXT_SCHEDULE_FEATURE]:"next_schedule"};
+    const names = {[SECONDARY_STATUS_FEATURE]:"secondary_status",[OVERRIDE_STATUS_FEATURE]:"override_end_time",[NEXT_SCHEDULE_FEATURE]:"next_schedule",[PASSIVE_MODE_FEATURE]:"passive_mode"};
     for (const feature of window.customCardFeatures) if (names[feature.type]) feature.name = text(hass,names[feature.type]);
   };
   class WiserRoomsCardEditor extends HTMLElement {

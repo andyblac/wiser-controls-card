@@ -43,6 +43,7 @@
   "show_state_labels": "Show state labels",
   "hide_devices": "Hide devices",
   "next_schedule": "Next schedule",
+  "passive_mode": "Passive mode",
   "no_schedule": "No schedule assigned",
   "advance_schedule": "Advance to next schedule period",
   "advance_unavailable": "Advance schedule unavailable",

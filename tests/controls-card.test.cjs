@@ -1264,6 +1264,43 @@ test('Next schedule is an icon feature that advances the schedule', () => {
   assert.doesNotMatch(card.shadowRoot.innerHTML, /Next Sat 21:30 · 17.5°C/);
 });
 
+test('Passive mode is an icon feature that toggles the related room switch', async () => {
+  const {card, calls, elements, states, window} = setup();
+  states['climate.bedroom'].attributes.is_passive = false;
+  states['switch.bedroom_passive_mode'] = {entity_id:'switch.bedroom_passive_mode',state:'off',attributes:{friendly_name:'Bedroom Passive Mode'}};
+  const climateEntry = card._entries.find(entry => entry.entity_id === 'climate.bedroom');
+  climateEntry.device_id = 'bedroom-device';
+  card._entries.push({entity_id:'switch.bedroom_passive_mode',platform:'wiser',device_id:'bedroom-device',translation_key:'passive_mode'});
+  card._hass.callWS = async () => card._entries;
+  const Feature = elements['wiser-passive-mode-feature'];
+  const feature = new Feature();
+  feature.setConfig({type:'custom:wiser-passive-mode-feature'});
+  feature.context = {entity_id:'climate.bedroom'};
+  feature.hass = card._hass;
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(feature._switchId, 'switch.bedroom_passive_mode');
+  assert.equal(feature._icon.icon, 'mdi:thermostat-box');
+  assert.equal(feature._button.disabled, false);
+  assert.equal(feature._button.title, 'Passive mode: Off');
+  feature._button.listeners.click({stopPropagation(){}});
+  assert.equal(calls[0][0], 'switch');
+  assert.equal(calls[0][1], 'turn_on');
+  assert.equal(calls[0][2].entity_id, 'switch.bedroom_passive_mode');
+  states['switch.bedroom_passive_mode'].state = 'on';
+  feature.hass = card._hass;
+  assert.equal(feature._button.active, true);
+  assert.equal(feature._button.title, 'Passive mode: On');
+  feature._button.listeners.click({stopPropagation(){}});
+  assert.equal(calls[1][0], 'switch');
+  assert.equal(calls[1][1], 'turn_off');
+  assert.equal(calls[1][2].entity_id, 'switch.bedroom_passive_mode');
+  const entry = window.customCardFeatures.find(item => item.type === 'wiser-passive-mode-feature');
+  assert.equal(entry.name, 'Passive mode');
+  assert.equal(entry.configurable, false);
+  assert.equal(entry.isSupported(card._hass,{entity_id:'climate.bedroom'}), true);
+  assert.equal(entry.isSupported(card._hass,{entity_id:'climate.other'}), false);
+});
+
 test('Secondary status renders under identity only when configured and not as bottom feature', () => {
   const {card} = setup();
   card.setConfig({entities:['climate.bedroom'], device_options:{'climate.bedroom':{features:[{type:'custom:wiser-secondary-status-feature'}]}}});
@@ -1509,6 +1546,9 @@ test('localization follows the other Wiser cards and prefers Home Assistant text
   const hass = {language:'en',localize:key => key === 'ui.components.selectors.automation_behavior.trigger.options.all.label' ? 'Everything' : key};
   assert.equal(localize(hass, 'all'), 'Everything');
   assert.equal(localize(hass, 'cancel_overrides'), 'Cancel overrides');
+  const integrationHass = {language:'de',localize:key => key === 'component.wiser.entity.switch.passive_mode.name' ? 'Passivmodus' : key};
+  assert.equal(localize(integrationHass, 'passive_mode'), 'Passivmodus');
+  assert.equal(localize({language:'de',localize:key => key}, 'passive_mode'), 'Passive mode');
 });
 
 test('language files contain no Home Assistant-owned labels or states', () => {
