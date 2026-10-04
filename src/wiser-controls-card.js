@@ -2061,20 +2061,6 @@
         this._render();
         this._dispatchConfig();
       });
-      this._hiddenRoomsForm = document.createElement("ha-form");
-      this._hiddenRoomsForm.className = "hidden-rooms";
-      this._hiddenRoomsForm.computeLabel = schema => schema.label;
-      this._hiddenRoomsForm.addEventListener("value-changed", event => {
-        event.stopPropagation();
-        const roomIds = new Set(this._rooms().map(room => room.entity_id));
-        const hidden = event.detail.value.hidden_rooms || [];
-        const excluded = [...(this._config.excluded_entities || []).filter(id => !roomIds.has(id)), ...hidden];
-        this._config = {...this._config};
-        if (excluded.length) this._config.excluded_entities = excluded;
-        else delete this._config.excluded_entities;
-        this._render();
-        this._dispatchConfig();
-      });
       this._roomForm = document.createElement("ha-form");
       this._roomForm.computeLabel = schema => {
         const scope = ["color","icon_tap_action","icon_hold_action","icon_double_tap_action","hide_state","state_content"].includes(schema.name) ? "tile" : "generic";
@@ -2125,11 +2111,16 @@
       this._version.className = "version";
       this._version.textContent = `Wiser Controls Card · ${CARD_VERSION}`;
       this._tabs = document.createElement("div");
+      this._tabs.addEventListener("scroll", event => {
+        if (!event.target.matches?.(".room-tabs")) return;
+        this._updateTabOverflow(event.target);
+      }, true);
       this._tabs.addEventListener("click", event => {
-        const button = event.target.closest("[data-room],[data-action]");
+        const button = event.target.closest("[data-room],[data-action],[data-tab-scroll]");
         if (!button || button.disabled) return;
         if (button.dataset.room) { this._selectRoom(button.dataset.room); }
         else if (button.dataset.action) this._roomAction(button.dataset.action);
+        else if (button.dataset.tabScroll) this._scrollTabs(button, button.dataset.tabScroll);
       });
       this._tabs.addEventListener("keydown", event => {
         if (!event.target.matches('[role="tab"]') || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
@@ -2138,8 +2129,7 @@
         let index = rooms.findIndex(room => room.entity_id === this._selectedRoom);
         index = event.key === "Home" ? 0 : event.key === "End" ? rooms.length - 1
           : (index + (event.key === "ArrowLeft" ? -1 : 1) + rooms.length) % rooms.length;
-        this._selectRoom(rooms[index].entity_id);
-        this._tabs.querySelector('[role="tab"][aria-selected="true"]').focus();
+        this._selectRoom(rooms[index].entity_id, true);
       });
       const style = document.createElement("style");
       style.textContent = `
@@ -2148,16 +2138,83 @@
         ha-form.settings::part(root){display:grid;grid-template-columns:minmax(0,1fr) 130px;column-gap:8px;align-items:start}
         .show-filter{display:block;margin-top:16px}
         ha-form.configuration-mode{display:block;margin-top:16px}
-        ha-form.hidden-rooms{display:block;margin-bottom:12px}
         .show-label{display:block;margin:0 0 8px;font-size:14px;color:var(--primary-text-color)}
         .show-options{display:flex;flex-wrap:wrap;gap:8px}
         .show-options ha-button[appearance="filled"]::part(base){border-color:currentColor}
         .show-options ha-button[appearance="outlined"]::part(base){color:var(--state-inactive-color);border-color:var(--state-inactive-color)}
-        .room-tab-bar{display:flex;flex-direction:row;align-items:center;gap:6px;border-bottom:1px solid var(--divider-color);padding-bottom:2px;margin:20px 0 12px}
-        .room-tabs{display:flex;flex-wrap:nowrap;gap:4px;flex:1;min-width:0;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:thin}
+        .room-tab-bar {
+          display: flex;
+          flex-direction: row;
+          align-items: center;
+          gap: 6px;
+          border-bottom: 1px solid var(--divider-color);
+          padding-bottom: 2px;
+          margin: 20px 0 12px;
+        }
+        .room-tab-rows { margin: 20px 0 12px; }
+        .room-tab-rows .room-tab-bar { margin: 0; }
+        .room-tab-rows .room-tab-bar + .room-tab-bar { margin-top: 4px; }
+        .room-tabs-viewport {
+          position: relative;
+          display: flex;
+          flex: 1;
+          min-width: 0;
+        }
+        .room-tabs {
+          display: flex;
+          flex: 1;
+          flex-wrap: nowrap;
+          gap: 4px;
+          min-width: 0;
+          overflow-x: auto;
+          overscroll-behavior-x: contain;
+          scrollbar-width: thin;
+        }
+        .tab-overflow-indicator {
+          position: absolute;
+          z-index: 2;
+          top: 0;
+          bottom: 0;
+          display: none;
+          width: 34px;
+          align-items: center;
+          justify-content: center;
+          color: var(--primary-text-color);
+          border: 0;
+          cursor: pointer;
+        }
+        .tab-overflow-indicator.left {
+          inset-inline-start: 0;
+          background: linear-gradient(to right, var(--card-background-color) 40%, transparent);
+        }
+        .tab-overflow-indicator.right {
+          inset-inline-end: 0;
+          background: linear-gradient(to left, var(--card-background-color) 40%, transparent);
+        }
+        .room-tabs-viewport.can-scroll-left .tab-overflow-indicator.left,
+        .room-tabs-viewport.can-scroll-right .tab-overflow-indicator.right { display: flex; }
         button{font:inherit;color:var(--primary-text-color);cursor:pointer}
         button:focus-visible{outline:2px solid var(--primary-color);outline-offset:2px}
         .room-tabs button{border:0;border-bottom:3px solid transparent;background:transparent;flex:0 0 40px;min-width:40px;min-height:40px;padding:6px 8px;opacity:.6;white-space:nowrap}
+        .room-tabs.named-tabs button {
+          flex-basis: auto;
+          min-width: max-content;
+          max-width: 180px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .room-type-label {
+          align-self: center;
+          flex: 0 0 92px;
+          overflow: hidden;
+          padding: 0 8px 0 0;
+          color: var(--secondary-text-color);
+          font-size: 14px;
+          font-weight: 600;
+          line-height: 40px;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
         .room-tabs button.active{color:var(--primary-color);opacity:1;border-bottom-color:var(--primary-color)}
         .room-tabs.type-tabs button{flex-basis:auto;min-width:max-content}
         .room-tabs button.hidden-room{text-decoration:line-through}
@@ -2173,7 +2230,7 @@
         .version{margin-top:24px;color:var(--secondary-text-color);font-size:12px;text-align:right}
       `;
       this._roomForm.className = "room-options";
-      this.shadowRoot.append(style, this._hubForm, this._form, this._typeForm, this._modeForm, this._hiddenRoomsForm, this._tabs, this._roomForm, this._featureList, this._message, this._version);
+      this.shadowRoot.append(style, this._hubForm, this._form, this._typeForm, this._modeForm, this._tabs, this._roomForm, this._featureList, this._message, this._version);
       this._form.computeLabel = schema => schema.label || text(this._hass,"title");
       this._form.addEventListener("value-changed", event => this._changed(event));
     }
@@ -2222,6 +2279,28 @@
         .map(id => ({value:id, label:titles.get(id) || id}));
     }
     _name(room) { return entityDisplayName(this._hass, room); }
+    _tabNames(rooms) {
+      const details = rooms.map(room => {
+        const area = room.attributes.room || "";
+        const name = deviceType(room) === "heating"
+          ? area || room.attributes.name || this._name(room)
+          : room.attributes.name || this._name(room) || area;
+        return {room, area, name};
+      });
+      const countNames = values => values.reduce((counts, value) => counts.set(value, (counts.get(value) || 0) + 1), new Map());
+      const baseCounts = countNames(details.map(detail => detail.name));
+      const labels = details.map(detail => baseCounts.get(detail.name) > 1 && detail.area && detail.area !== detail.name
+        ? `${detail.area} · ${detail.name}` : detail.name);
+      const labelCounts = countNames(labels);
+      const seen = new Map();
+      return new Map(details.map((detail, index) => {
+        const label = labels[index];
+        if (labelCounts.get(label) === 1) return [detail.room.entity_id, label];
+        const occurrence = (seen.get(label) || 0) + 1;
+        seen.set(label, occurrence);
+        return [detail.room.entity_id, `${label} ${occurrence}`];
+      }));
+    }
     _shown(id) {
       return !this._config.excluded_entities?.includes(id) &&
         (!this._config.entities?.length || this._config.entities.includes(id));
@@ -2284,16 +2363,6 @@
       if (JSON.stringify(modeData) !== JSON.stringify(this._modeForm.data)) this._modeForm.data = modeData;
       this._modeForm.hidden = !rooms.length;
       this._modeForm.style.marginBottom = masterMode(this._config) ? "12px" : "";
-      this._hiddenRoomsForm.hass = this._hass;
-      const hiddenRoomsSchema = [{name:"hidden_rooms",label:text(this._hass,"hide_devices"),selector:{select:{multiple:true,mode:"dropdown",options:rooms.map(room => ({value:room.entity_id,label:this._name(room)}))}}}];
-      const hiddenRoomsSignature = JSON.stringify(hiddenRoomsSchema);
-      if (hiddenRoomsSignature !== this._hiddenRoomsSchemaSignature) {
-        this._hiddenRoomsForm.schema = hiddenRoomsSchema;
-        this._hiddenRoomsSchemaSignature = hiddenRoomsSignature;
-      }
-      const hiddenRoomsData = {hidden_rooms:rooms.filter(room => !this._shown(room.entity_id)).map(room => room.entity_id)};
-      if (JSON.stringify(hiddenRoomsData) !== JSON.stringify(this._hiddenRoomsForm.data)) this._hiddenRoomsForm.data = hiddenRoomsData;
-      this._hiddenRoomsForm.hidden = !masterMode(this._config);
       this._renderTabs(rooms);
       const selectedOptions = roomConfig(this._config, this._selectedRoom);
       const selectedState = this._hass.states[this._selectedRoom];
@@ -2503,16 +2572,86 @@
       if (JSON.stringify(positionData) !== JSON.stringify(this._featurePositionForm.data)) this._featurePositionForm.data = positionData;
     }
     _tabRooms(rooms) {
-      if (!masterMode(this._config)) return rooms;
+      if (!masterMode(this._config)) return DEVICE_TYPES.flatMap(roomType => rooms.filter(room => deviceType(room) === roomType));
       const selected = selectedTypes(this._config);
       return selected.map(roomType =>
         rooms.find(room => deviceType(room) === roomType && this._shown(room.entity_id))
           || rooms.find(room => deviceType(room) === roomType))
         .filter(Boolean);
     }
+    _updateTabOverflow(strip = this._tabs.querySelector?.(".room-tabs")) {
+      const viewport = strip?.parentElement;
+      if (!viewport?.classList) return;
+      const tolerance = 2;
+      viewport.classList.toggle("can-scroll-left", strip.scrollLeft > tolerance);
+      viewport.classList.toggle("can-scroll-right", strip.scrollLeft + strip.clientWidth < strip.scrollWidth - tolerance);
+    }
+    _scrollTabs(control, direction) {
+      const strip = control.parentElement?.querySelector?.(".room-tabs");
+      if (!strip) return;
+      const distance = Math.max(160, strip.clientWidth * 0.75);
+      strip.scrollBy({left:direction === "left" ? -distance : distance,behavior:"smooth"});
+    }
+    _tabScrollPositions() {
+      return new Map(Array.from(this._tabs.querySelectorAll?.(".room-tab-bar[data-device-type]") || [], row => [
+        row.dataset.deviceType,
+        row.querySelector(".room-tabs")?.scrollLeft || 0,
+      ]));
+    }
+    _restoreTabScrollPositions(positions) {
+      for (const row of this._tabs.querySelectorAll?.(".room-tab-bar[data-device-type]") || []) {
+        const strip = row.querySelector(".room-tabs");
+        if (strip && positions.has(row.dataset.deviceType)) strip.scrollLeft = positions.get(row.dataset.deviceType);
+      }
+    }
+    _revealSelectedTab() {
+      const active = this._tabs.querySelector?.('[role="tab"][aria-selected="true"]');
+      const strip = active?.closest?.(".room-tabs");
+      if (!strip?.getBoundingClientRect || !active.getBoundingClientRect) return;
+      const stripRect = strip.getBoundingClientRect();
+      const activeRect = active.getBoundingClientRect();
+      if (activeRect.left < stripRect.left) strip.scrollLeft -= stripRect.left - activeRect.left;
+      else if (activeRect.right > stripRect.right) strip.scrollLeft += activeRect.right - stripRect.right;
+    }
+    _scheduleTabOverflowUpdate() {
+      const update = () => {
+        const strips = this._tabs.querySelectorAll?.(".room-tabs") || [];
+        for (const strip of strips) this._updateTabOverflow(strip);
+      };
+      if (typeof requestAnimationFrame === "function") requestAnimationFrame(update);
+      else setTimeout(update, 0);
+    }
+    _syncIndividualTabSelection(tabRooms) {
+      const selected = tabRooms.find(room => room.entity_id === this._selectedRoom);
+      if (!selected) return;
+      for (const button of this._tabs.querySelectorAll?.(".room-tabs [data-room]") || []) {
+        const active = button.dataset.room === this._selectedRoom;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-selected", String(active));
+        button.tabIndex = active ? 0 : -1;
+      }
+      const row = this._tabs.querySelector?.(`.room-tab-bar[data-device-type="${deviceType(selected)}"]`);
+      const tools = this._tabs.querySelector?.(".room-tools");
+      if (!row || !tools) return;
+      row.append(tools);
+      tools.hidden = false;
+      const typeRooms = tabRooms.filter(room => deviceType(room) === deviceType(selected));
+      const index = typeRooms.findIndex(room => room.entity_id === this._selectedRoom);
+      const hide = tools.querySelector?.('[data-action="hide"]');
+      if (hide) {
+        const shown = this._shown(this._selectedRoom);
+        hide.setAttribute("label", shown ? "Hide device" : "Show device");
+        hide.querySelector?.("ha-icon")?.setAttribute("icon", `mdi:${shown ? "eye" : "eye-off"}`);
+      }
+      const left = tools.querySelector?.('[data-action="left"]');
+      const right = tools.querySelector?.('[data-action="right"]');
+      if (left) left.disabled = index === 0;
+      if (right) right.disabled = index === typeRooms.length - 1;
+    }
     _renderTabs(rooms) {
       if (!rooms.some(room => room.entity_id === this._selectedRoom)) this._selectedRoom = rooms[0]?.entity_id;
       if (masterMode(this._config)) {
+        this._individualTabsSignature = "";
         if (!this._shown(this._selectedRoom)) this._selectedRoom = rooms.find(room => this._shown(room.entity_id))?.entity_id || rooms[0]?.entity_id;
         const typeRooms = this._tabRooms(rooms);
         if (typeRooms.length <= 1) {
@@ -2523,43 +2662,53 @@
         }
         if (!typeRooms.some(room => room.entity_id === this._selectedRoom)) this._selectedRoom = typeRooms[0].entity_id;
         this._tabs.hidden = false;
-        const markup = `<div class="room-tab-bar"><div class="room-tabs type-tabs" role="tablist" aria-label="${escape(text(this._hass,"configuration_mode"))}">${typeRooms.map(room => {
+        const markup = `<div class="room-tab-bar"><div class="room-tabs-viewport"><div class="room-tabs type-tabs" role="tablist" aria-label="${escape(text(this._hass,"configuration_mode"))}">${typeRooms.map(room => {
           const roomType = deviceType(room);
           const active = room.entity_id === this._selectedRoom;
           return `<button type="button" role="tab" title="${escape(text(this._hass,roomType))}" data-room="${escape(room.entity_id)}" aria-selected="${active}" tabindex="${active ? 0 : -1}" class="${active ? "active" : ""}">${escape(text(this._hass,roomType))}</button>`;
-        }).join("")}</div></div>`;
-        if (markup !== this._tabsMarkup) { this._tabs.innerHTML = markup; this._tabsMarkup = markup; }
+        }).join("")}</div><button type="button" class="tab-overflow-indicator left" data-tab-scroll="left" aria-label="Scroll tabs left"><ha-icon icon="mdi:chevron-left"></ha-icon></button><button type="button" class="tab-overflow-indicator right" data-tab-scroll="right" aria-label="Scroll tabs right"><ha-icon icon="mdi:chevron-right"></ha-icon></button></div></div>`;
+        if (markup !== this._tabsMarkup) { this._tabs.innerHTML = markup; this._tabsMarkup = markup; this._scheduleTabOverflowUpdate(); }
         return;
       }
       this._tabs.hidden = false;
-      const index = rooms.findIndex(room => room.entity_id === this._selectedRoom);
-      const selected = rooms[index];
-      const markup = !selected ? "" : `<div class="room-tab-bar"><div class="room-tabs" role="tablist" aria-label="Rooms">${rooms.map((room, tabIndex) => {
-        const active = room.entity_id === this._selectedRoom;
-        return `<button type="button" role="tab" title="${escape(this._name(room))}${this._shown(room.entity_id) ? "" : " (hidden)"}" data-room="${escape(room.entity_id)}" aria-selected="${active}" tabindex="${active ? 0 : -1}" class="${active ? "active" : ""} ${this._shown(room.entity_id) ? "" : "hidden-room"}" aria-label="${escape(this._name(room))}${this._shown(room.entity_id) ? "" : " (hidden)"}">${tabIndex + 1}</button>`;
-      }).join("")}</div><div class="room-tools">
-        <ha-icon-button data-action="hide" label="${this._shown(selected.entity_id) ? "Hide room" : "Show room"}"><ha-icon icon="mdi:${this._shown(selected.entity_id) ? "eye" : "eye-off"}"></ha-icon></ha-icon-button>
-        <ha-icon-button data-action="left" label="Move left" ${index === 0 ? "disabled" : ""}><ha-icon icon="mdi:arrow-left"></ha-icon></ha-icon-button>
-        <ha-icon-button data-action="right" label="Move right" ${index === rooms.length - 1 ? "disabled" : ""}><ha-icon icon="mdi:arrow-right"></ha-icon></ha-icon-button>
-        </div></div>`;
-      if (markup !== this._tabsMarkup) {
-        const scrollLeft = this._tabs.querySelector?.(".room-tabs")?.scrollLeft || 0;
+      const tabRooms = this._tabRooms(rooms);
+      const selected = tabRooms.find(room => room.entity_id === this._selectedRoom);
+      const tabNames = this._tabNames(tabRooms);
+      const groups = DEVICE_TYPES.map(roomType => ({roomType, rooms:tabRooms.filter(room => deviceType(room) === roomType)}))
+        .filter(group => group.rooms.length);
+      const scrollPositions = this._tabScrollPositions();
+      const structureSignature = JSON.stringify(groups.map(group => [group.roomType, group.rooms.map(room => [
+        room.entity_id, tabNames.get(room.entity_id), this._shown(room.entity_id),
+      ])]));
+      const markup = !selected ? "" : `<div class="room-tab-rows">${groups.map(group => {
+        return `<div class="room-tab-bar" data-device-type="${group.roomType}"><span class="room-type-label">${escape(text(this._hass,group.roomType))}</span>
+          <div class="room-tabs-viewport"><div class="room-tabs named-tabs" role="tablist" aria-label="${escape(text(this._hass,group.roomType))}">${group.rooms.map(room => {
+            const active = room.entity_id === this._selectedRoom;
+            const hidden = !this._shown(room.entity_id);
+            const name = tabNames.get(room.entity_id);
+            const label = `${name}${hidden ? " (hidden)" : ""}`;
+            return `<button type="button" role="tab" title="${escape(label)}" data-room="${escape(room.entity_id)}" aria-selected="${active}" tabindex="${active ? 0 : -1}" class="${active ? "active" : ""}${hidden ? " hidden-room" : ""}" aria-label="${escape(label)}">${escape(name)}</button>`;
+          }).join("")}</div><button type="button" class="tab-overflow-indicator left" data-tab-scroll="left" aria-label="Scroll tabs left"><ha-icon icon="mdi:chevron-left"></ha-icon></button><button type="button" class="tab-overflow-indicator right" data-tab-scroll="right" aria-label="Scroll tabs right"><ha-icon icon="mdi:chevron-right"></ha-icon></button></div></div>`;
+      }).join("")}<div class="room-tools" hidden>
+        <ha-icon-button data-action="hide"><ha-icon></ha-icon></ha-icon-button>
+        <ha-icon-button data-action="left" label="Move left"><ha-icon icon="mdi:arrow-left"></ha-icon></ha-icon-button>
+        <ha-icon-button data-action="right" label="Move right"><ha-icon icon="mdi:arrow-right"></ha-icon></ha-icon-button>
+      </div></div>`;
+      const rebuilt = structureSignature !== this._individualTabsSignature;
+      if (rebuilt) {
         this._tabs.innerHTML = markup; this._tabsMarkup = markup;
-        const strip = this._tabs.querySelector?.(".room-tabs");
-        const active = this._tabs.querySelector?.('[role="tab"][aria-selected="true"]');
-        if (strip && active) {
-          strip.scrollLeft = scrollLeft;
-          const left = active.getBoundingClientRect().left - strip.getBoundingClientRect().left + strip.scrollLeft;
-          if (left < strip.scrollLeft) strip.scrollLeft = left;
-          else if (left + active.offsetWidth > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = left + active.offsetWidth - strip.clientWidth;
-        }
+        this._individualTabsSignature = structureSignature;
+        this._restoreTabScrollPositions(scrollPositions);
+        this._scheduleTabOverflowUpdate();
       }
+      this._syncIndividualTabSelection(tabRooms);
+      if (rebuilt) this._revealSelectedTab();
     }
-    _selectRoom(id) {
+    _selectRoom(id, focusTab = false) {
       this._selectedRoom = id;
       this._render();
       this._dispatchConfig();
-      this._tabs.querySelector?.('[role="tab"][aria-selected="true"]')?.focus({preventScroll: true});
+      if (focusTab) this._tabs.querySelector?.('[role="tab"][aria-selected="true"]')?.focus({preventScroll: true});
     }
     _dispatchConfig() {
       // Symbols pass to the live preview but are omitted when the config is saved as JSON/YAML.
@@ -2567,9 +2716,11 @@
       this.dispatchEvent(new CustomEvent("config-changed", {detail: {config}, bubbles: true, composed: true}));
     }
     _roomAction(action) {
-      const rooms = this._rooms();
-      const index = rooms.findIndex(room => room.entity_id === this._selectedRoom);
-      if (index < 0) return;
+      const rooms = this._tabRooms(this._rooms());
+      const selected = rooms.find(room => room.entity_id === this._selectedRoom);
+      if (!selected) return;
+      const typeRooms = rooms.filter(room => deviceType(room) === deviceType(selected));
+      const index = typeRooms.findIndex(room => room.entity_id === this._selectedRoom);
       const config = {...this._config};
       const excluded = new Set(config.excluded_entities || []);
       for (const room of rooms) if (!this._shown(room.entity_id)) excluded.add(room.entity_id);
@@ -2579,8 +2730,10 @@
         else excluded.add(this._selectedRoom);
       } else {
         const target = index + (action === "left" ? -1 : action === "right" ? 1 : 0);
-        if (target === index || target < 0 || target >= order.length) return;
-        [order[index], order[target]] = [order[target], order[index]];
+        if (target === index || target < 0 || target >= typeRooms.length) return;
+        const sourceOrderIndex = order.indexOf(this._selectedRoom);
+        const targetOrderIndex = order.indexOf(typeRooms[target].entity_id);
+        [order[sourceOrderIndex], order[targetOrderIndex]] = [order[targetOrderIndex], order[sourceOrderIndex]];
       }
       delete config.entities;
       config.excluded_entities = [...excluded];

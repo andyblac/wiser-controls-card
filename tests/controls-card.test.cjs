@@ -378,7 +378,10 @@ test('card editor waits for hub titles before exposing discovered hubs', async (
 });
 
 test('room tabs include all detected heating rooms and hide/show without losing tabs', async () => {
-  const {card, Editor} = setup();
+  const {card, Editor, states} = setup();
+  states['climate.bedroom'].attributes.name = 'Bedroom';
+  states['climate.lounge'].attributes.name = 'Lounge';
+  states['climate.offline'].attributes.name = 'Spare bedroom';
   const editor = new Editor();
   editor.setConfig({});
   editor.hass = {...card._hass, callWS: async () => card._entries};
@@ -386,6 +389,9 @@ test('room tabs include all detected heating rooms and hide/show without losing 
   assert.equal(editor._form.data.title, 'Wiser controls');
   assert.equal(editor._rooms().length, 3);
   assert.match(editor._tabs.innerHTML, /<ha-icon-button[^>]*data-action="hide"/);
+  assert.match(editor._tabs.innerHTML, />Bedroom<\/button>/);
+  assert.match(editor._tabs.innerHTML, />Lounge<\/button>/);
+  assert.match(editor._tabs.innerHTML, />Spare bedroom<\/button>/);
   assert.doesNotMatch(editor._tabs.innerHTML, /<button[^>]*data-action="(?:hide|left|right)"/);
   for (const room of editor._rooms()) {
     assert.equal(editor._shown(room.entity_id), true);
@@ -401,6 +407,112 @@ test('room tabs include all detected heating rooms and hide/show without losing 
   card.setConfig(editor.lastEvent.detail.config);
   assert.deepEqual(Array.from(card._rooms(), room => room.entity_id), ['climate.lounge']);
 });
+
+test('individual editor separates named device tabs into one row per type', () => {
+  const {card, Editor} = setup();
+  addLight(card);
+  addPlug(card);
+  addPlug(card, {name:'Coffee machine'}, 'switch.coffee_machine');
+  const editor = new Editor();
+  editor.setConfig({});
+  editor._hass = card._hass;
+  editor._entries = card._entries;
+  editor._render();
+  const html = editor._tabs.innerHTML;
+  assert.equal((html.match(/class="room-tab-bar"/g) || []).length, 3);
+  assert.equal((html.match(/class="room-tabs named-tabs"/g) || []).length, 3);
+  assert.equal((html.match(/class="tab-overflow-indicator (?:left|right)"/g) || []).length, 6);
+  assert.match(html, /class="room-type-label"[^>]*>Heating<\/span>/);
+  assert.match(html, /class="room-type-label"[^>]*>Lights<\/span>/);
+  assert.match(html, /class="room-type-label"[^>]*>Appliances<\/span>/);
+  assert.match(html, />Kitchen light<\/button>/);
+  assert.match(html, />Lamp plug<\/button>/);
+  assert.match(html, />Coffee machine<\/button>/);
+  assert.doesNotMatch(html, />Lounge<\/button>/);
+  assert.equal((html.match(/class="room-tools"/g) || []).length, 1);
+  assert.doesNotMatch(html, />[1-9]<\/button>/);
+});
+
+test('tab overflow indicators reflect remaining scroll in each direction', () => {
+  const {Editor} = setup();
+  const editor = new Editor();
+  const classes = new Set();
+  const strip = {
+    scrollLeft:0,
+    clientWidth:300,
+    scrollWidth:700,
+    parentElement:{classList:{toggle(name, enabled) { enabled ? classes.add(name) : classes.delete(name); }}},
+  };
+  editor._updateTabOverflow(strip);
+  assert.equal(classes.has('can-scroll-left'), false);
+  assert.equal(classes.has('can-scroll-right'), true);
+  strip.scrollLeft = 200;
+  editor._updateTabOverflow(strip);
+  assert.equal(classes.has('can-scroll-left'), true);
+  assert.equal(classes.has('can-scroll-right'), true);
+  strip.scrollLeft = 400;
+  editor._updateTabOverflow(strip);
+  assert.equal(classes.has('can-scroll-left'), true);
+  assert.equal(classes.has('can-scroll-right'), false);
+});
+
+test('tab overflow chevrons smoothly scroll their own row', () => {
+  const {Editor} = setup();
+  const editor = new Editor();
+  let options;
+  const strip = {clientWidth:400,scrollBy(value) { options = value; }};
+  const control = {parentElement:{querySelector() { return strip; }}};
+  editor._scrollTabs(control, 'right');
+  assert.equal(options.left, 300);
+  assert.equal(options.behavior, 'smooth');
+  editor._scrollTabs(control, 'left');
+  assert.equal(options.left, -300);
+  assert.equal(options.behavior, 'smooth');
+});
+
+test('device selection preserves each tab row scroll position', () => {
+  const {Editor} = setup();
+  const editor = new Editor();
+  const oldStrips = {heating:{scrollLeft:420},plugs:{scrollLeft:75}};
+  editor._tabs.querySelectorAll = () => Object.entries(oldStrips).map(([deviceType, strip]) => ({
+    dataset:{deviceType},querySelector() { return strip; },
+  }));
+  const positions = editor._tabScrollPositions();
+  const newStrips = {heating:{scrollLeft:0},plugs:{scrollLeft:0}};
+  editor._tabs.querySelectorAll = () => Object.entries(newStrips).map(([deviceType, strip]) => ({
+    dataset:{deviceType},querySelector() { return strip; },
+  }));
+  editor._restoreTabScrollPositions(positions);
+  assert.equal(newStrips.heating.scrollLeft, 420);
+  assert.equal(newStrips.plugs.scrollLeft, 75);
+});
+
+test('mouse tab selection does not focus and scroll the rebuilt tab row', () => {
+  const {Editor} = setup();
+  const editor = new Editor();
+  let focused = 0;
+  editor._render = () => {};
+  editor._dispatchConfig = () => {};
+  editor._tabs.querySelector = () => ({focus() { focused += 1; }});
+  editor._selectRoom('climate.lounge');
+  assert.equal(focused, 0);
+  editor._selectRoom('climate.bedroom', true);
+  assert.equal(focused, 1);
+});
+
+test('duplicate device tab names remain distinct', () => {
+  const {card, Editor} = setup();
+  addPlug(card, {name:'Smart plug',room:'Kitchen'}, 'switch.kitchen_one');
+  addPlug(card, {name:'Smart plug',room:'Kitchen'}, 'switch.kitchen_two');
+  const editor = new Editor();
+  editor.setConfig({device_types:['plugs']});
+  editor._hass = card._hass;
+  editor._entries = card._entries;
+  editor._render();
+  assert.match(editor._tabs.innerHTML, />Kitchen · Smart plug 1<\/button>/);
+  assert.match(editor._tabs.innerHTML, />Kitchen · Smart plug 2<\/button>/);
+});
+
 test('room move controls retain selection, persist order and respect boundaries', () => {
   const {card, Editor} = setup();
   const editor = new Editor();
@@ -452,13 +564,6 @@ test('master editor mode uses one shared room configuration and one preview card
   assert.equal(config.device_options, undefined);
   assert.equal(editor._tabs.hidden, true);
   assert.equal(editor._tabs.innerHTML, '');
-  assert.equal(editor._hiddenRoomsForm.hidden, false);
-  assert.equal(editor._hiddenRoomsForm.schema[0].label, 'Hide devices');
-  assert.equal(editor._hiddenRoomsForm.schema[0].selector.select.options.length, 3);
-  editor._hiddenRoomsForm.listeners['value-changed']({stopPropagation(){},detail:{value:{hidden_rooms:['climate.lounge']}}});
-  assert.equal(JSON.stringify(editor.lastEvent.detail.config.excluded_entities), '["climate.lounge"]');
-  editor._hiddenRoomsForm.listeners['value-changed']({stopPropagation(){},detail:{value:{hidden_rooms:[]}}});
-  assert.equal(editor.lastEvent.detail.config.excluded_entities, undefined);
   editor._setRoomOptions({color:'green',hide_state:true});
   editor._saveNativeFeatures(editor._selectedRoom, [
     {type:'custom:wiser-secondary-status-feature',entity:'climate.bedroom_itrv_new',state_content:['current_temperature']},
@@ -497,7 +602,6 @@ test('master editor mode uses one shared room configuration and one preview card
   assert.equal(config.device_options['climate.offline'].features[0].entity, undefined);
   assert.equal(config.device_options['climate.offline'].features[0].entities, undefined);
   assert.equal(editor._tabs.hidden, false);
-  assert.equal(editor._hiddenRoomsForm.hidden, true);
 });
 test('master mode gives each newly added room type clean defaults', () => {
   const {card, Editor} = setup();
