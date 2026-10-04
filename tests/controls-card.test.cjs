@@ -1398,6 +1398,12 @@ test('Passive mode is an icon feature that toggles the related room switch', asy
   assert.equal(calls[1][0], 'switch');
   assert.equal(calls[1][1], 'turn_off');
   assert.equal(calls[1][2].entity_id, 'switch.bedroom_passive_mode');
+  states['climate.bedroom'].state = 'off';
+  feature.hass = card._hass;
+  assert.equal(feature._button.active, false);
+  assert.equal(feature._button.mutedActive, true);
+  assert.equal(feature._button.title, 'Passive mode: On');
+  assert.equal(feature._button.disabled, false);
   const entry = window.customCardFeatures.find(item => item.type === 'wiser-passive-mode-feature');
   assert.equal(entry.name, 'Passive mode');
   assert.equal(entry.configurable, false);

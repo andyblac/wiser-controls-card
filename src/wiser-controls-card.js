@@ -1858,6 +1858,13 @@
           --control-button-background-opacity: 1;
           color: var(--text-primary-color, #fff);
         }
+
+        ha-control-button[muted-active] {
+          --control-button-background-color:
+            var(--state-climate-off-color, var(--state-inactive-color, var(--disabled-color)));
+          --control-button-background-opacity: 1;
+          color: var(--text-primary-color, #fff);
+        }
       `;
       this._button = document.createElement("ha-control-button");
       this._icon = document.createElement("ha-icon");
@@ -1932,10 +1939,16 @@
       const state = this._hass?.states[this._switchId];
       const enabled = Boolean(state && !["unknown","unavailable"].includes(state.state));
       const active = enabled && state.state === "on";
+      const climate = this._stateObj || this._hass?.states[this._climateId()];
+      const mutedActive = active && climate?.state === "off";
+      const highlighted = active && !mutedActive;
       this._button.disabled = !enabled;
-      this._button.active = active;
-      if (active) this._button.setAttribute?.("active", "");
+      this._button.active = highlighted;
+      this._button.mutedActive = mutedActive;
+      if (highlighted) this._button.setAttribute?.("active", "");
       else this._button.removeAttribute?.("active");
+      if (mutedActive) this._button.setAttribute?.("muted-active", "");
+      else this._button.removeAttribute?.("muted-active");
       const status = text(this._hass, enabled ? active ? "on" : "off" : "unavailable");
       this._button.title = `${text(this._hass, "passive_mode")}: ${status}`;
       this._button.ariaLabel = this._button.title;
