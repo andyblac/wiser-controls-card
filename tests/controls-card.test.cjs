@@ -909,6 +909,32 @@ test('Show uses compact native buttons and supports multiple device types', () =
   choose('all');
   assert.equal(editor.lastEvent.detail.config.device_types, undefined);
 });
+
+test('multi-channel heating exposes an optional visual split into channel sections', () => {
+  const {card, Editor, states} = setup();
+  states['climate.bedroom'].attributes.hydronic_channel_selection = 1;
+  states['climate.lounge'].attributes.hydronic_channel_selection = 2;
+  delete states['climate.offline'].attributes.hydronic_channel_selection;
+  const editor = new Editor();
+  editor._hass = card._hass;
+  editor._entries = card._entries;
+  editor.setConfig({device_types:['heating']});
+  assert.equal(editor._form.schema.some(field => field.name === 'split_heating_channels'), true);
+  assert.equal(editor._form.data.split_heating_channels, false);
+  editor._changed({stopPropagation(){},detail:{value:{...editor._form.data,split_heating_channels:true}}});
+  assert.equal(editor.lastEvent.detail.config.split_heating_channels, true);
+  card.setConfig(editor.lastEvent.detail.config);
+  const html = card.shadowRoot.innerHTML;
+  assert.match(html, /data-key="section-heating-channel-1"[^]*<h3>Heating channel 1<\/h3>/);
+  assert.match(html, /data-key="section-heating-channel-2"[^]*<h3>Heating channel 2<\/h3>/);
+  assert.match(html, /data-key="section-heating-channel-3"[^]*<h3>Heating — No channel<\/h3>/);
+  assert.match(html, /data-key="rooms-heating-channel-1"[^]*data-key="climate\.bedroom"/);
+  assert.match(html, /data-key="rooms-heating-channel-2"[^]*data-key="climate\.lounge"/);
+  assert.match(html, /data-key="rooms-heating-channel-3"[^]*data-key="climate\.offline"/);
+  assert.equal((html.match(/data-action="boost-menu"/g) || []).length, 1);
+  assert.throws(() => card.setConfig({split_heating_channels:'yes'}));
+});
+
 test('shutter controls call cover services and respect feature and position limits', async () => {
   const {card,calls} = setup(); const shutter = addShutter(card);
   for (const service of ['open_cover','stop_cover','close_cover']) await card._shutterService(shutter, service);
@@ -1427,6 +1453,9 @@ test('Secondary status renders under identity only when configured and not as bo
   card.setConfig({entities:['climate.bedroom'],features:[]});
   html = card.shadowRoot.innerHTML;
   assert.doesNotMatch(html, /class="top has-secondary"|<wiser-secondary-status-feature/);
+  assert.match(html, /class="top aligned-header[^]*?class="secondary-heading-line"[^]*?class="temps"[^]*?class="secondary-primary-line"[^]*?class="next"/);
+  const compact = fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8').replace(/\s+/g, '');
+  assert.match(compact, /\.top\.has-secondary,\.top\.aligned-header\{grid-template-columns:38pxminmax\(0,1fr\);align-items:start;min-height:61px\}/);
 });
 
 test('Secondary status keeps next schedule beside the primary status', () => {
