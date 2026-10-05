@@ -989,7 +989,11 @@ class WiserRoomsPanel extends HTMLElement {
       }
 
       const Card = customElements.get("wiser-controls-card");
-      for (const [hubIndex, hub] of this._config.hubs.entries()) {
+      const hub = this._config.hubs.includes(this._activeHub)
+        ? this._activeHub
+        : this._config.hubs[0];
+      const hubIndex = this._config.hubs.indexOf(hub);
+      if (hub) {
         const editor = await Card.getConfigElement();
         if (!dialog.open) {
           return;
@@ -1004,18 +1008,7 @@ class WiserRoomsPanel extends HTMLElement {
         editor.hideTitle = true;
         editor.hideRoomColumns = true;
         editor.hass = this._hass;
-        editor.setConfig({...config});
-
-        const preview = document.createElement("wiser-controls-card");
-        preview.className = "editor-preview";
-        preview.hass = this._hass;
-        preview.setAttribute("editor-preview", "");
-        preview.setAttribute("aria-label", this._t("panel_preview_label", {hub}));
-        preview.setConfig(this._effectiveCardConfig(config));
-
-        const columns = this._createColumnForm(hub, preview);
-        const {tabs:hubTabs, buttons:hubButtons} = this._createEditorHubTabs(hubIndex);
-
+        let preview;
         editor.addEventListener("config-changed", (event) => {
           event.stopPropagation();
           this._drafts[hub] = this._normaliseDraft(
@@ -1027,8 +1020,18 @@ class WiserRoomsPanel extends HTMLElement {
                 this._drafts[hub].mobile_device_columns ?? 1,
             },
           );
-          this._schedulePreview(preview, this._drafts[hub]);
+          if (preview) this._schedulePreview(preview, this._drafts[hub]);
         });
+        editor.setConfig({...config});
+
+        preview = document.createElement("wiser-controls-card");
+        preview.className = "editor-preview";
+        preview.hass = this._hass;
+        preview.setAttribute("editor-preview", "");
+        preview.setAttribute("aria-label", this._t("panel_preview_label", {hub}));
+        preview.setConfig(this._effectiveCardConfig(this._drafts[hub]));
+
+        const columns = this._createColumnForm(hub, preview);
 
         const section = document.createElement("section");
         const layout = document.createElement("div");
@@ -1047,7 +1050,7 @@ class WiserRoomsPanel extends HTMLElement {
         yaml.hidden = true;
         featureDetail.hidden = true;
         visual.append(editor, featureDetail);
-        form.append(columns, hubTabs, visual);
+        form.append(columns, visual);
         form.append(yaml);
         layout.replaceChildren(form, preview);
         section.replaceChildren(layout);
@@ -1062,8 +1065,6 @@ class WiserRoomsPanel extends HTMLElement {
           yaml,
           featureDetail,
           section,
-          hubTabs,
-          hubButtons,
         };
         editor.addEventListener("edit-sub-element", (event) => {
           this._openFeatureEditor(entry, event);
@@ -1072,10 +1073,7 @@ class WiserRoomsPanel extends HTMLElement {
         this._previews.push(preview);
       }
 
-      const selectedHub = this._config.hubs.includes(this._activeEditorHub)
-        ? this._activeEditorHub
-        : this._config.hubs.includes(this._activeHub) ? this._activeHub : this._config.hubs[0];
-      this._selectEditorHub(selectedHub);
+      this._activeEditorHub = hub;
 
       save.disabled = false;
       mode.disabled = false;

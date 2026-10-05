@@ -408,6 +408,20 @@ test('room tabs include all detected heating rooms and hide/show without losing 
   assert.deepEqual(Array.from(card._rooms(), room => room.entity_id), ['climate.lounge']);
 });
 
+test('initial editor selection previews the first device even when it is hidden', async () => {
+  const {card, Editor} = setup();
+  const editor = new Editor();
+  editor.setConfig({excluded_entities:['climate.bedroom']});
+  editor.hass = {...card._hass, callWS: async () => card._entries};
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(editor._selectedRoom, 'climate.bedroom');
+  assert.equal(editor.lastEvent.detail.config[Symbol.for('wiser-rooms-card-preview-room')], 'climate.bedroom');
+  card.hasAttribute = name => name === 'editor-preview';
+  card.setConfig(editor.lastEvent.detail.config);
+  assert.match(card.shadowRoot.innerHTML, /<section data-key="climate.bedroom"/);
+  assert.doesNotMatch(card.shadowRoot.innerHTML, /<section data-key="climate.lounge"/);
+});
+
 test('individual editor separates named device tabs into one row per type', () => {
   const {card, Editor} = setup();
   addLight(card);
@@ -555,25 +569,29 @@ test('master editor mode uses one shared room configuration and one preview card
   assert.equal(config.master_options_by_type.heating.name, 'Bedroom custom');
   assert.equal(config.master_options_by_type.heating.icon, 'mdi:bed');
   assert.equal(config.master_options_by_type.heating.color, 'red');
-  assert.equal(JSON.stringify(config.master_options_by_type.heating.features), '[{"type":"custom:wiser-secondary-status-feature","entities":{"climate.bedroom":"climate.bedroom_itrv","climate.lounge":"climate.lounge_itrv"},"state_content":["current_temperature","temperature"]},{"type":"target-temperature"}]');
+  assert.equal(JSON.stringify(config.master_options_by_type.heating.features), '[{"type":"target-temperature"}]');
+  assert.equal(JSON.stringify(config.master_options_by_type.heating.secondary_status), '{"entities":{"climate.bedroom":"climate.bedroom_itrv","climate.lounge":"climate.lounge_itrv"},"state_content":["current_temperature","temperature"]}');
   assert.equal(card._headerFeatures.call({...card,_config:config}, card._hass.states['climate.bedroom'])[0].entity, 'climate.bedroom_itrv');
   assert.equal(card._headerFeatures.call({...card,_config:config}, card._hass.states['climate.lounge'])[0].entity, 'climate.lounge_itrv');
   assert.equal(card._headerFeatures.call({...card,_config:config}, card._hass.states['climate.offline'])[0].entity, undefined);
-  assert.equal(editor._nativeEditor.features[0].entity, undefined);
-  assert.equal(editor._nativeEditor.features[0].entities['climate.bedroom'], 'climate.bedroom_itrv');
+  assert.equal(editor._nativeEditor.features.some(feature => feature.type === 'custom:wiser-secondary-status-feature'), false);
+  assert.equal(editor._roomForm.data.secondary_status_content.join(','), 'current_temperature,temperature');
+  assert.equal(editor._roomForm.data.secondary_status_room_0, 'climate.bedroom_itrv');
+  assert.equal(editor._roomForm.data.secondary_status_room_1, 'climate.lounge_itrv');
   assert.equal(config.device_options, undefined);
   assert.equal(editor._tabs.hidden, true);
   assert.equal(editor._tabs.innerHTML, '');
   editor._setRoomOptions({color:'green',hide_state:true});
-  editor._saveNativeFeatures(editor._selectedRoom, [
-    {type:'custom:wiser-secondary-status-feature',entity:'climate.bedroom_itrv_new',state_content:['current_temperature']},
-    {type:'climate-hvac-modes'},
-  ]);
+  editor._setRoomOptions({secondary_status:{entities:{
+    'climate.bedroom':'climate.bedroom_itrv_new','climate.lounge':'climate.lounge_itrv',
+  },state_content:['current_temperature']}});
+  editor._saveNativeFeatures(editor._selectedRoom, [{type:'climate-hvac-modes'}]);
   config = editor.lastEvent.detail.config;
   assert.equal(config.master_options_by_type.heating.color, 'green');
   assert.equal(config.master_options_by_type.heating.hide_state, true);
   assert.equal(config.device_options, undefined);
-  assert.equal(JSON.stringify(config.master_options_by_type.heating.features), '[{"type":"custom:wiser-secondary-status-feature","entities":{"climate.bedroom":"climate.bedroom_itrv_new","climate.lounge":"climate.lounge_itrv"},"state_content":["current_temperature"]},{"type":"climate-hvac-modes"}]');
+  assert.equal(JSON.stringify(config.master_options_by_type.heating.features), '[{"type":"climate-hvac-modes"}]');
+  assert.equal(JSON.stringify(config.master_options_by_type.heating.secondary_status), '{"entities":{"climate.bedroom":"climate.bedroom_itrv_new","climate.lounge":"climate.lounge_itrv"},"state_content":["current_temperature"]}');
   card.parentElement = {localName:'hui-dialog-edit-card'};
   card.setConfig(config);
   assert.equal((card.shadowRoot.innerHTML.match(/class="room-content(?: [^"]*)?"/g) || []).length, 1);
@@ -585,7 +603,7 @@ test('master editor mode uses one shared room configuration and one preview card
   assert.match(card.shadowRoot.innerHTML, /class="room [^"]*preview-selected/);
   card.setConfig({...savedMasterConfig,excluded_entities:['climate.bedroom'],[Symbol.for('wiser-rooms-card-preview-room')]:'climate.bedroom'});
   assert.equal((card.shadowRoot.innerHTML.match(/class="room-content(?: [^"]*)?"/g) || []).length, 1);
-  assert.match(card.shadowRoot.innerHTML, /data-key="climate\.lounge"/);
+  assert.match(card.shadowRoot.innerHTML, /data-key="climate\.bedroom"/);
   card.parentElement = null;
   card.setConfig(savedMasterConfig);
   const dashboardRooms = card._rooms().length;
@@ -597,10 +615,10 @@ test('master editor mode uses one shared room configuration and one preview card
   assert.equal(config.master_options_by_type, undefined);
   assert.equal(config.device_options['climate.bedroom'].color, 'green');
   assert.equal(config.device_options['climate.lounge'].color, 'green');
-  assert.equal(config.device_options['climate.bedroom'].features[0].entity, 'climate.bedroom_itrv_new');
-  assert.equal(config.device_options['climate.lounge'].features[0].entity, 'climate.lounge_itrv');
-  assert.equal(config.device_options['climate.offline'].features[0].entity, undefined);
-  assert.equal(config.device_options['climate.offline'].features[0].entities, undefined);
+  assert.equal(config.device_options['climate.bedroom'].secondary_status.entity, 'climate.bedroom_itrv_new');
+  assert.equal(config.device_options['climate.lounge'].secondary_status.entity, 'climate.lounge_itrv');
+  assert.equal(config.device_options['climate.offline'].secondary_status.entity, undefined);
+  assert.equal(config.device_options['climate.offline'].secondary_status.entities, undefined);
   assert.equal(editor._tabs.hidden, false);
 });
 test('master mode gives each newly added room type clean defaults', () => {
@@ -622,8 +640,9 @@ test('master mode gives each newly added room type clean defaults', () => {
   assert.equal(config.device_configuration, 'master');
   assert.deepEqual(Array.from(config.device_types), ['heating','plugs']);
   assert.equal(editor._modeForm.hidden, false);
-  assert.equal(config.master_options_by_type.heating.features[0].type, 'custom:wiser-secondary-status-feature');
-  assert.equal(JSON.stringify(config.master_options_by_type.plugs), '{}');
+  assert.equal(config.master_options_by_type.heating.features[0].type, 'climate-hvac-modes');
+  assert.equal(config.master_options_by_type.heating.secondary_status.state_content.join(','), 'current_temperature');
+  assert.equal(config.master_options_by_type.plugs, undefined);
   assert.match(editor._tabs.innerHTML, />Heating<\/button>/);
   assert.match(editor._tabs.innerHTML, />Appliances<\/button>/);
   assert.match(editor._tabs.innerHTML, />Heating<\/button>[^]*>Appliances<\/button>/);
@@ -632,25 +651,23 @@ test('master mode gives each newly added room type clean defaults', () => {
   assert.equal(editor._nativeEditor.features.map(feature => feature.type).join(','), 'toggle');
   assert.equal(editor._roomForm.data.hide_state, false);
   assert.equal(editor._roomForm.data.state_content.join(','), 'state');
-  editor._saveNativeFeatures('switch.lamp', [{
-    type:'custom:wiser-secondary-status-feature',
-    entities:{'climate.bedroom':'climate.bedroom_itrv','switch.lamp':'sensor.lamp_power'},
-    state_content:['state'],
-  },{type:'toggle'}]);
+  editor._setRoomOptions({secondary_status:{entities:{'switch.lamp':'sensor.lamp_power'},state_content:['state']}});
+  editor._saveNativeFeatures('switch.lamp', [{type:'toggle'}]);
   config = editor.lastEvent.detail.config;
-  assert.equal(JSON.stringify(config.master_options_by_type.plugs.features[0].entities),
+  assert.equal(JSON.stringify(config.master_options_by_type.plugs.secondary_status.entities),
     '{"switch.lamp":"sensor.lamp_power"}');
   editor._typeForm.listeners.click({target:{closest:()=>({dataset:{roomType:'plugs'}})}});
   assert.equal(editor.lastEvent.detail.config.master_options_by_type.plugs, undefined);
   editor._typeForm.listeners.click({target:{closest:()=>({dataset:{roomType:'plugs'}})}});
   config = editor.lastEvent.detail.config;
-  assert.equal(JSON.stringify(config.master_options_by_type.plugs), '{}');
+  assert.equal(config.master_options_by_type.plugs, undefined);
   card._config = config;
   assert.equal(card._headerFeatures(plug).length, 0);
   editor._modeForm.listeners['value-changed']({stopPropagation(){},detail:{value:{device_configuration:'individual'}}});
   config = editor.lastEvent.detail.config;
   assert.equal(config.device_options['climate.bedroom'].features.map(feature => feature.type).join(','),
-    'custom:wiser-secondary-status-feature,climate-hvac-modes,target-temperature');
+    'climate-hvac-modes,target-temperature');
+  assert.equal(config.device_options['climate.bedroom'].secondary_status.state_content.join(','), 'current_temperature');
 });
 test('master type tabs select a visible representative when the first room is hidden', () => {
   const {card, Editor} = setup();
@@ -717,10 +734,10 @@ test('editor emits card and room YAML settings in a stable logical order', () =>
     'type','title','device_columns','device_types','excluded_entities','device_order','device_configuration','device_options','grid_options',
   ]);
   assert.deepEqual(Object.keys(config.device_options['climate.bedroom']), [
-    'name','color','show_next_schedule','features','icon_tap_action',
+    'secondary_status','features','icon_tap_action',
   ]);
-  assert.deepEqual(Object.keys(config.device_options['climate.bedroom'].features[0]), [
-    'type','entity','state_content',
+  assert.deepEqual(Object.keys(config.device_options['climate.bedroom'].secondary_status), [
+    'entity','state_content',
   ]);
 });
 
@@ -741,12 +758,12 @@ test('legacy room configuration migrates to the controls card device schema', ()
   assert.equal(card._config.room_columns, undefined);
   const ordered = elements['wiser-controls-card'].orderConfig(legacy);
   assert.deepEqual(Object.keys(ordered), [
-    'type','device_columns','mobile_device_columns','device_types','device_order','device_configuration','device_options',
+    'type','device_columns','mobile_device_columns','device_types','device_order','device_configuration',
   ]);
   const editor = new Editor();
   editor.setConfig(legacy);
   assert.equal(editor.lastEvent.detail.config.type, 'custom:wiser-controls-card');
-  assert.equal(editor.lastEvent.detail.config.device_options['climate.bedroom'].color, 'state');
+  assert.equal(editor.lastEvent.detail.config.device_options, undefined);
   assert.equal(editor.lastEvent.detail.config.room_options, undefined);
 });
 
@@ -773,7 +790,7 @@ test('clearing Title in the UI editor removes it from the card', () => {
   assert.match(card.shadowRoot.innerHTML, /data-action="follow-schedule"/);
 });
 
-test('selected room sizing is limited to editor preview and never saved', () => {
+test('editor preview shows only the selected room and never saves the selection', () => {
   const {card, Editor} = setup();
   const editor = new Editor();
   editor.setConfig({device_columns:5});
@@ -783,15 +800,14 @@ test('selected room sizing is limited to editor preview and never saved', () => 
   const config = editor.lastEvent.detail.config;
   card.hasAttribute = name => name === 'editor-preview';
   card.setConfig(config);
-  assert.match(card.shadowRoot.innerHTML, /class="rooms preview-rows"/);
   assert.match(card.shadowRoot.innerHTML, /data-key="climate.lounge" class="room  preview-selected"/);
-  assert.match(card.shadowRoot.innerHTML, /data-key="climate.bedroom" class="room preview-placeholder"/);
+  assert.doesNotMatch(card.shadowRoot.innerHTML, /<section data-key="climate.bedroom"/);
+  assert.match(card.shadowRoot.innerHTML, /style="--room-columns:1"/);
   assert.equal((card.shadowRoot.innerHTML.match(/class="room-content(?: [^"]*)?"/g) || []).length, 1);
   card.hasAttribute = () => false;
   card._render();
-  assert.doesNotMatch(card.shadowRoot.innerHTML, /class="room preview-placeholder"/);
-  assert.doesNotMatch(card.shadowRoot.innerHTML, /class="rooms preview-rows"/);
   assert.doesNotMatch(card.shadowRoot.innerHTML, /class="room  preview-selected"/);
+  assert.match(card.shadowRoot.innerHTML, /<section data-key="climate.bedroom"/);
   assert.equal(Object.getOwnPropertySymbols(JSON.parse(JSON.stringify(config))).length, 0);
 });
 
@@ -935,7 +951,7 @@ test('multi-channel heating exposes an optional visual split into channel sectio
   assert.throws(() => card.setConfig({split_heating_channels:'yes'}));
 });
 
-test('dashboard cards can split selected devices into named hub sections', () => {
+test('dashboard cards migrate entity settings into one configuration per hub', () => {
   const {card, Editor} = setup();
   addPlug(card);
   const hubs = [{entry_id:'hub-a',title:'Downstairs hub'},{entry_id:'hub-b',title:'Upstairs hub'}];
@@ -943,25 +959,72 @@ test('dashboard cards can split selected devices into named hub sections', () =>
   editor._hass = card._hass;
   editor._entries = card._entries;
   editor._hubs = hubs;
-  editor.setConfig({});
+  editor.setConfig({
+    type:'custom:wiser-controls-card',
+    device_order:['climate.bedroom','climate.offline','switch.lamp','climate.lounge'],
+    excluded_entities:['climate.offline'],
+    device_options:{
+      'climate.bedroom':{color:'red'},
+      'climate.lounge':{color:'blue'},
+    },
+  });
   assert.equal(editor._form.schema.some(field => field.name === 'split_hubs'), true);
-  assert.equal(editor._form.data.split_hubs, false);
+  assert.equal(editor._form.data.split_hubs, true);
   assert.equal(editor._hubTabs.hidden, false);
   assert.match(editor._hubTabs.innerHTML, /Downstairs hub/);
   assert.match(editor._hubTabs.innerHTML, /Upstairs hub/);
   assert.deepEqual(Array.from(editor._editorRooms(), room => room.entity_id), ['climate.bedroom','climate.offline','switch.lamp']);
   editor._selectEditorHub('hub-b');
   assert.deepEqual(Array.from(editor._editorRooms(), room => room.entity_id), ['climate.lounge']);
-  assert.equal(editor.lastEvent.detail.config.hubs, undefined);
-  editor._changed({stopPropagation(){},detail:{value:{...editor._form.data,split_hubs:true}}});
   assert.equal(editor.lastEvent.detail.config.split_hubs, true);
+  assert.deepEqual(Array.from(editor.lastEvent.detail.config.hubs), ['hub-a','hub-b']);
+  assert.deepEqual(Array.from(editor.lastEvent.detail.config.hub_configs, config => config.hub), ['hub-a','hub-b']);
+  assert.equal(editor._hubConfigEditor._version.hidden, true);
+  assert.equal(editor.lastEvent.detail.config.hub_configs[0].device_columns, undefined);
+  assert.equal(editor.lastEvent.detail.config.hub_configs[1].device_columns, undefined);
+  assert.deepEqual(Array.from(editor.lastEvent.detail.config.hub_configs[0].device_order), ['climate.bedroom','climate.offline','switch.lamp']);
+  assert.deepEqual(Array.from(editor.lastEvent.detail.config.hub_configs[1].device_order), ['climate.lounge']);
+  assert.deepEqual(Object.keys(editor.lastEvent.detail.config.hub_configs[0].device_options), ['climate.bedroom']);
+  assert.deepEqual(Object.keys(editor.lastEvent.detail.config.hub_configs[1].device_options), ['climate.lounge']);
+  assert.equal(editor.lastEvent.detail.config.device_order, undefined);
+  assert.equal(editor.lastEvent.detail.config.device_options, undefined);
 
   card._hubs = hubs;
   card.setConfig(editor.lastEvent.detail.config);
   const html = card.shadowRoot.innerHTML;
-  assert.match(html, /data-key="hub-hub-a"[^]*<h2>Downstairs hub<\/h2>[^]*data-key="section-hub-hub-a-heating"[^]*<h3>Heating<\/h3>[^]*data-key="rooms-hub-hub-a-heating"[^]*data-key="climate\.bedroom"[^]*data-key="section-hub-hub-a-plugs"[^]*<h3>Appliances<\/h3>[^]*data-key="switch\.lamp"/);
-  assert.match(html, /data-key="hub-hub-b"[^]*<h2>Upstairs hub<\/h2>[^]*data-key="section-hub-hub-b-heating"[^]*<h3>Heating<\/h3>[^]*data-key="rooms-hub-hub-b-heating"[^]*data-key="climate\.lounge"/);
-  assert.equal((html.match(/data-action="boost-menu"/g) || []).length, 1);
+  assert.match(html, /class="hub-cards"/);
+  card.hasAttribute = name => name === 'editor-preview';
+  card._config[Symbol.for('wiser-rooms-card-preview-room')] = 'climate.offline';
+  const hubPreviewConfig = card._effectiveHubConfig(card._hubConfigEntries()[0]);
+  const hubPreview = new card.constructor();
+  hubPreview._updateDOM = function(markup) { this.shadowRoot.innerHTML = markup; };
+  hubPreview.hasAttribute = name => name === 'editor-preview';
+  hubPreview._entries = card._entries;
+  hubPreview._hubs = hubs;
+  hubPreview.setConfig(hubPreviewConfig);
+  hubPreview.hass = card._hass;
+  assert.match(hubPreview.shadowRoot.innerHTML, /<section data-key="climate.offline"/);
+  assert.match(hubPreview.shadowRoot.innerHTML, /<section data-key="switch.lamp"/);
+  assert.doesNotMatch(hubPreview.shadowRoot.innerHTML, /<section data-key="climate.bedroom"/);
+  assert.equal((hubPreview.shadowRoot.innerHTML.match(/class="room-content(?: [^"]*)?"/g) || []).length, 2);
+  card.hasAttribute = () => false;
+  card.setConfig({...editor.lastEvent.detail.config,split_hubs:false});
+  assert.doesNotMatch(card.shadowRoot.innerHTML, /class="hub-cards"/);
+  assert.match(card.shadowRoot.innerHTML, /data-key="climate\.bedroom"/);
+  assert.match(card.shadowRoot.innerHTML, /data-key="climate\.lounge"/);
+  assert.match(card.shadowRoot.innerHTML, /data-key="switch\.lamp"/);
+
+  editor._config = {
+    ...editor._config,
+    split_hubs:false,
+    hub_configs:editor._config.hub_configs.map(config => config.hub === editor._editingHub
+      ? {...config,device_configuration:'master'} : config),
+  };
+  editor._dispatchConfig();
+  card.hasAttribute = name => name === 'editor-preview';
+  card.setConfig(editor.lastEvent.detail.config);
+  assert.equal((card.shadowRoot.innerHTML.match(/class="room [^"]*preview-selected/g) || []).length, 1);
+  assert.doesNotMatch(card.shadowRoot.innerHTML, /<section[^>]*preview-placeholder/);
   assert.throws(() => card.setConfig({split_hubs:'yes'}));
 
   const panelEditor = new Editor();
@@ -1204,7 +1267,7 @@ test('preset feature exposes supported Wiser actions and preserves explicit sele
   assert.equal(editor._nativeEditor.features[0].preset_modes.join(','), 'Boost 1h');
 });
 
-test('Secondary status is always first in the native features list', () => {
+test('Secondary status has its own editor section and is omitted from native features', () => {
   const {card, Editor} = setup();
   const editor = new Editor();
   editor._hass = card._hass; editor._entries = card._entries;
@@ -1214,14 +1277,34 @@ test('Secondary status is always first in the native features list', () => {
     {type:'target-temperature'},
   ];
   editor.setConfig({device_options:{'climate.bedroom':{features:list}}});
+  let migrated = editor.lastEvent.detail.config.device_options['climate.bedroom'];
+  assert.equal(migrated.features.map(feature => feature.type).join(','), 'climate-hvac-modes,target-temperature');
+  assert.equal(migrated.secondary_status.state_content.join(','), 'state');
+  card.setConfig({device_options:{'climate.bedroom':{features:list}}});
+  assert.equal(card._config.device_options['climate.bedroom'].features.map(feature => feature.type).join(','), 'climate-hvac-modes,target-temperature');
+  assert.equal(card._config.device_options['climate.bedroom'].secondary_status.state_content.join(','), 'state');
   editor._selectRoom('climate.bedroom');
-  assert.equal(editor._nativeEditor.features[0].type, 'custom:wiser-secondary-status-feature');
-  editor._nativeEditor.listeners['features-changed']({stopPropagation(){},detail:{features:list}});
-  const saved = editor.lastEvent.detail.config.device_options['climate.bedroom'].features;
-  assert.equal(saved[0].type, 'custom:wiser-secondary-status-feature');
-  assert.equal(saved.slice(1).map(feature => feature.type).join(','), 'climate-hvac-modes,target-temperature');
-  const source = fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8');
-  assert.match(source, /style\.textContent = "\.feature:first-child \.handle\{visibility:hidden!important\}"/);
+  assert.equal(editor._nativeEditor.features.map(feature => feature.type).join(','), 'climate-hvac-modes,target-temperature');
+  assert.equal(editor._roomForm.schema[1].name, 'secondary_status_section');
+  assert.equal(editor._roomForm.data.secondary_status_content.join(','), 'state');
+  editor._roomForm.listeners['value-changed']({stopPropagation(){},detail:{value:{
+    ...editor._roomForm.data,
+    secondary_status_entity:'climate.lounge',
+    secondary_status_content:['current_temperature'],
+    secondary_status_show_labels:true,
+  }}});
+  const options = editor.lastEvent.detail.config.device_options['climate.bedroom'];
+  assert.equal(options.features.map(feature => feature.type).join(','), 'climate-hvac-modes,target-temperature');
+  assert.equal(JSON.stringify(options.secondary_status), '{"entity":"climate.lounge","state_content":["current_temperature"],"show_labels":true}');
+  card.setConfig(editor.lastEvent.detail.config);
+  assert.match(card.shadowRoot.innerHTML, /data-secondary-room="climate\.bedroom"/);
+  editor._roomForm.listeners['value-changed']({stopPropagation(){},detail:{value:{
+    ...editor._roomForm.data,
+    secondary_status_content:[],
+  }}});
+  assert.equal(editor.lastEvent.detail.config.device_options['climate.bedroom'].secondary_status.state_content.length, 0);
+  card.setConfig(editor.lastEvent.detail.config);
+  assert.doesNotMatch(card.shadowRoot.innerHTML, /data-secondary-room="climate\.bedroom"/);
 });
 
 test('every supported device exposes the same default features that the card renders', () => {
@@ -1379,15 +1462,7 @@ test('Secondary status uses native state display and supports override end time'
   assert.equal(masterEditor.lastEvent.detail.config.entities['climate.lounge'], 'climate.lounge_itrv_new');
   assert.equal(masterEditor.lastEvent.detail.config.entities['climate.offline'], undefined);
   assert.equal(masterEditor.lastEvent.detail.config.state_content.join(','), 'temperature');
-  const entry = window.customCardFeatures.find(f => f.type === 'wiser-secondary-status-feature');
-  assert.equal(entry.configurable, true);
-  assert.equal(entry.isSupported(card._hass,{entity_id:'climate.bedroom'}), true);
-  addShutter(card); addLight(card); addPlug(card);
-  assert.equal(entry.isSupported(card._hass,{entity_id:'cover.office'}), true);
-  assert.equal(entry.isSupported(card._hass,{entity_id:'light.kitchen'}), true);
-  assert.equal(entry.isSupported(card._hass,{entity_id:'switch.lamp'}), true);
-  card._hass.states['sensor.outside'] = {entity_id:'sensor.outside',state:'12',attributes:{}};
-  assert.equal(entry.isSupported(card._hass,{entity_id:'sensor.outside'}), false);
+  assert.equal(window.customCardFeatures.some(f => f.type === 'wiser-secondary-status-feature'), false);
 });
 
 test('Override end time is a per-room header feature', () => {
@@ -1573,7 +1648,7 @@ test('Interactions persist per device and execute configured actions', () => {
 
   const editor = new Editor(); editor._hass = card._hass; editor._entries = card._entries;
   editor.setConfig({}); editor._selectRoom('climate.bedroom');
-  const interactionSchema = editor._roomForm.schema[1].schema;
+  const interactionSchema = editor._roomForm.schema[2].schema;
   assert.equal(interactionSchema[0].name,'tap_action');
   assert.equal(interactionSchema[1].type,'divider');
   assert.equal(interactionSchema[2].name,'icon_tap_action');
@@ -1621,9 +1696,9 @@ test('default entity names use the native Home Assistant formatter', () => {
   const {card, Editor, states} = setup();
   card._hass.formatEntityName = (state, name) => name === undefined
     ? `Native ${state.entity_id}`
-    : String(name);
+    : name?.[0]?.type === 'area' ? 'Native area' : String(name);
   card.setConfig({});
-  assert.equal(card._name(states['climate.bedroom']), 'Native climate.bedroom');
+  assert.equal(card._name(states['climate.bedroom']), 'Native area');
 
   const editor = new Editor();
   editor._hass = card._hass;
@@ -1639,13 +1714,13 @@ test('empty composed names fall back to the entity name', () => {
   assert.match(card.shadowRoot.innerHTML, />Bedroom thermostat<\/strong>/);
 });
 
-test('Content, Interactions and Features sections start collapsed', () => {
+test('Content, Secondary status, Interactions and Features sections start collapsed', () => {
   const {card,Editor} = setup();
   const editor = new Editor();
   editor._hass = card._hass; editor._entries = card._entries; editor.setConfig({});
   assert.equal(editor._roomForm.schema.map(section => `${section.name}:${section.type}:${section.expanded}`).join(','),
-    'content:expandable:undefined,interactions:expandable:undefined');
-  assert.equal(editor._roomForm.schema.map(section => section.icon).join(','), 'mdi:text-short,mdi:gesture-tap');
+    'content:expandable:undefined,secondary_status_section:expandable:undefined,interactions:expandable:undefined');
+  assert.equal(editor._roomForm.schema.map(section => section.icon).join(','), 'mdi:text-short,mdi:list-status,mdi:gesture-tap');
   assert.match(editor._featureList.innerHTML, /<ha-icon[^>]*icon="mdi:list-box"/);
   assert.doesNotMatch(editor._featureList.innerHTML, /<ha-expansion-panel[^>]*\sexpanded(?:\s|>)/);
 });
@@ -1659,16 +1734,21 @@ test('Content name defaults to the room area', () => {
   editor._selectRoom('climate.bedroom');
   assert.equal(JSON.stringify(editor._roomForm.data.name), JSON.stringify([{type:'area'}]));
   assert.equal(editor._roomForm.data.state_content.join(','), 'hvac_action');
+  assert.equal(editor._roomForm.data.secondary_status_content.length, 0);
   assert.equal(editor._roomForm.hass.states['climate.bedroom'].attributes.override_end_time, 'No override');
 });
 
-test('editor preview uses the measured dashboard room width with a readable fallback', () => {
-  const source = fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8');
-  const compact = source.replace(/\s+/g, '');
-  assert.match(source, /roomSizeCache\.set\(sizeKey, \{width:bounds\.width, height:bounds\.height\}\)/);
-  assert.match(source, /--preview-room-width.*measured\.width/);
-  assert.match(compact, /\.editor-preview\.preview-row>\.room\.preview-selected\{flex:00var\(--preview-room-width,50%\);max-width:100%\}/);
-  assert.match(compact, /\.editor-preview\.preview-row:has\(\.preview-selected\)\{align-items:flex-start;flex-wrap:wrap\}/);
+test('partial editor section updates preserve unrelated Content settings', () => {
+  const {card, Editor} = setup();
+  const editor = new Editor();
+  editor._hass = card._hass;
+  editor._entries = card._entries;
+  editor.setConfig({device_options:{'climate.bedroom':{name:[{type:'area'}],icon:'mdi:bed'}}});
+  editor._selectRoom('climate.bedroom');
+  editor._roomForm.listeners['value-changed']({stopPropagation(){},detail:{value:{secondary_status_content:[]}}});
+  const options = editor.lastEvent.detail.config.device_options['climate.bedroom'];
+  assert.equal(options.name, undefined);
+  assert.equal(options.icon, 'mdi:bed');
 });
 
 test('status renders exactly the configured state content with useful defaults', () => {
