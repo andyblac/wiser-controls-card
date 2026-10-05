@@ -55,12 +55,21 @@ function setup() {
   }
   const registry=new Map([["wiser-controls-card",Card],["ha-yaml-editor",Element],["wiser-secondary-status-feature",Feature]]);
   const media={matches:false,listeners:{},addEventListener(name,listener){this.listeners[name]=listener},removeEventListener(name,listener){if(this.listeners[name]===listener)delete this.listeners[name]}};
+  const sessionValues=new Map();
+  const sessionStorage={getItem:key=>sessionValues.get(key),setItem:(key,value)=>sessionValues.set(key,String(value))};
   const frames=[];
-  const context=vm.createContext({HTMLElement:Element,window:{WiserRoomsLocalize:{localize},loadCardHelpers:async()=>({}),matchMedia:()=>media,requestAnimationFrame:callback=>{frames.push(callback);return frames.length},cancelAnimationFrame(){}},setTimeout,clearTimeout,CustomEvent:class{constructor(type,options){Object.assign(this,{type},options)}},customElements:{get:key=>registry.get(key),define:(key,value)=>registry.set(key,value)},document:{createElement:name=>name==="wiser-controls-card"?new Card():new Element()},console:{error(){}}});
+  const context=vm.createContext({HTMLElement:Element,window:{WiserRoomsLocalize:{localize},loadCardHelpers:async()=>({}),matchMedia:()=>media,requestAnimationFrame:callback=>{frames.push(callback);return frames.length},cancelAnimationFrame(){},sessionStorage},setTimeout,clearTimeout,CustomEvent:class{constructor(type,options){Object.assign(this,{type},options)}},customElements:{get:key=>registry.get(key),define:(key,value)=>registry.set(key,value)},document:{createElement:name=>name==="wiser-controls-card"?new Card():new Element()},console:{error(){}}});
   vm.runInContext(readFileSync(resolve(__dirname,"../src/wiser-controls-panel.js"),"utf8"),context);
   const panel=new (registry.get("wiser-controls-panel"))();
   panel._testMedia=media;
   panel._testFrames=frames;
+  panel._testCreatePanel=()=>{
+    const replacement=new (registry.get("wiser-controls-panel"))();
+    replacement._testMedia=media;
+    replacement._testFrames=frames;
+    replacement.connectedCallback();
+    return replacement;
+  };
   panel.connectedCallback();
   return panel;
 }
@@ -181,6 +190,34 @@ test("panel settings edit only the hub selected by the panel tabs",async()=>{
   assert.equal(upstairs.hubTabs,undefined);
   assert.equal(upstairs.columns.data.device_columns,2);
   assert.equal(panel._activeEditorHub,"Upstairs");
+});
+
+test("saving panel settings preserves the selected hub tab",async()=>{
+  const panel=setup();
+  panel.hass={user:{is_admin:true},callWS:async()=>{}};
+  panel.panel={config:{
+    panel_id:"registry-panel",
+    hubs:["Downstairs","Upstairs"],
+    hub_ids:{Downstairs:"entry-a",Upstairs:"entry-b"},
+    card_configs:{Downstairs:{device_columns:5},Upstairs:{device_columns:2}},
+  }};
+  panel._selectHub("Upstairs");
+  await panel._openEditor();
+  panel._editorEntries[0].columns.listeners["value-changed"]({
+    stopPropagation(){},detail:{value:{device_columns:3}},
+  });
+  await panel._saveEditor();
+  assert.equal(panel._activeHub,"Upstairs");
+  assert.equal(panel._cards[0].hidden,true);
+  assert.equal(panel._cards[1].hidden,false);
+  assert.equal(panel._tabs[1].attributes["aria-selected"],"true");
+
+  const replacement=panel._testCreatePanel();
+  replacement.hass=panel._hass;
+  replacement.panel={config:panel._config};
+  assert.equal(replacement._activeHub,"Upstairs");
+  assert.equal(replacement._cards[0].hidden,true);
+  assert.equal(replacement._cards[1].hidden,false);
 });
 
 test("rooms panel uses separate desktop and mobile column counts",async()=>{

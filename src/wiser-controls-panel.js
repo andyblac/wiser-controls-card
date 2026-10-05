@@ -1,4 +1,23 @@
 /** Sidebar host for the Wiser controls card. */
+const ACTIVE_HUB_STORAGE_PREFIX = "wiser-controls-panel:active-hub:";
+const activePanelHubs = new Map();
+const rememberedPanelHub = panelId => {
+  if (!panelId) return undefined;
+  try {
+    return window.sessionStorage?.getItem(`${ACTIVE_HUB_STORAGE_PREFIX}${panelId}`)
+      || activePanelHubs.get(panelId);
+  } catch (_) {
+    return activePanelHubs.get(panelId);
+  }
+};
+const rememberPanelHub = (panelId, hub) => {
+  if (!panelId || !hub) return;
+  activePanelHubs.set(panelId, hub);
+  try {
+    window.sessionStorage?.setItem(`${ACTIVE_HUB_STORAGE_PREFIX}${panelId}`, hub);
+  } catch (_) {}
+};
+
 class WiserRoomsPanel extends HTMLElement {
   constructor() {
     super();
@@ -445,6 +464,12 @@ class WiserRoomsPanel extends HTMLElement {
     }
 
     this._config = config;
+    if (!config.hubs.includes(this._activeHub)) {
+      const rememberedHub = rememberedPanelHub(config.panel_id);
+      this._activeHub = config.hubs.includes(rememberedHub)
+        ? rememberedHub
+        : undefined;
+    }
     this._loadCards();
   }
 
@@ -495,6 +520,7 @@ class WiserRoomsPanel extends HTMLElement {
 
   _selectHub(hub) {
     this._activeHub = hub;
+    rememberPanelHub(this._config?.panel_id, hub);
 
     this._cards.forEach((card, index) => {
       const selected = this._config.hubs[index] === hub;
@@ -1102,7 +1128,7 @@ class WiserRoomsPanel extends HTMLElement {
         },
       };
       this._closeEditor();
-      this._loadCards();
+      await this._loadCards();
     } catch (error) {
       this.shadowRoot.getElementById("editor-error").textContent =
         this._t("panel_save_error");
