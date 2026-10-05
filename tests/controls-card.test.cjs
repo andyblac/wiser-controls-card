@@ -935,6 +935,37 @@ test('multi-channel heating exposes an optional visual split into channel sectio
   assert.throws(() => card.setConfig({split_heating_channels:'yes'}));
 });
 
+test('dashboard cards can split selected devices into named hub sections', () => {
+  const {card, Editor} = setup();
+  addPlug(card);
+  const hubs = [{entry_id:'hub-a',title:'Downstairs hub'},{entry_id:'hub-b',title:'Upstairs hub'}];
+  const editor = new Editor();
+  editor._hass = card._hass;
+  editor._entries = card._entries;
+  editor._hubs = hubs;
+  editor.setConfig({});
+  assert.equal(editor._form.schema.some(field => field.name === 'split_hubs'), true);
+  assert.equal(editor._form.data.split_hubs, false);
+  editor._changed({stopPropagation(){},detail:{value:{...editor._form.data,split_hubs:true}}});
+  assert.equal(editor.lastEvent.detail.config.split_hubs, true);
+
+  card._hubs = hubs;
+  card.setConfig(editor.lastEvent.detail.config);
+  const html = card.shadowRoot.innerHTML;
+  assert.match(html, /data-key="hub-hub-a"[^]*<h2>Downstairs hub<\/h2>[^]*data-key="section-hub-hub-a-heating"[^]*<h3>Heating<\/h3>[^]*data-key="rooms-hub-hub-a-heating"[^]*data-key="climate\.bedroom"[^]*data-key="section-hub-hub-a-plugs"[^]*<h3>Appliances<\/h3>[^]*data-key="switch\.lamp"/);
+  assert.match(html, /data-key="hub-hub-b"[^]*<h2>Upstairs hub<\/h2>[^]*data-key="section-hub-hub-b-heating"[^]*<h3>Heating<\/h3>[^]*data-key="rooms-hub-hub-b-heating"[^]*data-key="climate\.lounge"/);
+  assert.equal((html.match(/data-action="boost-menu"/g) || []).length, 1);
+  assert.throws(() => card.setConfig({split_hubs:'yes'}));
+
+  const panelEditor = new Editor();
+  panelEditor.hideHubSelector = true;
+  panelEditor._hass = card._hass;
+  panelEditor._entries = card._entries;
+  panelEditor._hubs = hubs;
+  panelEditor.setConfig({});
+  assert.equal(panelEditor._form.schema.some(field => field.name === 'split_hubs'), false);
+});
+
 test('shutter controls call cover services and respect feature and position limits', async () => {
   const {card,calls} = setup(); const shutter = addShutter(card);
   for (const service of ['open_cover','stop_cover','close_cover']) await card._shutterService(shutter, service);

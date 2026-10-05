@@ -163,6 +163,31 @@ test("rooms panel editor saves settings through the integration",async()=>{
   assert.equal(calls[0].configs.Home.device_columns,4);
 });
 
+test("panel editor uses hub tabs to manage one hub at a time",async()=>{
+  const panel=setup();
+  panel.hass={user:{is_admin:true}};
+  panel.panel={config:{
+    panel_id:"registry-panel",
+    hubs:["Downstairs","Upstairs"],
+    hub_ids:{Downstairs:"entry-a",Upstairs:"entry-b"},
+    card_configs:{Downstairs:{device_columns:5},Upstairs:{device_columns:2}},
+  }};
+  await panel._openEditor();
+  const [downstairs,upstairs]=panel._editorEntries;
+  assert.equal(downstairs.section.hidden,false);
+  assert.equal(upstairs.section.hidden,true);
+  assert.deepEqual(Array.from(downstairs.hubButtons,button=>button.textContent),["Downstairs","Upstairs"]);
+  assert.equal(downstairs.hubButtons[0].attributes["aria-selected"],"true");
+  assert.equal(downstairs.columns.data.device_columns,5);
+
+  downstairs.hubButtons[1].listeners.click();
+  assert.equal(downstairs.section.hidden,true);
+  assert.equal(upstairs.section.hidden,false);
+  assert.equal(upstairs.hubButtons[1].attributes["aria-selected"],"true");
+  assert.equal(upstairs.columns.data.device_columns,2);
+  assert.equal(panel._activeEditorHub,"Upstairs");
+});
+
 test("rooms panel uses separate desktop and mobile column counts",async()=>{
   const panel=setup();
   panel.hass={user:{is_admin:true}};

@@ -157,10 +157,40 @@ class WiserRoomsPanel extends HTMLElement {
           display: none;
         }
 
-        #editors section + section {
-          margin-top: 24px;
-          padding-top: 16px;
-          border-top: 1px solid var(--divider-color);
+        #editors > section[hidden],
+        .editor-hub-tabs[hidden] {
+          display: none;
+        }
+
+        .editor-hub-tabs {
+          display: flex;
+          min-width: 0;
+          margin: 0 0 16px;
+          overflow-x: auto;
+          border-bottom: 1px solid var(--divider-color);
+        }
+
+        .editor-hub-tab {
+          flex: 0 0 auto;
+          min-height: 44px;
+          padding: 0 16px;
+          border: 0;
+          border-bottom: 3px solid transparent;
+          color: var(--secondary-text-color);
+          font: inherit;
+          background: transparent;
+          cursor: pointer;
+          white-space: nowrap;
+        }
+
+        .editor-hub-tab[aria-selected="true"] {
+          color: var(--primary-color);
+          border-bottom-color: currentColor;
+        }
+
+        .editor-hub-tab:focus-visible {
+          outline: 2px solid var(--primary-color);
+          outline-offset: -4px;
         }
 
         .editor-layout {
@@ -527,6 +557,56 @@ class WiserRoomsPanel extends HTMLElement {
     this._selectHub(selectedHub);
   }
 
+  _createEditorHubTabs(ownerIndex) {
+    const tabs = document.createElement("nav");
+    tabs.className = "editor-hub-tabs";
+    tabs.hidden = this._config.hubs.length <= 1;
+    tabs.setAttribute("role", "tablist");
+    tabs.setAttribute("aria-label", this._t("panel_hubs"));
+    const buttons = this._config.hubs.map((hub, index) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "editor-hub-tab";
+      button.textContent = hub;
+      button.id = `editor-hub-tab-${ownerIndex}-${index}`;
+      button.setAttribute("role", "tab");
+      button.setAttribute("aria-controls", `editor-hub-panel-${index}`);
+      button.addEventListener("click", () => this._selectEditorHub(hub, true));
+      button.addEventListener("keydown", (event) => {
+        let next;
+        if (event.key === "ArrowRight") next = (index + 1) % this._config.hubs.length;
+        else if (event.key === "ArrowLeft") next = (index + this._config.hubs.length - 1) % this._config.hubs.length;
+        else if (event.key === "Home") next = 0;
+        else if (event.key === "End") next = this._config.hubs.length - 1;
+        else return;
+        event.preventDefault();
+        this._selectEditorHub(this._config.hubs[next], true);
+      });
+      return button;
+    });
+    tabs.replaceChildren(...buttons);
+    return {tabs, buttons};
+  }
+
+  _selectEditorHub(hub, focus = false) {
+    if (!this._config?.hubs?.includes(hub)) return;
+    this._activeEditorHub = hub;
+    const selectedIndex = this._config.hubs.indexOf(hub);
+    for (const entry of this._editorEntries) {
+      const selected = entry.hub === hub;
+      entry.section.hidden = !selected;
+      entry.hubButtons.forEach((button, index) => {
+        const active = index === selectedIndex;
+        button.setAttribute("aria-selected", String(active));
+        button.tabIndex = active ? 0 : -1;
+      });
+      if (selected) {
+        entry.preview.hass = this._hass;
+        if (focus) entry.hubButtons[selectedIndex]?.focus?.();
+      }
+    }
+  }
+
   _closeEditor() {
     for (const preview of this._previews) {
       if (preview._wiserPreviewTimer !== undefined) {
@@ -834,6 +914,7 @@ class WiserRoomsPanel extends HTMLElement {
         for (const entry of this._editorEntries) {
           const yaml = this._createYamlEditor(entry);
           entry.yaml.replaceChildren(yaml);
+          entry.columns.hidden = true;
           entry.visual.hidden = true;
           entry.yaml.hidden = false;
         }
@@ -846,6 +927,7 @@ class WiserRoomsPanel extends HTMLElement {
             entry.columns,
             this._drafts[entry.hub],
           );
+          entry.columns.hidden = false;
           entry.yaml.hidden = true;
           entry.visual.hidden = false;
         }
@@ -907,7 +989,7 @@ class WiserRoomsPanel extends HTMLElement {
       }
 
       const Card = customElements.get("wiser-controls-card");
-      for (const hub of this._config.hubs) {
+      for (const [hubIndex, hub] of this._config.hubs.entries()) {
         const editor = await Card.getConfigElement();
         if (!dialog.open) {
           return;
@@ -932,6 +1014,7 @@ class WiserRoomsPanel extends HTMLElement {
         preview.setConfig(this._effectiveCardConfig(config));
 
         const columns = this._createColumnForm(hub, preview);
+        const {tabs:hubTabs, buttons:hubButtons} = this._createEditorHubTabs(hubIndex);
 
         editor.addEventListener("config-changed", (event) => {
           event.stopPropagation();
@@ -948,13 +1031,14 @@ class WiserRoomsPanel extends HTMLElement {
         });
 
         const section = document.createElement("section");
-        const title = document.createElement("h3");
         const layout = document.createElement("div");
         const form = document.createElement("div");
         const visual = document.createElement("div");
         const yaml = document.createElement("div");
         const featureDetail = document.createElement("div");
-        title.textContent = hub;
+        section.id = `editor-hub-panel-${hubIndex}`;
+        section.setAttribute("role", "tabpanel");
+        section.setAttribute("aria-labelledby", `editor-hub-tab-${hubIndex}-${hubIndex}`);
         layout.className = "editor-layout";
         form.className = "editor-form";
         visual.className = "visual-editor";
@@ -962,13 +1046,11 @@ class WiserRoomsPanel extends HTMLElement {
         featureDetail.className = "feature-detail";
         yaml.hidden = true;
         featureDetail.hidden = true;
-        visual.append(columns, editor, featureDetail);
-        form.append(visual);
+        visual.append(editor, featureDetail);
+        form.append(columns, hubTabs, visual);
         form.append(yaml);
         layout.replaceChildren(form, preview);
-        section.replaceChildren(
-          ...(this._config.hubs.length > 1 ? [title, layout] : [layout]),
-        );
+        section.replaceChildren(layout);
         container.append(section);
         this._editors.push(editor);
         const entry = {
@@ -979,6 +1061,9 @@ class WiserRoomsPanel extends HTMLElement {
           visual,
           yaml,
           featureDetail,
+          section,
+          hubTabs,
+          hubButtons,
         };
         editor.addEventListener("edit-sub-element", (event) => {
           this._openFeatureEditor(entry, event);
@@ -986,6 +1071,11 @@ class WiserRoomsPanel extends HTMLElement {
         this._editorEntries.push(entry);
         this._previews.push(preview);
       }
+
+      const selectedHub = this._config.hubs.includes(this._activeEditorHub)
+        ? this._activeEditorHub
+        : this._config.hubs.includes(this._activeHub) ? this._activeHub : this._config.hubs[0];
+      this._selectEditorHub(selectedHub);
 
       save.disabled = false;
       mode.disabled = false;

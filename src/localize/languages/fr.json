@@ -42,6 +42,7 @@
   "secondary_status": "État secondaire",
   "show_state_labels": "Afficher les libellés d’état",
   "split_heating_channels": "Séparer le chauffage par canal",
+  "split_hubs": "Séparer les appareils par hub",
   "heating_channel": "Canal de chauffage {channel}",
   "heating_no_channel": "Chauffage — Aucun canal",
   "next_schedule": "Prochain programme",

@@ -42,6 +42,7 @@
   "secondary_status": "Sekundärstatus",
   "show_state_labels": "Statusbezeichnungen anzeigen",
   "split_heating_channels": "Heizung nach Kanal aufteilen",
+  "split_hubs": "Geräte nach Hub aufteilen",
   "heating_channel": "Heizkanal {channel}",
   "heating_no_channel": "Heizung — Kein Kanal",
   "next_schedule": "Nächster Zeitplan",

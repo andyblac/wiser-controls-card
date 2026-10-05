@@ -13,7 +13,7 @@
     room_options:"device_options",
   };
   const CARD_CONFIG_ORDER = [
-    "type", "title", "device_columns", "mobile_device_columns", "hubs", "device_types", "split_heating_channels", "entities", "excluded_entities", "device_order",
+    "type", "title", "device_columns", "mobile_device_columns", "hubs", "split_hubs", "device_types", "split_heating_channels", "entities", "excluded_entities", "device_order",
     "temperature_focus", "device_configuration", "master_options_by_type", "device_options",
     "features", "tap_action", "hold_action", "double_tap_action",
     "icon_tap_action", "icon_hold_action", "icon_double_tap_action", "grid_options",
@@ -30,6 +30,7 @@
   const NEXT_SCHEDULE_FEATURE = "wiser-next-schedule-feature";
   const PASSIVE_MODE_FEATURE = "wiser-passive-mode-feature";
   const entityRegistryRequests = new WeakMap();
+  const wiserConfigEntryRequests = new WeakMap();
   const entityRegistryEntries = hass => {
     const key = hass.connection || hass;
     let request = entityRegistryRequests.get(key);
@@ -39,6 +40,18 @@
         throw error;
       });
       entityRegistryRequests.set(key, request);
+    }
+    return request;
+  };
+  const wiserConfigEntries = hass => {
+    const key = hass.connection || hass;
+    let request = wiserConfigEntryRequests.get(key);
+    if (!request) {
+      request = hass.callWS({type:"config_entries/get",domain:"wiser"}).then(entries => Array.isArray(entries) ? entries : []).catch(error => {
+        wiserConfigEntryRequests.delete(key);
+        throw error;
+      });
+      wiserConfigEntryRequests.set(key, request);
     }
     return request;
   };
@@ -265,6 +278,7 @@
       super();
       this.attachShadow({mode: "open"});
       this._entries = null;
+      this._hubs = null;
       this._headerObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => this._layoutHeaders());
       this._observedHeaders = new Set();
       this._busy = false;
@@ -325,6 +339,7 @@
       if (config.hubs !== undefined && (!Array.isArray(config.hubs) || config.hubs.some(id => typeof id !== "string" || !id.length))) {
         throw new Error("hubs must be a list of Wiser config entry IDs");
       }
+      if (config.split_hubs !== undefined && typeof config.split_hubs !== "boolean") throw new Error("split_hubs must be true or false");
       if (config.device_columns !== undefined && (!Number.isInteger(config.device_columns) || config.device_columns < 1 || config.device_columns > 6)) {
         throw new Error("device_columns must be a whole number from 1 to 6");
       }
@@ -344,6 +359,7 @@
       }
       for (const key of ["tap_action","icon_tap_action","hold_action","icon_hold_action","double_tap_action","icon_double_tap_action"]) if (config[key] !== undefined && !validAction(config[key])) throw new Error(`Invalid ${key}`);
       this._config = {device_columns: 1, temperature_focus: "current", ...config};
+      if (this._config.split_hubs && this._hass && !this._hubs && !this._hubsLoading) this._discoverHubs();
       this._render();
     }
     static getStubConfig() { return {type: "custom:wiser-controls-card", title: "Wiser controls"}; }
@@ -360,6 +376,7 @@
           .finally(() => { this._nativePending = false; });
       }
       if (!this._entries && !this._loading && !this._discoveryFailed) this._discover();
+      if (this._config?.split_hubs && !this._hubs && !this._hubsLoading) this._discoverHubs();
       this._render();
     }
     async _discover() {
@@ -373,11 +390,28 @@
         this._error = `Unable to find Wiser devices: ${error.message || error}`;
       } finally { this._loading = false; this._render(); }
     }
+    async _discoverHubs() {
+      this._hubsLoading = true;
+      try { this._hubs = await wiserConfigEntries(this._hass); }
+      catch (_) { this._hubs = []; }
+      finally { this._hubsLoading = false; this._render(); }
+    }
     _rooms() {
       if (!this._hass || !this._entries) return [];
       const rooms = this._entries.filter(entry => isRoom(entry, this._hass.states[entry.entity_id]) && matchesHub(entry, this._config?.hubs) && matchesType(this._hass.states[entry.entity_id], selectedTypes(this._config)) && !this._config?.excluded_entities?.includes(entry.entity_id)).map(entry => this._hass.states[entry.entity_id]);
       if (this._config?.entities?.length) return this._config.entities.map(id => rooms.find(room => room.entity_id === id)).filter(Boolean);
       return orderRooms(rooms, this._config?.device_order);
+    }
+    _hubGroups(rooms) {
+      const entries = new Map((this._entries || []).map(entry => [entry.entity_id, entry]));
+      const titles = new Map((this._hubs || []).map(entry => [entry.entry_id, entry.title || entry.entry_id]));
+      const groups = new Map();
+      for (const room of rooms) {
+        const id = entries.get(room.entity_id)?.config_entry_id || "unassigned";
+        if (!groups.has(id)) groups.set(id, {key:id,title:titles.get(id) || id,rooms:[]});
+        groups.get(id).rooms.push(room);
+      }
+      return [...groups.values()];
     }
     _name(room) {
       const name = roomConfig(this._config || {}, room.entity_id).name;
@@ -873,8 +907,10 @@
       const rooms = this._rooms();
       const types = selectedTypes(this._config);
       const channelGroups = heatingChannelGroups(rooms);
+      const hubGroups = this._hubGroups(rooms);
       const splitHeating = this._config.split_heating_channels && channelGroups.filter(group => group.key !== "unassigned").length > 1;
-      const grouped = types.length > 1 || splitHeating;
+      const splitHubs = this._config.split_hubs && hubGroups.filter(group => group.key !== "unassigned").length > 1;
+      const grouped = types.length > 1 || splitHeating || splitHubs;
       const singleType = types[0];
       const canOff = rooms.some(r => available(r) && r.state !== "off" && r.attributes.hvac_modes?.includes("off"));
       const overriddenRooms = rooms.filter(isHeatingOverride);
@@ -915,23 +951,39 @@
       const scheduledDeviceActions = (type, section) => `<div class="bulk-actions">${resumeSchedulesAction(type, section)}${type === "shutters" ? closeAllAction(section) : deviceOffAction(type, section)}</div>`;
       const headerAction = grouped ? "" : singleType === "heating" ? heatingActions(false) : scheduledDeviceActions(singleType, false);
       const unit = this._hass.config?.unit_system?.temperature || "°C";
-      const deviceGroups = [
-        {key:"heating", type:"heating", title:text(this._hass,"heating"), rooms:rooms.filter(room => deviceType(room) === "heating")},
-        {key:"shutters", type:"shutters", title:text(this._hass,"shutters"), rooms:rooms.filter(isShutter)},
-        {key:"lights", type:"lights", title:text(this._hass,"lights"), rooms:rooms.filter(isLight)},
-        {key:"plugs", type:"plugs", title:text(this._hass,"plugs"), rooms:rooms.filter(isPlug)},
-      ];
-      const groups = grouped
-        ? deviceGroups.flatMap(group => group.type === "heating" && splitHeating
-          ? channelGroups.map((channel, index) => ({
-              key:`heating-channel-${index + 1}`,
-              type:"heating",
-              title:channel.key === "unassigned" ? text(this._hass,"heating_no_channel") : heatingChannelTitle(this._hass, channel.label),
-              rooms:channel.rooms,
-              showHeatingActions:index === 0,
-            }))
-          : [group]).filter(group => types.includes(group.type) && group.rooms.length)
-        : [{key:singleType, type:singleType, title:"", rooms}];
+      const scopes = splitHubs ? hubGroups : [{key:"all",title:"",rooms}];
+      const groups = grouped ? scopes.flatMap(scope => types.flatMap(type => {
+        const typeRooms = scope.rooms.filter(room => deviceType(room) === type);
+        if (!typeRooms.length) return [];
+        if (type === "heating" && splitHeating) return heatingChannelGroups(typeRooms).map((channel, index) => {
+          const channelTitle = channel.key === "unassigned" ? text(this._hass,"heating_no_channel") : heatingChannelTitle(this._hass, channel.label);
+          return {
+            key:`${splitHubs ? `hub-${scope.key}-` : ""}heating-channel-${index + 1}`,
+            type,
+            title:channelTitle,
+            hubKey:splitHubs ? scope.key : "",
+            hubTitle:splitHubs ? scope.title : "",
+            rooms:channel.rooms,
+          };
+        });
+        return [{
+          key:`${splitHubs ? `hub-${scope.key}-` : ""}${type}`,
+          type,
+          title:splitHubs || types.length > 1 ? text(this._hass,type) : "",
+          hubKey:splitHubs ? scope.key : "",
+          hubTitle:splitHubs ? scope.title : "",
+          rooms:typeRooms,
+        }];
+      })) : [{key:singleType, type:singleType, title:"", rooms}];
+      groups.forEach((group, index) => {
+        group.startsHub = splitHubs && groups[index - 1]?.hubKey !== group.hubKey;
+        group.endsHub = splitHubs && groups[index + 1]?.hubKey !== group.hubKey;
+      });
+      const actionTypesShown = new Set();
+      for (const group of groups) {
+        group.showSectionActions = !actionTypesShown.has(group.type);
+        actionTypesShown.add(group.type);
+      }
       const groupStatus = group => {
         const total = group.rooms.length;
         const unavailable = group.rooms.filter(room => !available(room)).length;
@@ -970,6 +1022,26 @@
         }
         ha-card {
           overflow:hidden
+        }
+        .hub-section {
+          border-top:1px solid var(--divider-color)
+        }
+        .hub-section+.hub-section {
+          margin-top:12px
+        }
+        .hub-title {
+          padding:14px 16px 4px
+        }
+        .hub-title h2 {
+          font-size:20px;
+          font-weight:500;
+          margin:0
+        }
+        .hub-section>.room-section {
+          border-top:0
+        }
+        .hub-section>.room-section+.room-section {
+          border-top:1px solid var(--divider-color)
         }
         .room-section {
           border-top:1px solid var(--divider-color)
@@ -1579,7 +1651,7 @@
         }
       </style><ha-card data-key="card" class="${preview ? "editor-preview" : ""}">${cardHeader}
           ${this._error ? `<div data-key="error" class="message error" role="alert">${escape(this._error)}${this._discoveryFailed ? '<ha-button data-action="retry" size="s" appearance="outlined" variant="danger">Retry</ha-button>' : ""}</div>` : ""}
-      ${!rooms.length ? `<p data-key="empty" class="message">${this._loading ? text(this._hass,"finding") : text(this._hass,"no_devices")}</p>` : groups.map(group => `${grouped ? `<section class="room-section" data-key="section-${group.key}"><div class="section-title" data-key="heading-${group.key}"><div><h3>${group.title}</h3><p>${groupStatus(group)}</p></div>${group.type === "heating" ? group.showHeatingActions === false ? "" : heatingActions(true) : scheduledDeviceActions(group.type, true)}</div>` : ""}<div class="rooms ${expandPreview ? "preview-rows" : ""}" data-key="rooms-${group.key}" style="--room-columns:${masterPreview ? 1 : this._config.device_columns}">${group.rooms.map((room, index) => {
+      ${!rooms.length ? `<p data-key="empty" class="message">${this._loading ? text(this._hass,"finding") : text(this._hass,"no_devices")}</p>` : groups.map(group => `${group.startsHub ? `<section class="hub-section" data-key="hub-${escape(group.hubKey)}"><div class="hub-title"><h2>${escape(group.hubTitle)}</h2></div>` : ""}${grouped ? `<section class="room-section" data-key="section-${group.key}"><div class="section-title" data-key="heading-${group.key}"><div><h3>${escape(group.title)}</h3><p>${groupStatus(group)}</p></div>${group.showSectionActions ? group.type === "heating" ? heatingActions(true) : scheduledDeviceActions(group.type, true) : ""}</div>` : ""}<div class="rooms ${expandPreview ? "preview-rows" : ""}" data-key="rooms-${group.key}" style="--room-columns:${masterPreview ? 1 : this._config.device_columns}">${group.rooms.map((room, index) => {
         const options = roomConfig(this._config, room.entity_id);
         const columns = this._config.device_columns;
         const rowStart = expandPreview && index % columns === 0 ? `<div class="preview-row" data-key="preview-row-${Math.floor(index / columns)}">` : "";
@@ -1634,7 +1706,7 @@
           }).join("")}</div>` : ""}
           ${fallbackFeatures(options).includes("temperature") ? (ranged ? `<button data-entity="${id}" title="${escape(text(this._hass,"adjust_temperature_range"))}" aria-label="${escape(text(this._hass,"adjust_temperature_range"))}"><ha-icon icon="mdi:thermostat"></ha-icon></button>` : `<input type="number" data-entity="${id}" data-field="temperature" aria-label="${escape(this._name(room))} ${escape(text(this._hass,"target").toLowerCase())}" title="${escape(text(this._hass,"target"))} ${escape(unit)}" value="${typeof targetTemperature === "number" ? targetTemperature : ""}" min="${a.min_temp ?? 5}" max="${a.max_temp ?? 30}" step="${a.target_temp_step || .5}" ${disabled || room.state === "off" ? "disabled" : ""}>`) : ""}
           ${fallbackFeatures(options).includes("advance") ? `<button data-action="advance" data-entity="${id}" aria-label="${escape(text(this._hass,"advance_schedule_for",{name:this._name(room)}))}" title="${escape(text(this._hass,"advance_schedule"))}" ${disabled || !scheduled || room.state !== "auto" || !a.preset_modes?.includes("Advance Schedule") ? "disabled" : ""}><ha-icon icon="mdi:calendar-arrow-right"></ha-icon></button>` : ""}</div>` : ""}</div></section>${rowEnd}`;
-      }).join("")}</div>${grouped ? "</section>" : ""}`).join("")}</ha-card>`;
+      }).join("")}</div>${grouped ? "</section>" : ""}${group.endsHub ? "</section>" : ""}`).join("")}</ha-card>`;
       this._updateDOM(markup);
       this._syncNativeFeatures();
       this._layoutHeaders();
@@ -2038,6 +2110,7 @@
         this._config = {...this._config};
         if (hubs.length && (hubs.length !== detected.length || detected.some(id => !hubs.includes(id)))) this._config.hubs = hubs;
         else delete this._config.hubs;
+        if ((hubs.length ? hubs : detected).length < 2) delete this._config.split_hubs;
         this._render();
         this._dispatchConfig();
       });
@@ -2305,8 +2378,7 @@
         let hubs = [];
         if (!this.hideHubSelector) {
           try {
-            const configEntries = await this._hass.callWS({type: "config_entries/get", domain: "wiser"});
-            hubs = Array.isArray(configEntries) ? configEntries : [];
+            hubs = await wiserConfigEntries(this._hass);
           } catch (_) {}
         }
         this._entries = entries;
@@ -2368,24 +2440,29 @@
       if (JSON.stringify(hubData) !== JSON.stringify(this._hubForm.data)) this._hubForm.data = hubData;
       this._hubForm.hidden = this.hideHubSelector || !hubs.length;
       this._form.hass = this._hass;
+      const selectedHubIds = new Set((this._entries || [])
+        .filter(entry => isRoom(entry, this._hass.states[entry.entity_id]) && matchesHub(entry, this._config?.hubs))
+        .map(entry => entry.config_entry_id).filter(Boolean));
+      const hasMultipleHubs = !this.hideHubSelector && selectedHubIds.size > 1;
       const hasMultipleHeatingChannels = heatingChannelGroups(this._allRooms())
         .filter(group => group.key !== "unassigned").length > 1;
       const appearanceSchema = [
         ...(this.hideTitle ? [] : [{name: "title", selector: {text: {}}}]),
         ...(this.hideRoomColumns ? [] : [{name: "device_columns", label: text(this._hass,"devices_per_row"), selector: {number: {min: 1, max: 6, step: 1, mode: "box"}}}]),
+        ...(hasMultipleHubs ? [{name:"split_hubs",label:text(this._hass,"split_hubs"),selector:{boolean:{}}}] : []),
         ...(hasMultipleHeatingChannels ? [{name:"split_heating_channels",label:text(this._hass,"split_heating_channels"),selector:{boolean:{}}}] : []),
       ];
       const roomTypeSchema = {name: "device_types", label: text(this._hass,"show"), selector: {select: {mode: "box", options: [
           {value: "all", label: text(this._hass,"all")},
           ...sortedDeviceTypes(this._hass).map(value => ({value, label:text(this._hass,value)})),
         ]}}};
+      const temperatureFocusSchema = {name:"temperature_focus",label:"",selector:{button_toggle:{options:[
+        {value:"current",label:text(this._hass,"current")},{value:"target",label:text(this._hass,"target")},
+      ]}}};
       const schema = [
         ...appearanceSchema,
         roomTypeSchema,
-        {name: "temperature_focus", label:"", selector: {button_toggle: {options: [
-          {value: "current", label: text(this._hass,"current")}, {value: "target", label: text(this._hass,"target")},
-        ]}}},
-
+        temperatureFocusSchema,
       ];
       // Retain the form schema during state updates so edits keep their focus.
       const signature = JSON.stringify(schema);
@@ -2399,6 +2476,7 @@
       const data = {};
       if (!this.hideRoomColumns) data.device_columns = this._config.device_columns ?? 1;
       if (!this.hideTitle) data.title = this._config.title ?? text(this._hass,"wiser_controls");
+      if (hasMultipleHubs) data.split_hubs = this._config.split_hubs ?? false;
       if (hasMultipleHeatingChannels) data.split_heating_channels = this._config.split_heating_channels ?? false;
       if (JSON.stringify(data) !== JSON.stringify(this._form.data)) this._form.data = data;
       const activeTypes = selectedTypes(this._config);
@@ -2439,7 +2517,7 @@
         ...identitySchema,
         {name:"",type:"grid",column_min_width:"180px",schema:[
           {name:"show_temperatures",label:metricLabel,selector:{boolean:{}}},
-          ...(heating ? [schema[3]] : []),
+          ...(heating ? [temperatureFocusSchema] : []),
           {name:"show_next_schedule",label:text(this._hass,"show_next_schedule"),selector:{boolean:{}}},
           {name:"hide_state",label:text(this._hass,"hide_state"),selector:{boolean:{}}},
         ]},
@@ -2803,6 +2881,10 @@
       const title = Object.hasOwn(data, "title") ? data.title ?? "" : this._config.title ?? text(this._hass,"wiser_controls");
       const config = {...this._config, title};
       if (!this.hideRoomColumns) config.device_columns = data.device_columns ?? 1;
+      if (Object.hasOwn(data, "split_hubs")) {
+        if (data.split_hubs) config.split_hubs = true;
+        else delete config.split_hubs;
+      }
       if (Object.hasOwn(data, "split_heating_channels")) {
         if (data.split_heating_channels) config.split_heating_channels = true;
         else delete config.split_heating_channels;

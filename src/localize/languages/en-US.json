@@ -42,6 +42,7 @@
   "secondary_status": "Secondary status",
   "show_state_labels": "Show state labels",
   "split_heating_channels": "Split heating by channel",
+  "split_hubs": "Split devices by hub",
   "heating_channel": "Heating channel {channel}",
   "heating_no_channel": "Heating — No channel",
   "next_schedule": "Next schedule",
