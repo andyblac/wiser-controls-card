@@ -1714,6 +1714,19 @@ test('empty composed names fall back to the entity name', () => {
   assert.match(card.shadowRoot.innerHTML, />Bedroom thermostat<\/strong>/);
 });
 
+test('Wiser name composed item resolves the dynamic name attribute', () => {
+  const {card, states} = setup();
+  states['climate.bedroom'].attributes.name = 'Lounge';
+  card._hass.formatEntityName = (_state, name) => Array.isArray(name)
+    ? name.map(item => item.text || item.type).join(' ')
+    : name?.text || '';
+  card.setConfig({device_options:{'climate.bedroom':{name:[{type:'wiser_name'}]}}});
+  assert.equal(card._name(states['climate.bedroom']), 'Lounge');
+  assert.match(card.shadowRoot.innerHTML, />Lounge<\/strong>/);
+  states['climate.bedroom'].attributes.name = 'Living room';
+  assert.equal(card._name(states['climate.bedroom']), 'Living room');
+});
+
 test('Content, Secondary status, Interactions and Features sections start collapsed', () => {
   const {card,Editor} = setup();
   const editor = new Editor();

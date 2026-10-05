@@ -33,6 +33,10 @@
   const OVERRIDE_STATUS_FEATURE = "wiser-override-status-feature";
   const NEXT_SCHEDULE_FEATURE = "wiser-next-schedule-feature";
   const PASSIVE_MODE_FEATURE = "wiser-passive-mode-feature";
+  const WISER_NAME_TYPE = "wiser_name";
+  const WISER_NAME_LABEL = "Wiser name";
+  const WISER_NAME_PICKER_VALUE = "___wiser_name___";
+  const WISER_NAME_PICKER_PATCHED = Symbol("wiser-name-picker-patched");
   const entityRegistryRequests = new WeakMap();
   const wiserConfigEntryRequests = new WeakMap();
   const entityRegistryEntries = hass => {
@@ -225,15 +229,91 @@
   const PREVIEW_ROOM = Symbol.for("wiser-rooms-card-preview-room");
   const PREVIEW_ALL_TYPES = Symbol.for("wiser-rooms-card-preview-all-types");
   const escape = (value) => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const wiserName = state => String(state?.attributes?.name ?? "");
+  const resolvedEntityName = (state, configuredName) => {
+    const resolve = item => item?.type === WISER_NAME_TYPE
+      ? {type:"text",text:wiserName(state)}
+      : item;
+    return Array.isArray(configuredName) ? configuredName.map(resolve) : resolve(configuredName);
+  };
   const entityDisplayName = (hass, state, configuredName) => {
     if (state && typeof hass?.formatEntityName === "function") {
       try {
-        const formatted = hass.formatEntityName(state, configuredName);
+        const formatted = hass.formatEntityName(state, resolvedEntityName(state, configuredName));
         if (typeof formatted === "string" && formatted.trim()) return formatted;
       } catch (_) {}
     }
     if (typeof configuredName === "string") return configuredName;
     return state?.attributes?.name || state?.attributes?.friendly_name || state?.entity_id || "";
+  };
+  const findInShadowRoots = (root, selector) => {
+    if (!root?.querySelector) return undefined;
+    const match = root.querySelector(selector);
+    if (match) return match;
+    for (const element of root.querySelectorAll?.("*") || []) {
+      const nested = findInShadowRoots(element.shadowRoot, selector);
+      if (nested) return nested;
+    }
+    return undefined;
+  };
+  const extendWiserNamePicker = picker => {
+    // Home Assistant does not expose a public extension API for composed-name sources.
+    if (!picker || typeof picker._getItems !== "function" || typeof picker._setValue !== "function") return false;
+    if (picker[WISER_NAME_PICKER_PATCHED]) return true;
+    picker[WISER_NAME_PICKER_PATCHED] = true;
+    const originalGetItems = picker._getItems.bind(picker);
+    const originalValidTypes = picker._validTypes?.bind(picker);
+    const originalFormatItem = picker._formatItem?.bind(picker);
+    const originalPickerValueChanged = picker._pickerValueChanged?.bind(picker);
+    const originalGetPickerValue = picker._getPickerValue?.bind(picker);
+    const originalGetFilteredItems = picker._getFilteredItems?.bind(picker);
+    picker._getItems = entityId => {
+      const items = originalGetItems(entityId);
+      const secondary = wiserName(picker.hass?.states?.[entityId]);
+      if (!secondary) return items;
+      const primary = WISER_NAME_LABEL;
+      return [...items, {
+        id:WISER_NAME_PICKER_VALUE,
+        primary,
+        secondary,
+        search_labels:{primary,secondary,id:WISER_NAME_PICKER_VALUE},
+        sorting_label:primary,
+      }];
+    };
+    if (originalValidTypes) picker._validTypes = entityId => {
+      const types = originalValidTypes(entityId);
+      if (wiserName(picker.hass?.states?.[entityId])) types.add(WISER_NAME_TYPE);
+      return types;
+    };
+    if (originalFormatItem) picker._formatItem = item => item?.type === WISER_NAME_TYPE
+      ? WISER_NAME_LABEL : originalFormatItem(item);
+    if (originalGetPickerValue) picker._getPickerValue = () => {
+      const item = picker._editIndex != null ? picker._items?.[picker._editIndex] : undefined;
+      return item?.type === WISER_NAME_TYPE ? WISER_NAME_PICKER_VALUE : originalGetPickerValue();
+    };
+    if (originalGetFilteredItems) picker._getFilteredItems = () => {
+      const items = originalGetFilteredItems();
+      const current = picker._editIndex != null ? picker._items?.[picker._editIndex] : undefined;
+      const selected = picker._items?.some(item => item?.type === WISER_NAME_TYPE);
+      return selected && current?.type !== WISER_NAME_TYPE
+        ? items.filter(item => item.id !== WISER_NAME_PICKER_VALUE)
+        : items;
+    };
+    if (originalPickerValueChanged) picker._pickerValueChanged = event => {
+      if (event?.detail?.value !== WISER_NAME_PICKER_VALUE) return originalPickerValueChanged(event);
+      event.stopPropagation?.();
+      if (picker.disabled) return;
+      const items = [...(picker._items || [])];
+      const item = {type:WISER_NAME_TYPE};
+      if (picker._editIndex != null) {
+        items[picker._editIndex] = item;
+        picker._editIndex = undefined;
+      } else items.push(item);
+      picker._setValue(items);
+      if (picker._picker) picker._picker.value = undefined;
+    };
+    picker.requestUpdate?.();
+    return true;
   };
   const available = state => state && !["unknown", "unavailable"].includes(state.state);
   const isShutter = state => state?.entity_id.startsWith("cover.") && Object.hasOwn(state.attributes, "shutter_id");
@@ -2882,6 +2962,7 @@
       for (const key of Object.keys(roomData)) if (roomData[key] === undefined) delete roomData[key];
       if (JSON.stringify(roomData) !== JSON.stringify(this._roomForm.data)) this._roomForm.data = roomData;
       this._styleTemperatureFocus();
+      this._extendNamePicker();
       this._roomForm.hidden = !this._selectedRoom;
       this._featureList.hidden = !this._selectedRoom;
       this._renderFeatures();
@@ -2912,6 +2993,18 @@
       field.style.visibility = show ? "" : "hidden";
       field.inert = !show;
       field.setAttribute("aria-hidden", String(!show));
+    }
+    _extendNamePicker() {
+      if (this._namePickerLookup) return this._namePickerLookup;
+      this._namePickerLookup = (async () => {
+        for (let attempt = 0; attempt <= 10; attempt += 1) {
+          await this._roomForm?.updateComplete;
+          const picker = findInShadowRoots(this._roomForm?.shadowRoot, "ha-entity-name-picker");
+          if (extendWiserNamePicker(picker) || !this.isConnected) return;
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+      })().finally(() => { this._namePickerLookup = undefined; });
+      return this._namePickerLookup;
     }
     _secondaryStatusSource(id) {
       if (!id) return undefined;
