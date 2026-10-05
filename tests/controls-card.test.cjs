@@ -946,6 +946,13 @@ test('dashboard cards can split selected devices into named hub sections', () =>
   editor.setConfig({});
   assert.equal(editor._form.schema.some(field => field.name === 'split_hubs'), true);
   assert.equal(editor._form.data.split_hubs, false);
+  assert.equal(editor._hubTabs.hidden, false);
+  assert.match(editor._hubTabs.innerHTML, /Downstairs hub/);
+  assert.match(editor._hubTabs.innerHTML, /Upstairs hub/);
+  assert.deepEqual(Array.from(editor._editorRooms(), room => room.entity_id), ['climate.bedroom','climate.offline','switch.lamp']);
+  editor._selectEditorHub('hub-b');
+  assert.deepEqual(Array.from(editor._editorRooms(), room => room.entity_id), ['climate.lounge']);
+  assert.equal(editor.lastEvent.detail.config.hubs, undefined);
   editor._changed({stopPropagation(){},detail:{value:{...editor._form.data,split_hubs:true}}});
   assert.equal(editor.lastEvent.detail.config.split_hubs, true);
 
@@ -964,6 +971,7 @@ test('dashboard cards can split selected devices into named hub sections', () =>
   panelEditor._hubs = hubs;
   panelEditor.setConfig({});
   assert.equal(panelEditor._form.schema.some(field => field.name === 'split_hubs'), false);
+  assert.equal(panelEditor._hubTabs.hidden, true);
 });
 
 test('shutter controls call cover services and respect feature and position limits', async () => {

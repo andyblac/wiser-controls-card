@@ -2116,6 +2116,22 @@
       });
       this._form = document.createElement("ha-form");
       this._form.className = "settings";
+      this._hubTabs = document.createElement("div");
+      this._hubTabs.className = "editor-hub-tabs";
+      this._hubTabs.addEventListener("click", event => {
+        const tab = event.target.closest?.("[data-editor-hub]");
+        if (tab) this._selectEditorHub(tab.dataset.editorHub);
+      });
+      this._hubTabs.addEventListener("keydown", event => {
+        if (!event.target.matches?.('[role="tab"]') || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        const hubs = this._editorHubIds();
+        if (hubs.length < 2) return;
+        event.preventDefault();
+        let index = hubs.indexOf(this._editingHub);
+        index = event.key === "Home" ? 0 : event.key === "End" ? hubs.length - 1
+          : (index + (event.key === "ArrowLeft" ? -1 : 1) + hubs.length) % hubs.length;
+        this._selectEditorHub(hubs[index], true);
+      });
       this._typeForm = document.createElement("div");
       this._typeForm.className = "show-filter";
       this._typeForm.addEventListener("click", event => {
@@ -2249,7 +2265,7 @@
       this._tabs.addEventListener("keydown", event => {
         if (!event.target.matches('[role="tab"]') || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
         event.preventDefault();
-        const rooms = this._tabRooms(this._rooms());
+        const rooms = this._tabRooms(this._editorRooms());
         let index = rooms.findIndex(room => room.entity_id === this._selectedRoom);
         index = event.key === "Home" ? 0 : event.key === "End" ? rooms.length - 1
           : (index + (event.key === "ArrowLeft" ? -1 : 1) + rooms.length) % rooms.length;
@@ -2260,6 +2276,10 @@
         ha-form.hubs{display:block;margin-bottom:16px}
         ha-form.hubs[hidden]{display:none}
         ha-form.settings::part(root){display:grid;grid-template-columns:minmax(0,1fr) 130px;column-gap:8px;align-items:start}
+        .editor-hub-tabs{display:flex;min-width:0;overflow-x:auto;border-bottom:1px solid var(--divider-color);margin:12px 0 4px;scrollbar-width:thin}
+        .editor-hub-tabs[hidden]{display:none}
+        .editor-hub-tabs button{flex:0 0 auto;min-height:42px;padding:8px 16px;border:0;border-bottom:3px solid transparent;background:transparent;opacity:.65;white-space:nowrap}
+        .editor-hub-tabs button.active{color:var(--primary-color);border-bottom-color:var(--primary-color);opacity:1}
         .show-filter{display:block;margin-top:16px}
         ha-form.configuration-mode{display:block;margin-top:16px}
         .show-label{display:block;margin:0 0 8px;font-size:14px;color:var(--primary-text-color)}
@@ -2354,7 +2374,7 @@
         .version{margin-top:24px;color:var(--secondary-text-color);font-size:12px;text-align:right}
       `;
       this._roomForm.className = "room-options";
-      this.shadowRoot.append(style, this._hubForm, this._form, this._typeForm, this._modeForm, this._tabs, this._roomForm, this._featureList, this._message, this._version);
+      this.shadowRoot.append(style, this._hubForm, this._form, this._hubTabs, this._typeForm, this._modeForm, this._tabs, this._roomForm, this._featureList, this._message, this._version);
       this._form.computeLabel = schema => schema.label || text(this._hass,"title");
       this._form.addEventListener("value-changed", event => this._changed(event));
     }
@@ -2396,6 +2416,56 @@
         .map(entry => this._hass.states[entry.entity_id]), this._config?.device_order || this._config?.entities);
     }
     _rooms() { return this._allRooms().filter(room => matchesType(room, selectedTypes(this._config))); }
+    _roomHubId(room) {
+      return this._entries?.find(entry => entry.entity_id === room?.entity_id)?.config_entry_id;
+    }
+    _selectedHubIds() {
+      const roomHubs = new Set(this._allRooms().map(room => this._roomHubId(room)).filter(Boolean));
+      const configured = this._config?.hubs?.length ? this._config.hubs : this._detectedHubs().map(hub => hub.value);
+      return configured.filter(id => roomHubs.has(id));
+    }
+    _editorHubIds() {
+      const namedHubs = new Set((this._hubs || []).map(hub => hub.entry_id));
+      return this._selectedHubIds().filter(id => namedHubs.has(id));
+    }
+    _editorRooms() {
+      const rooms = this._rooms();
+      const hubs = this._editorHubIds();
+      if (this.hideHubSelector || hubs.length < 2) return rooms;
+      if (!hubs.includes(this._editingHub)) this._editingHub = hubs[0];
+      return rooms.filter(room => this._roomHubId(room) === this._editingHub);
+    }
+    _renderHubTabs(hubs, selectedHubIds) {
+      const visible = !this.hideHubSelector && selectedHubIds.length > 1;
+      this._hubTabs.hidden = !visible;
+      if (!visible) {
+        this._hubTabs.innerHTML = "";
+        return;
+      }
+      const labels = new Map(hubs.map(hub => [hub.value, hub.label]));
+      const markup = selectedHubIds.map(id => {
+        const active = id === this._editingHub;
+        const label = labels.get(id) || id;
+        return `<button type="button" role="tab" data-editor-hub="${escape(id)}" aria-selected="${active}" tabindex="${active ? 0 : -1}" class="${active ? "active" : ""}">${escape(label)}</button>`;
+      }).join("");
+      if (markup !== this._hubTabsMarkup) {
+        this._hubTabs.innerHTML = markup;
+        this._hubTabsMarkup = markup;
+      }
+    }
+    _selectEditorHub(id, focusTab = false) {
+      const hubs = this._editorHubIds();
+      if (!hubs.includes(id) || id === this._editingHub) return;
+      this._selectedRoomByHub ||= new Map();
+      if (this._editingHub && this._selectedRoom) this._selectedRoomByHub.set(this._editingHub, this._selectedRoom);
+      this._editingHub = id;
+      const rooms = this._rooms().filter(room => this._roomHubId(room) === id);
+      const remembered = this._selectedRoomByHub.get(id);
+      this._selectedRoom = rooms.some(room => room.entity_id === remembered) ? remembered : rooms[0]?.entity_id;
+      this._render();
+      this._dispatchConfig();
+      if (focusTab) this._hubTabs.querySelector?.('[role="tab"][aria-selected="true"]')?.focus({preventScroll:true});
+    }
     _detectedHubs() {
       const titles = new Map((this._hubs || []).map(entry => [entry.entry_id, entry.title || entry.entry_id]));
       return [...new Set((this._entries || []).filter(entry => entry.platform === "wiser" && entry.config_entry_id).map(entry => entry.config_entry_id))]
@@ -2430,7 +2500,6 @@
     }
     _render() {
       if (!this._config || !this._hass) return;
-      const rooms = this._rooms();
       const hubs = this._detectedHubs();
       this._hubForm.hass = this._hass;
       const hubSchema = [{name:"hubs",label:text(this._hass,"hubs"),selector:{select:{multiple:true,mode:"dropdown",options:hubs}}}];
@@ -2440,10 +2509,12 @@
       if (JSON.stringify(hubData) !== JSON.stringify(this._hubForm.data)) this._hubForm.data = hubData;
       this._hubForm.hidden = this.hideHubSelector || !hubs.length;
       this._form.hass = this._hass;
-      const selectedHubIds = new Set((this._entries || [])
-        .filter(entry => isRoom(entry, this._hass.states[entry.entity_id]) && matchesHub(entry, this._config?.hubs))
-        .map(entry => entry.config_entry_id).filter(Boolean));
-      const hasMultipleHubs = !this.hideHubSelector && selectedHubIds.size > 1;
+      const selectedHubIds = this._selectedHubIds();
+      const hasMultipleHubs = !this.hideHubSelector && selectedHubIds.length > 1;
+      const editorHubIds = this._editorHubIds();
+      if (editorHubIds.length > 1 && !editorHubIds.includes(this._editingHub)) this._editingHub = editorHubIds[0];
+      const rooms = this._editorRooms();
+      this._renderHubTabs(hubs, editorHubIds);
       const hasMultipleHeatingChannels = heatingChannelGroups(this._allRooms())
         .filter(group => group.key !== "unassigned").length > 1;
       const appearanceSchema = [
@@ -2849,7 +2920,7 @@
       this.dispatchEvent(new CustomEvent("config-changed", {detail: {config}, bubbles: true, composed: true}));
     }
     _roomAction(action) {
-      const rooms = this._tabRooms(this._rooms());
+      const rooms = this._tabRooms(this._editorRooms());
       const selected = rooms.find(room => room.entity_id === this._selectedRoom);
       if (!selected) return;
       const typeRooms = rooms.filter(room => deviceType(room) === deviceType(selected));
