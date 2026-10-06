@@ -500,8 +500,6 @@
           usesEntities = true;
           if (hubConfig.entities.includes(entry.entity_id)) entities.push(entry.entity_id);
         }
-        const configuredOrder = hubConfig.device_order || [];
-        if (configuredOrder.includes(entry.entity_id)) order.push(entry.entity_id);
         const sharedOptions = Object.fromEntries(ROOM_CONFIG_ORDER
           .filter(key => Object.hasOwn(hubConfig,key)).map(key => [key,hubConfig[key]]));
         const specific = masterMode(hubConfig)

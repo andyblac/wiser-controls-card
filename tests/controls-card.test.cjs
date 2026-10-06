@@ -1037,6 +1037,22 @@ test('dashboard cards migrate entity settings into one configuration per hub', (
   assert.equal(panelEditor._hubTabs.hidden, true);
 });
 
+test('combined hub configuration preserves its explicit device order', () => {
+  const {card} = setup();
+  card.setConfig({
+    hubs:['hub-a'],
+    split_hubs:false,
+    hub_configs:[{
+      hub:'hub-a',
+      device_order:['climate.offline','climate.bedroom'],
+    }],
+  });
+  assert.deepEqual(Array.from(card._rooms(), room => room.entity_id), [
+    'climate.offline',
+    'climate.bedroom',
+  ]);
+});
+
 test('shutter controls call cover services and respect feature and position limits', async () => {
   const {card,calls} = setup(); const shutter = addShutter(card);
   for (const service of ['open_cover','stop_cover','close_cover']) await card._shutterService(shutter, service);
