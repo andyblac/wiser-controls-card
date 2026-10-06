@@ -1,6 +1,6 @@
 {
   "name": "wiser-controls-card",
-  "version": "0.5.2-beta.1-dev.10",
+  "version": "0.5.2-beta.1-dev.19",
   "private": true,
   "description": "Wiser device controls for Home Assistant",
   "license": "MIT",

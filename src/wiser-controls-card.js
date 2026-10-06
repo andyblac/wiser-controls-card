@@ -2450,13 +2450,13 @@
         .room-tab-rows .room-tab-bar { margin: 0; }
         .room-tab-rows .room-tab-bar + .room-tab-bar { margin-top: 4px; }
         .room-tabs-viewport {
-          position: relative;
           display: flex;
           flex: 1;
           min-width: 0;
         }
         .room-tabs {
           display: flex;
+          order: 2;
           flex: 1;
           flex-wrap: nowrap;
           gap: 4px;
@@ -2466,25 +2466,21 @@
           scrollbar-width: thin;
         }
         .tab-overflow-indicator {
-          position: absolute;
-          z-index: 2;
-          top: 0;
-          bottom: 0;
           display: none;
-          width: 34px;
+          flex: 0 0 26px;
+          width: 26px;
           align-items: center;
           justify-content: center;
           color: var(--primary-text-color);
           border: 0;
+          background: transparent;
           cursor: pointer;
         }
         .tab-overflow-indicator.left {
-          inset-inline-start: 0;
-          background: linear-gradient(to right, var(--card-background-color) 40%, transparent);
+          order: 1;
         }
         .tab-overflow-indicator.right {
-          inset-inline-end: 0;
-          background: linear-gradient(to left, var(--card-background-color) 40%, transparent);
+          order: 3;
         }
         .room-tabs-viewport.can-scroll-left .tab-overflow-indicator.left,
         .room-tabs-viewport.can-scroll-right .tab-overflow-indicator.right { display: flex; }
@@ -2500,21 +2496,20 @@
         }
         .room-type-label {
           align-self: center;
-          flex: 0 0 92px;
-          overflow: hidden;
+          flex: 0 0 auto;
           padding: 0 8px 0 0;
           color: var(--secondary-text-color);
           font-size: 14px;
           font-weight: 600;
           line-height: 40px;
-          text-overflow: ellipsis;
           white-space: nowrap;
         }
         .room-tabs button.active{color:var(--primary-color);opacity:1;border-bottom-color:var(--primary-color)}
         .room-tabs.type-tabs button{flex-basis:auto;min-width:max-content}
         .room-tabs button.hidden-room{text-decoration:line-through}
-        .room-tools{display:flex;flex-wrap:nowrap;gap:4px;margin-left:auto;flex-shrink:0}
-        .room-tools ha-icon-button{--ha-icon-button-size:34px}
+        .room-tools{display:flex;flex-wrap:nowrap;gap:0;margin-left:2px;flex-shrink:0}
+        .room-tools ha-icon-button{--ha-icon-button-size:30px}
+        .room-tools ha-icon{--mdc-icon-size:18px}
         button:disabled{opacity:.35;cursor:default}ha-icon{--mdc-icon-size:20px;pointer-events:none}
         ha-form.room-options{display:block;margin-bottom:24px;--ha-space-6:var(--ha-space-1,4px)}
         ha-expansion-panel{display:block;--expansion-panel-content-padding:0;border-radius:var(--ha-border-radius-md);--ha-card-border-radius:var(--ha-border-radius-md)}
@@ -2776,7 +2771,7 @@
       }).join("")}</div>`;
       if (typeMarkup !== this._typeMarkup) { this._typeForm.innerHTML = typeMarkup; this._typeMarkup = typeMarkup; }
       this._modeForm.hass = this._hass;
-      const modeSchema = [{name:"device_configuration",label:text(this._hass,"configuration_mode"),selector:{button_toggle:{options:[
+      const modeSchema = [{name:"device_configuration",label:text(this._hass,"configuration_mode"),selector:{button_toggle:{size:"small",options:[
         {value:"master",label:text(this._hass,"master")},{value:"individual",label:text(this._hass,"individual")},
       ]}}}];
       if (JSON.stringify(modeSchema) !== this._modeSchemaSignature) { this._modeForm.schema = modeSchema; this._modeSchemaSignature = JSON.stringify(modeSchema); }
@@ -3020,6 +3015,13 @@
       const viewport = strip?.parentElement;
       if (!viewport?.classList) return;
       const tolerance = 2;
+      const fullWidth = Math.max(strip.clientWidth, viewport.clientWidth || 0);
+      if (strip.scrollWidth <= fullWidth + tolerance) {
+        viewport.classList.toggle("can-scroll-left", false);
+        viewport.classList.toggle("can-scroll-right", false);
+        strip.scrollLeft = 0;
+        return;
+      }
       viewport.classList.toggle("can-scroll-left", strip.scrollLeft > tolerance);
       viewport.classList.toggle("can-scroll-right", strip.scrollLeft + strip.clientWidth < strip.scrollWidth - tolerance);
     }

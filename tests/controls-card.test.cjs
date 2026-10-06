@@ -470,6 +470,22 @@ test('tab overflow indicators reflect remaining scroll in each direction', () =>
   assert.equal(classes.has('can-scroll-right'), false);
 });
 
+test('tab overflow indicators do not create their own overflow', () => {
+  const {Editor} = setup();
+  const editor = new Editor();
+  const classes = new Set(['can-scroll-left','can-scroll-right']);
+  const strip = {
+    scrollLeft:24,
+    clientWidth:448,
+    scrollWidth:480,
+    parentElement:{clientWidth:500,classList:{toggle(name, enabled) { enabled ? classes.add(name) : classes.delete(name); }}},
+  };
+  editor._updateTabOverflow(strip);
+  assert.equal(classes.has('can-scroll-left'), false);
+  assert.equal(classes.has('can-scroll-right'), false);
+  assert.equal(strip.scrollLeft, 0);
+});
+
 test('tab overflow chevrons smoothly scroll their own row', () => {
   const {Editor} = setup();
   const editor = new Editor();
@@ -563,6 +579,7 @@ test('master editor mode uses one shared room configuration and one preview card
   editor._hass = card._hass;
   editor._render();
   assert.equal(editor._modeForm.hidden, false);
+  assert.equal(editor._modeForm.schema[0].selector.button_toggle.size, 'small');
   editor._modeForm.listeners['value-changed']({stopPropagation(){},detail:{value:{device_configuration:'master'}}});
   let config = editor.lastEvent.detail.config;
   assert.equal(config.device_configuration, 'master');
