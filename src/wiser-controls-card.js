@@ -29,7 +29,7 @@
     "type", "title", "device_columns", "mobile_device_columns", "split_hubs", "hub_configs", "grid_options",
   ]);
   const WISER_PRESET_MODES = ["Advance Schedule", "Cancel Overrides", "Boost 30m", "Boost 1h", "Boost 2h", "Boost 3h"];
-  const SECONDARY_STATUS_FEATURE = "wiser-secondary-status-feature";
+  const LEGACY_SECONDARY_STATUS_FEATURE = "wiser-secondary-status-feature";
   const OVERRIDE_STATUS_FEATURE = "wiser-override-status-feature";
   const NEXT_SCHEDULE_FEATURE = "wiser-next-schedule-feature";
   const PASSIVE_MODE_FEATURE = "wiser-passive-mode-feature";
@@ -63,7 +63,7 @@
     }
     return request;
   };
-  const isSecondaryFeature = feature => feature?.type === `custom:${SECONDARY_STATUS_FEATURE}`;
+  const isLegacySecondaryFeature = feature => feature?.type === `custom:${LEGACY_SECONDARY_STATUS_FEATURE}`;
   const isOverrideStatusFeature = feature => feature?.type === `custom:${OVERRIDE_STATUS_FEATURE}`;
   const isHeaderFeature = feature => isOverrideStatusFeature(feature);
   const isIconFeature = feature => [NEXT_SCHEDULE_FEATURE, PASSIVE_MODE_FEATURE]
@@ -72,7 +72,7 @@
   const normalizedSecondaryStateContent = value => Array.isArray(value) ? value.filter(Boolean) : typeof value === "string" && value ? [value] : [];
   const orderNativeFeatures = list => [...list.filter(isHeaderFeature), ...list.filter(feature => !isHeaderFeature(feature))];
   const featureForRoom = (feature, id) => {
-    if (!isSecondaryFeature(feature) || !feature.entities || typeof feature.entities !== "object" || Array.isArray(feature.entities)) return feature;
+    if (!feature.entities || typeof feature.entities !== "object" || Array.isArray(feature.entities)) return feature;
     const resolved = {...feature};
     const entity = feature.entities[id];
     delete resolved.entities;
@@ -81,7 +81,7 @@
     return resolved;
   };
   const secondaryStatusFromFeature = feature => {
-    if (!isSecondaryFeature(feature)) return undefined;
+    if (!isLegacySecondaryFeature(feature)) return undefined;
     const status = {...feature};
     delete status.type;
     if (status.override_end_time) {
@@ -92,9 +92,9 @@
   };
   const migrateSecondaryStatusOptions = value => {
     if (!value || typeof value !== "object" || Array.isArray(value) || !Array.isArray(value.features)) return value;
-    const legacy = value.features.find(isSecondaryFeature);
+    const legacy = value.features.find(isLegacySecondaryFeature);
     if (!legacy) return value;
-    const migrated = {...value,features:value.features.filter(feature => !isSecondaryFeature(feature))};
+    const migrated = {...value,features:value.features.filter(feature => !isLegacySecondaryFeature(feature))};
     if (!migrated.secondary_status) migrated.secondary_status = secondaryStatusFromFeature(legacy);
     return migrated;
   };
@@ -121,7 +121,7 @@
     const direct = options.secondary_status;
     if (direct && typeof direct === "object" && !Array.isArray(direct)) {
       if (!normalizedSecondaryStateContent(direct.state_content).length) return undefined;
-      return featureForRoom({type:`custom:${SECONDARY_STATUS_FEATURE}`,...direct}, id);
+      return {kind:"secondary-status",...featureForRoom(direct,id)};
     }
     return undefined;
   };
@@ -764,16 +764,25 @@
       } catch (error) { this._error = `Unable to control ${this._name(room)}: ${error.message || error}`; }
       finally { this._busy = false; this._render(); }
     }
-    _headerFeatures(room) {
+    _headerItems(room) {
       const secondary = secondaryStatusForRoom(this._config, room.entity_id, room);
       const overrides = configuredNativeFeatures(this._config, room.entity_id, room)
         .filter(isOverrideStatusFeature).map(feature => featureForRoom(feature, room.entity_id));
       return [...(secondary ? [secondary] : []), ...overrides];
     }
     _secondaryMarkup(room) {
-      return this._headerFeatures(room).map((feature, index) => {
-        const tag = isOverrideStatusFeature(feature) ? OVERRIDE_STATUS_FEATURE : SECONDARY_STATUS_FEATURE;
-        return `<${tag} data-key="secondary-${index}" data-secondary-room="${escape(room.entity_id)}" data-secondary-index="${index}"></${tag}>`;
+      return this._headerItems(room).map((feature, index) => {
+        if (feature.kind === "secondary-status") {
+          const id = feature.entity || room.entity_id;
+          const state = this._hass.states[id];
+          const showLabels = feature.show_labels === true;
+          const items = normalizedStateContent(feature.state_content).map(item => {
+            const label = stateContentLabel(this._hass, state, item);
+            return `<span class="secondary-status-item" title="${escape(label)}">${showLabels ? `<span class="secondary-status-label">${escape(label)}</span>` : ""}<state-display data-secondary-status="${escape(id)}" data-secondary-content="${escape(item)}"></state-display></span>`;
+          }).join("");
+          return `<button type="button" class="secondary-status ${showLabels ? "labelled" : ""}" data-key="secondary-${index}" data-action="secondary-more-info" data-entity="${escape(id)}" title="${escape(state ? entityDisplayName(this._hass,state) : id)}" ${state ? "" : "disabled"}>${items}</button>`;
+        }
+        return `<${OVERRIDE_STATUS_FEATURE} data-key="secondary-${index}" data-header-feature-room="${escape(room.entity_id)}" data-header-feature-index="${index}"></${OVERRIDE_STATUS_FEATURE}>`;
       }).join("");
     }
     _nativeMarkup(room) {
@@ -803,9 +812,17 @@
           ? [display.dataset.statusContent]
           : roomConfig(this._config, id).state_content ?? this._defaultStateContent(id);
       }
-      for (const element of this.shadowRoot.querySelectorAll?.("[data-secondary-room]") || []) {
-        const id = element.dataset.secondaryRoom;
-        const config = this._headerFeatures(this._hass.states[id])[Number(element.dataset.secondaryIndex)];
+      for (const display of this.shadowRoot.querySelectorAll?.("state-display[data-secondary-status]") || []) {
+        const id = display.dataset.secondaryStatus;
+        display.hass = this._hass;
+        display.stateObj = withOverrideEnd(this._hass.states[id], this._hass);
+        display.content = [display.dataset.secondaryContent];
+        display.timestampTooltip = true;
+      }
+      for (const element of this.shadowRoot.querySelectorAll?.("[data-header-feature-room]") || []) {
+        const id = element.dataset.headerFeatureRoom;
+        const config = this._headerItems(this._hass.states[id])[Number(element.dataset.headerFeatureIndex)];
+        if (!config) continue;
         element.hass = this._hass;
         element.context = {entity_id:id};
         if (element._wiserConfig !== JSON.stringify(config)) {
@@ -1049,6 +1066,11 @@
       if (button.dataset.action === "all-plugs-off") { this._allDevicesOff("plugs"); return; }
       if (button.dataset.action?.startsWith("resume-")) { this._resumeSchedules(button.dataset.action.slice(7)); return; }
       if (button.dataset.action === "retry") { this._discover(); return; }
+      if (button.dataset.action === "secondary-more-info") {
+        const entityId = button.dataset.entity;
+        if (entityId && this._hass.states[entityId]) this.dispatchEvent(new CustomEvent("hass-more-info", {detail:{entityId}, bubbles:true, composed:true}));
+        return;
+      }
       const room = this._rooms().find(r => r.entity_id === button.dataset.entity);
       if (room && button.dataset.action === "shutter") {
         this._shutterService(room, button.dataset.service); return;
@@ -1798,13 +1820,45 @@
           text-overflow:clip;
           text-align:right
         }
-        .secondary-primary-line wiser-secondary-status-feature {
+        .secondary-primary-line .secondary-status {
           flex:1 1 auto;
           overflow:hidden
         }
-        .secondary-layout wiser-secondary-status-feature {
+        .secondary-layout .secondary-status {
           min-width:0;
           line-height:16px
+        }
+        .secondary-status {
+          display:flex;
+          width:100%;
+          min-height:0;
+          align-items:baseline;
+          gap:6px;
+          padding:0;
+          border:0;
+          border-radius:0;
+          background:none;
+          color:var(--secondary-text-color);
+          font-size:12px;
+          text-align:start
+        }
+        .secondary-status-item {
+          display:flex;
+          min-width:0;
+          gap:3px;
+          white-space:nowrap
+        }
+        .secondary-status:not(.labelled) .secondary-status-item+.secondary-status-item::before {
+          content:"·"
+        }
+        .secondary-status-label::after {
+          content:":"
+        }
+        .secondary-status state-display {
+          display:block;
+          overflow:hidden;
+          text-overflow:ellipsis;
+          white-space:nowrap
         }
         hui-card-features.features-bottom {
           display:block;
@@ -1941,161 +1995,6 @@
       this._updateDOM(markup);
       this._syncNativeFeatures();
       this._layoutHeaders();
-    }
-  }
-  class WiserSecondaryStatusFeature extends HTMLElement {
-    constructor() {
-      super();
-      this.attachShadow({mode:"open"});
-      const style = document.createElement("style");
-      style.textContent = `:host{display:block;pointer-events:auto;min-width:0}button{display:block;width:100%;padding:0;border:0;background:none;color:var(--secondary-text-color);font:inherit;font-size:12px;text-align:start;cursor:pointer}button:focus-visible{outline:2px solid var(--primary-color)}state-display{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.unlabelled,.labelled{display:flex;min-width:0;gap:6px;overflow:hidden}.unlabelled[hidden],.labelled[hidden]{display:none!important}.unlabelled-item,.labelled-item{display:flex;min-width:0;gap:3px;white-space:nowrap}.unlabelled-item+.unlabelled-item::before{content:"·"}.label{color:var(--secondary-text-color)}.label::after{content:":"}`;
-      this._button = document.createElement("button");
-      this._button.type = "button";
-      this._unlabelled = document.createElement("span");
-      this._unlabelled.className = "unlabelled";
-      this._labelled = document.createElement("span");
-      this._labelled.className = "labelled";
-      this._button.append(this._unlabelled, this._labelled);
-      this._button.addEventListener("click", event => {
-        event.stopPropagation();
-        const id = this._config?.entity || this._context?.entity_id || this._stateObj?.entity_id;
-        if (id && this._hass?.states[id]) this.dispatchEvent(new CustomEvent("hass-more-info", {bubbles:true, composed:true, detail:{entityId:id}}));
-      });
-      this.shadowRoot.append(style, this._button);
-    }
-    static getStubConfig() { return {type:`custom:${SECONDARY_STATUS_FEATURE}`, state_content:["state"]}; }
-    static getConfigElement() { return document.createElement("wiser-secondary-status-feature-editor"); }
-    setConfig(config) {
-      this._config = {...config};
-      this._config.state_content = normalizedStateContent(this._config.state_content);
-      if (this._config.override_end_time) {
-        this._config.state_content = [...new Set([...this._config.state_content, "override_end_time"])];
-        delete this._config.override_end_time;
-      }
-      this._render();
-    }
-    set hass(value) { this._hass = value; this._render(); }
-    set context(value) { this._context = value; this._render(); }
-    set stateObj(value) { this._stateObj = value; this._render(); }
-    _render() {
-      if (!this._hass || !this._config) return;
-      const id = this._config.entity || this._context?.entity_id || this._stateObj?.entity_id;
-      const state = this._hass.states[id];
-      const content = normalizedStateContent(this._config.state_content);
-      const showLabels = this._config.show_labels === true;
-      this._button.disabled = !state;
-      this._unlabelled.hidden = !state || showLabels;
-      this._labelled.hidden = !state || !showLabels;
-      this._button.title = state
-        ? entityDisplayName(this._hass, state)
-        : id || text(this._hass,"secondary_status");
-      const displayState = withOverrideEnd(state, this._hass);
-      this._unlabelled.innerHTML = "";
-      this._unlabelDisplays = content.map(item => {
-        const row = document.createElement("span");
-        row.className = "unlabelled-item";
-        row.title = stateContentLabel(this._hass, state, item);
-        const display = document.createElement("state-display");
-        display.hass = this._hass;
-        display.stateObj = displayState;
-        display.content = [item];
-        display.timestampTooltip = true;
-        row.append(display);
-        this._unlabelled.append(row);
-        return {row,display};
-      });
-      this._labelled.innerHTML = "";
-      this._labelDisplays = content.map(item => {
-        const row = document.createElement("span");
-        row.className = "labelled-item";
-        row.title = stateContentLabel(this._hass, state, item);
-        const label = document.createElement("span");
-        label.className = "label";
-        label.textContent = row.title;
-        const display = document.createElement("state-display");
-        display.hass = this._hass;
-        display.stateObj = displayState;
-        display.content = [item];
-        display.timestampTooltip = true;
-        row.append(label, display);
-        this._labelled.append(row);
-        return {label,display};
-      });
-    }
-  }
-  class WiserSecondaryStatusFeatureEditor extends HTMLElement {
-    constructor() {
-      super();
-      this.attachShadow({mode:"open"});
-      this._form = document.createElement("ha-form");
-      this._form.computeLabel = schema => schema.label || text(this._hass, schema.name === "entity" ? "entity" : "state_content");
-      this._form.schema = [
-        {name:"entity", selector:{entity:{}}},
-        {name:"state_content", selector:{ui_state_content:{allow_context:true}}},
-      ];
-      this._form.addEventListener("value-changed", event => {
-        event.stopPropagation();
-        const value = {...event.detail.value};
-        const rooms = this._context?.wiser_master ? this._context.wiser_rooms || [] : [];
-        if (rooms.length) {
-          const entities = {...(this._config.entities || {})};
-          rooms.forEach((room, index) => {
-            const entity = value[`room_${index}`];
-            if (entity && entity !== room.entity_id) entities[room.entity_id] = entity;
-            else delete entities[room.entity_id];
-          });
-          this._config = {...this._config,state_content:normalizedStateContent(value.state_content),type:`custom:${SECONDARY_STATUS_FEATURE}`};
-          if (value.show_labels) this._config.show_labels = true;
-          else delete this._config.show_labels;
-          delete this._config.entity;
-          if (Object.keys(entities).length) this._config.entities = entities;
-          else delete this._config.entities;
-        } else {
-          if (!value.entity || value.entity === this._context?.entity_id) delete value.entity;
-          this._config = {...this._config, ...value,state_content:normalizedStateContent(value.state_content),type:`custom:${SECONDARY_STATUS_FEATURE}`};
-          if (!value.entity) delete this._config.entity;
-          if (!value.show_labels) delete this._config.show_labels;
-        }
-        this.dispatchEvent(new CustomEvent("config-changed", {bubbles:true, composed:true, detail:{config:this._config}}));
-      });
-      this.shadowRoot.append(this._form);
-    }
-    setConfig(config) {
-      this._config = {...config};
-      this._config.state_content = normalizedStateContent(this._config.state_content);
-      if (this._config.override_end_time) {
-        this._config.state_content = [...new Set([...this._config.state_content, "override_end_time"])];
-        delete this._config.override_end_time;
-      }
-      this._render();
-    }
-    set hass(value) { this._hass = value; this._render(); }
-    set context(value) { this._context = value; this._render(); }
-    _render() {
-      if (!this._hass || !this._config) return;
-      const rooms = this._context?.wiser_master ? this._context.wiser_rooms || [] : [];
-      const mappedEntity = this._config.entities?.[this._context?.entity_id];
-      const effectiveEntity = mappedEntity || this._config.entity || this._context?.entity_id || "";
-      const effectiveState = this._hass.states[effectiveEntity];
-      this._form.hass = effectiveState ? {...this._hass, states:{...this._hass.states, [effectiveEntity]:withOverrideEnd(effectiveState, this._hass)}} : this._hass;
-      this._form.schema = rooms.length ? [
-        ...rooms.map((room, index) => ({name:`room_${index}`,label:room.name,selector:{entity:{}}})),
-        {name:"state_content", selector:{ui_state_content:{allow_context:true,entity_id:effectiveEntity || undefined}}},
-        {name:"show_labels",label:text(this._hass,"show_state_labels"),selector:{boolean:{}}},
-      ] : [
-        {name:"entity", selector:{entity:{}}},
-        {name:"state_content", selector:{ui_state_content:{allow_context:true,entity_id:effectiveEntity || undefined}}},
-        {name:"show_labels",label:text(this._hass,"show_state_labels"),selector:{boolean:{}}},
-      ];
-      const data = rooms.length ? Object.fromEntries([
-        ...rooms.map((room, index) => [`room_${index}`,this._config.entities?.[room.entity_id] || ""]),
-        ["state_content",normalizedStateContent(this._config.state_content)],
-        ["show_labels",this._config.show_labels === true],
-      ]) : {entity:this._config.entity || "", state_content:normalizedStateContent(this._config.state_content),show_labels:this._config.show_labels === true};
-      if (JSON.stringify(data) !== this._signature) {
-        this._form.data = data;
-        this._signature = JSON.stringify(data);
-      }
     }
   }
   class WiserOverrideStatusFeature extends HTMLElement {
@@ -2295,8 +2194,6 @@
       this._button.ariaLabel = this._button.title;
     }
   }
-  if (!customElements.get(SECONDARY_STATUS_FEATURE)) customElements.define(SECONDARY_STATUS_FEATURE, WiserSecondaryStatusFeature);
-  if (!customElements.get("wiser-secondary-status-feature-editor")) customElements.define("wiser-secondary-status-feature-editor", WiserSecondaryStatusFeatureEditor);
   if (!customElements.get(OVERRIDE_STATUS_FEATURE)) customElements.define(OVERRIDE_STATUS_FEATURE, WiserOverrideStatusFeature);
   if (!customElements.get(NEXT_SCHEDULE_FEATURE)) customElements.define(NEXT_SCHEDULE_FEATURE, WiserNextScheduleFeature);
   if (!customElements.get(PASSIVE_MODE_FEATURE)) customElements.define(PASSIVE_MODE_FEATURE, WiserPassiveModeFeature);
