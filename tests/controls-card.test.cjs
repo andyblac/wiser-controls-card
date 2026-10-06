@@ -418,7 +418,7 @@ test('initial editor selection previews the first device even when it is hidden'
   assert.equal(editor.lastEvent.detail.config[Symbol.for('wiser-rooms-card-preview-room')], 'climate.bedroom');
   card.hasAttribute = name => name === 'editor-preview';
   card.setConfig(editor.lastEvent.detail.config);
-  assert.match(card.shadowRoot.innerHTML, /<section data-key="climate.bedroom"/);
+  assert.match(card.shadowRoot.innerHTML, /<section data-key="climate.bedroom"[^>]*preview-selected preview-hidden/);
   assert.doesNotMatch(card.shadowRoot.innerHTML, /<section data-key="climate.lounge"/);
 });
 
@@ -807,8 +807,9 @@ test('clearing Title in the UI editor removes it from the card', () => {
   assert.match(card.shadowRoot.innerHTML, /data-action="follow-schedule"/);
 });
 
-test('editor preview shows only the selected room and never saves the selection', () => {
+test('editor preview shows the selected device plus one device from every available section', () => {
   const {card, Editor} = setup();
+  addPlug(card);
   const editor = new Editor();
   editor.setConfig({device_columns:5});
   editor._hass = card._hass;
@@ -819,8 +820,14 @@ test('editor preview shows only the selected room and never saves the selection'
   card.setConfig(config);
   assert.match(card.shadowRoot.innerHTML, /data-key="climate.lounge" class="room  preview-selected"/);
   assert.doesNotMatch(card.shadowRoot.innerHTML, /<section data-key="climate.bedroom"/);
+  assert.match(card.shadowRoot.innerHTML, /<section data-key="switch.lamp"/);
   assert.match(card.shadowRoot.innerHTML, /style="--room-columns:1"/);
-  assert.equal((card.shadowRoot.innerHTML.match(/class="room-content(?: [^"]*)?"/g) || []).length, 1);
+  assert.equal((card.shadowRoot.innerHTML.match(/class="room-content(?: [^"]*)?"/g) || []).length, 2);
+  editor._selectRoom('switch.lamp');
+  card.setConfig(editor.lastEvent.detail.config);
+  assert.match(card.shadowRoot.innerHTML, /<section data-key="climate.lounge"/);
+  assert.doesNotMatch(card.shadowRoot.innerHTML, /<section data-key="climate.bedroom"/);
+  assert.match(card.shadowRoot.innerHTML, /data-key="switch.lamp" class="room device-plug powered preview-selected/);
   card.hasAttribute = () => false;
   card._render();
   assert.doesNotMatch(card.shadowRoot.innerHTML, /class="room  preview-selected"/);
@@ -988,6 +995,11 @@ test('dashboard cards migrate entity settings into one configuration per hub', (
   assert.equal(editor._form.schema.some(field => field.name === 'split_hubs'), true);
   assert.equal(editor._form.data.split_hubs, true);
   assert.equal(editor._hubTabs.hidden, false);
+  assert.equal(editor._typeForm.hidden, true);
+  assert.equal(editor._modeForm.hidden, true);
+  assert.equal(editor._roomForm.hidden, true);
+  assert.equal(editor._featureList.hidden, true);
+  assert.match(fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8'), /\[hidden\]\{display:none!important\}/);
   assert.match(editor._hubTabs.innerHTML, /Downstairs hub/);
   assert.match(editor._hubTabs.innerHTML, /Upstairs hub/);
   assert.deepEqual(Array.from(editor._editorRooms(), room => room.entity_id), ['climate.bedroom','climate.offline','switch.lamp']);
@@ -1013,6 +1025,19 @@ test('dashboard cards migrate entity settings into one configuration per hub', (
   card.hasAttribute = name => name === 'editor-preview';
   card._config[Symbol.for('wiser-rooms-card-preview-room')] = 'climate.offline';
   const hubPreviewConfig = card._effectiveHubConfig(card._hubConfigEntries()[0]);
+  const hiddenSecondHub = card._hubConfigEntries()[1];
+  hiddenSecondHub.config = {...hiddenSecondHub.config,excluded_entities:['climate.lounge']};
+  const hiddenHubPreviewConfig = card._effectiveHubConfig(hiddenSecondHub);
+  assert.equal(hiddenHubPreviewConfig[Symbol.for('wiser-rooms-card-preview-room')], undefined);
+  const hiddenHubPreview = new card.constructor();
+  hiddenHubPreview._updateDOM = function(markup) { this.shadowRoot.innerHTML = markup; };
+  hiddenHubPreview.hasAttribute = name => name === 'editor-preview';
+  hiddenHubPreview._entries = card._entries;
+  hiddenHubPreview._hubs = hubs;
+  hiddenHubPreview.setConfig(hiddenHubPreviewConfig);
+  hiddenHubPreview.hass = card._hass;
+  assert.match(hiddenHubPreview.shadowRoot.innerHTML, /<section data-key="climate.lounge"[^>]*preview-hidden/);
+  assert.doesNotMatch(hiddenHubPreview.shadowRoot.innerHTML, /<section[^>]*preview-selected/);
   const hubPreview = new card.constructor();
   hubPreview._updateDOM = function(markup) { this.shadowRoot.innerHTML = markup; };
   hubPreview.hasAttribute = name => name === 'editor-preview';
@@ -1022,6 +1047,18 @@ test('dashboard cards migrate entity settings into one configuration per hub', (
   hubPreview.hass = card._hass;
   assert.match(hubPreview.shadowRoot.innerHTML, /<section data-key="climate.offline"/);
   assert.match(hubPreview.shadowRoot.innerHTML, /<section data-key="switch.lamp"/);
+  assert.doesNotMatch(hubPreview.shadowRoot.innerHTML, /<section data-key="climate.bedroom"/);
+  assert.equal((hubPreview.shadowRoot.innerHTML.match(/class="room-content(?: [^"]*)?"/g) || []).length, 2);
+  const plugPreviewConfig = {
+    ...hubPreviewConfig,
+    excluded_entities:['climate.bedroom'],
+    [Symbol.for('wiser-rooms-card-preview-room')]:'switch.lamp',
+    [Symbol.for('wiser-rooms-card-preview-rooms')]:['climate.offline','switch.lamp'],
+  };
+  hubPreview.setConfig(plugPreviewConfig);
+  hubPreview.hass = card._hass;
+  assert.match(hubPreview.shadowRoot.innerHTML, /<section data-key="climate.offline"/);
+  assert.match(hubPreview.shadowRoot.innerHTML, /<section data-key="switch.lamp"[^>]*preview-selected/);
   assert.doesNotMatch(hubPreview.shadowRoot.innerHTML, /<section data-key="climate.bedroom"/);
   assert.equal((hubPreview.shadowRoot.innerHTML.match(/class="room-content(?: [^"]*)?"/g) || []).length, 2);
   card.hasAttribute = () => false;
@@ -1068,6 +1105,27 @@ test('combined hub configuration preserves its explicit device order', () => {
     'climate.offline',
     'climate.bedroom',
   ]);
+});
+
+test('per-hub editor dispatches its initial hidden device selection to the preview', () => {
+  const {card, Editor} = setup();
+  const editor = new Editor();
+  editor._hass = card._hass;
+  editor._entries = card._entries;
+  editor._hubs = [{entry_id:'hub-a',title:'Downstairs hub'}];
+  editor.setConfig({
+    type:'custom:wiser-controls-card',
+    hubs:['hub-a'],
+    hub_configs:[{
+      hub:'hub-a',
+      device_types:['heating'],
+      excluded_entities:['climate.bedroom'],
+      device_order:['climate.bedroom','climate.offline'],
+    }],
+  });
+  assert.equal(editor._hubConfigEditor._selectedRoom, 'climate.bedroom');
+  assert.equal(editor._selectedRoom, 'climate.bedroom');
+  assert.equal(editor.lastEvent.detail.config[Symbol.for('wiser-rooms-card-preview-room')], 'climate.bedroom');
 });
 
 test('shutter controls call cover services and respect feature and position limits', async () => {

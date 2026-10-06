@@ -227,6 +227,7 @@
     return nativeLoading;
   };
   const PREVIEW_ROOM = Symbol.for("wiser-rooms-card-preview-room");
+  const PREVIEW_ROOMS = Symbol.for("wiser-rooms-card-preview-rooms");
   const PREVIEW_ALL_TYPES = Symbol.for("wiser-rooms-card-preview-all-types");
   const escape = (value) => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   const wiserName = state => String(state?.attributes?.name ?? "");
@@ -620,6 +621,8 @@
       const {hub:_hub, title:_title, device_columns:_columns,
         mobile_device_columns:_mobileColumns, split_hubs:_splitHubs, ...hubConfig} = entry.config;
       const selectedRoom = this._config[PREVIEW_ROOM];
+      const previewRooms = (this._config[PREVIEW_ROOMS] || []).filter(id =>
+        this._entries?.some(item => item.entity_id === id && item.config_entry_id === entry.id));
       const selectedBelongsToHub = this._entries?.some(item => item.entity_id === selectedRoom && item.config_entry_id === entry.id);
       return {
         ...hubConfig,
@@ -631,6 +634,7 @@
         _panel_hide_title:this._hubConfigEntries().length === 1,
         [PREVIEW_ALL_TYPES]:isEditorPreview(this),
         [PREVIEW_ROOM]:selectedBelongsToHub ? selectedRoom : undefined,
+        [PREVIEW_ROOMS]:previewRooms,
       };
     }
     _renderHubCards(entries) {
@@ -665,11 +669,14 @@
     }
     _rooms() {
       if (!this._hass || !this._entries) return [];
-      const previewRoom = isEditorPreview(this) ? this._config[PREVIEW_ROOM] : undefined;
+      const preview = isEditorPreview(this);
+      const previewRoom = preview ? this._config[PREVIEW_ROOM] : undefined;
+      const previewAllTypes = preview && this._config[PREVIEW_ALL_TYPES] === true;
       const rooms = this._entries.filter(entry => isRoom(entry, this._hass.states[entry.entity_id])
         && matchesHub(entry, this._config?.hubs)
         && matchesType(this._hass.states[entry.entity_id], selectedTypes(this._config))
-        && (!this._config?.excluded_entities?.includes(entry.entity_id) || entry.entity_id === previewRoom))
+        && (previewAllTypes || !this._config?.excluded_entities?.includes(entry.entity_id)
+          || entry.entity_id === previewRoom))
         .map(entry => this._hass.states[entry.entity_id]);
       if (this._config?.entities?.length) return this._config.entities.map(id => rooms.find(room => room.entity_id === id)).filter(Boolean);
       return orderRooms(rooms, this._config?.device_order);
@@ -800,6 +807,10 @@
         ? `<div class="features-bottom-row">${row.map(([feature, index]) => host(feature, index)).join("")}</div>`
         : host(row[0][0], row[0][1])).join("");
     }
+    _previewClasses(room, preview, previewRoom) {
+      if (!preview) return "";
+      return `${previewRoom === room.entity_id ? "preview-selected" : ""} ${this._config.excluded_entities?.includes(room.entity_id) ? "preview-hidden" : ""}`.trim();
+    }
     _syncNativeFeatures() {
       for (const icon of this.shadowRoot.querySelectorAll?.("ha-state-icon[data-room-icon]") || []) {
         const id = icon.dataset.roomIcon;
@@ -860,7 +871,7 @@
         : `<div class="top ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" aria-label="Open shutter details">${this._contentIcon(room, room.state === "closed" ? "mdi:window-shutter" : "mdi:window-shutter-open")}</button>
         <div class="room-heading"><div class="identity"><button class="name" data-entity="${id}" data-interaction="card"><strong>${escape(this._name(room))}</strong></button><span class="status">${this._contentStatus(room, status)}</span></div>
         <div class="readings"><div class="temps">${reading}</div><div class="next">${escape(a.room || "")}</div></div></div></div>`;
-      return `<section data-key="${id}" class="room ${preview && previewRoom === room.entity_id ? "preview-selected" : ""}" style="--room-state-color:${this._contentColor(room, color)};${featureOrder(options)}"><div class="room-content">
+      return `<section data-key="${id}" class="room ${this._previewClasses(room, preview, previewRoom)}" style="--room-state-color:${this._contentColor(room, color)};${featureOrder(options)}"><div class="room-content">
         ${header}
         ${this._nativeReady || options.features !== undefined ? this._nativeMarkup(room) : fallbackFeatures(options).some(feature => feature === "modes" || feature === "temperature" && (a.supported_features & 4)) ? `<div class="controls">${fallbackFeatures(options).includes("modes") ? `<div class="modes" role="group" aria-label="Shutter controls">${[["open_cover",1,"arrow-up","Open"],["stop_cover",8,"stop","Stop"],["close_cover",2,"arrow-down","Close"]].map(([service,feature,icon,label]) =>
           `<button class="mode" data-action="shutter" data-entity="${id}" data-service="${service}" title="${label}" aria-label="${label}" ${disabled || !(a.supported_features & feature) ? "disabled" : ""}><ha-icon icon="mdi:${icon}"></ha-icon></button>`).join("")}</div>` : ""}
@@ -930,7 +941,7 @@
         : `<div class="top ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" aria-label="Open device details">${this._contentIcon(state, icon)}</button>
         <div class="room-heading"><div class="identity"><button class="name" data-entity="${id}" data-interaction="card"><strong>${escape(this._name(state))}</strong></button><span class="status">${this._contentStatus(state, status)}</span></div>
         <div class="readings"><div class="temps">${readingMarkup}</div><div class="next">${next}</div></div></div></div>`;
-      return `<section data-key="${id}" class="room device-${light ? "light" : "plug"} ${on ? "powered" : ""} ${preview && previewRoom === state.entity_id ? "preview-selected" : ""}" style="--room-state-color:${this._contentColor(state, color)};${featureOrder(options)}"><div class="room-content">
+      return `<section data-key="${id}" class="room device-${light ? "light" : "plug"} ${on ? "powered" : ""} ${this._previewClasses(state, preview, previewRoom)}" style="--room-state-color:${this._contentColor(state, color)};${featureOrder(options)}"><div class="room-content">
         ${header}
         ${fallbackControls}${native}</div></section>`;
     }
@@ -1318,9 +1329,11 @@
       const preview = isEditorPreview(this);
       const typePreview = preview && this._config[PREVIEW_ALL_TYPES] === true;
       const compactPreview = preview && !typePreview;
-      const configuredPreviewRoom = this._config[PREVIEW_ROOM];
-      const previewRoom = configuredPreviewRoom && rooms.some(room => room.entity_id === configuredPreviewRoom)
-        ? configuredPreviewRoom : compactPreview ? rooms[0]?.entity_id : configuredPreviewRoom;
+      const selectedPreviewRoom = this._config[PREVIEW_ROOM];
+      const rememberedPreviewRooms = this._config[PREVIEW_ROOMS] || [];
+      const previewRoom = selectedPreviewRoom && rooms.some(room => room.entity_id === selectedPreviewRoom)
+        ? selectedPreviewRoom : compactPreview ? rooms[0]?.entity_id : selectedPreviewRoom;
+      const highlightedPreviewRoom = selectedPreviewRoom || (compactPreview ? previewRoom : undefined);
       const renderGroups = compactPreview && previewRoom
         ? groups.filter(group => group.rooms.some(room => room.entity_id === previewRoom))
         : groups;
@@ -1383,7 +1396,8 @@
           container-type:inline-size;
           container-name:room
         }
-        .room.preview-selected {
+        .room.preview-selected,
+        .room.preview-hidden {
           isolation:isolate;
           position:relative
         }
@@ -1396,6 +1410,22 @@
           pointer-events:none;
           position:absolute;
           z-index:100
+        }
+        .room.preview-hidden::after {
+          background:color-mix(in srgb,var(--card-background-color) 88%,transparent);
+          border:2px solid var(--error-color);
+          color:var(--error-color);
+          content:"HIDDEN";
+          font-size:18px;
+          font-weight:700;
+          inset-inline-start:50%;
+          letter-spacing:.12em;
+          padding:4px 14px;
+          pointer-events:none;
+          position:absolute;
+          top:50%;
+          transform:translate(-50%,-50%) rotate(-18deg);
+          z-index:101
         }
         header {
           padding:14px 16px;
@@ -1943,11 +1973,12 @@
       ${!rooms.length ? `<p data-key="empty" class="message">${this._loading ? text(this._hass,"finding") : text(this._hass,"no_devices")}</p>` : renderGroups.map(group => `${group.startsHub ? `<section class="hub-section" data-key="hub-${escape(group.hubKey)}"><div class="hub-title"><h2>${escape(group.hubTitle)}</h2></div>` : ""}${grouped ? `<section class="room-section" data-key="section-${group.key}"><div class="section-title" data-key="heading-${group.key}"><div><h3>${escape(group.title)}</h3><p>${groupStatus(group)}</p></div>${group.showSectionActions ? group.type === "heating" ? heatingActions(true) : scheduledDeviceActions(group.type, true) : ""}</div>` : ""}<div class="rooms" data-key="rooms-${group.key}" style="--room-columns:${preview ? 1 : this._config.device_columns}">${group.rooms.map(room => {
         const options = roomConfig(this._config, room.entity_id);
         const groupPreviewRoom = typePreview
-          ? group.rooms.some(item => item.entity_id === previewRoom) ? previewRoom : group.rooms[0]?.entity_id
+          ? group.rooms.some(item => item.entity_id === previewRoom) ? previewRoom
+            : rememberedPreviewRooms.find(id => group.rooms.some(item => item.entity_id === id)) || group.rooms[0]?.entity_id
           : previewRoom;
         if (preview && groupPreviewRoom !== room.entity_id) return "";
-        if (isShutter(room)) return this._renderShutter(room, preview, previewRoom);
-        if (isLight(room) || isPlug(room)) return this._renderPoweredDevice(room, preview, previewRoom);
+        if (isShutter(room)) return this._renderShutter(room, preview, highlightedPreviewRoom);
+        if (isLight(room) || isPlug(room)) return this._renderPoweredDevice(room, preview, highlightedPreviewRoom);
         const a = room.attributes, id = escape(room.entity_id);
         const pending = this._targets.get(room.entity_id);
         if (pending && (Date.now() > pending.expires || (!this._temperatureSending && a.temperature === pending.value))) this._targets.delete(room.entity_id);
@@ -1982,7 +2013,7 @@
           : `<div class="top aligned-header ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" title="${escape(status)} — open room controls" aria-label="${escape(this._name(room))}: ${status}">${this._contentIcon(room, icon)}</button>
           <div class="secondary-layout"><div class="secondary-heading-line"><button class="name" data-entity="${id}" data-interaction="card" title="Open room controls"><strong>${escape(this._name(room))}</strong></button><div class="temps" title="Current ${escape(unit)} → target ${escape(unit)}" aria-label="Current ${escape(this._temperature(a.current_temperature))}; Target ${escape(target)}">${temperatureMarkup}</div></div>
           <div class="secondary-primary-line"><span class="status">${statusMarkup}</span><div class="next" title="${escape(a.schedule_name || "")}">${escape(next)}</div></div></div></div>`;
-        return `<section data-key="${id}" class="room ${heating ? "heating" : cooling ? "cooling" : ""} ${preview && previewRoom === room.entity_id ? "preview-selected" : ""}" style="--room-state-color:${this._contentColor(room, stateColor)};${featureOrder(options)}"><div class="room-content">
+        return `<section data-key="${id}" class="room ${heating ? "heating" : cooling ? "cooling" : ""} ${this._previewClasses(room, preview, highlightedPreviewRoom)}" style="--room-state-color:${this._contentColor(room, stateColor)};${featureOrder(options)}"><div class="room-content">
           ${headerMarkup}
           ${this._nativeReady || options.features !== undefined ? this._nativeMarkup(room) : fallbackFeatures(options).length ? `<div class="controls">${fallbackFeatures(options).includes("modes") ? `<div class="modes" role="group" aria-label="${escape(this._name(room))} mode">${["auto", "heat", "cool", "off"].filter(mode => a.hvac_modes?.includes(mode)).map(mode => {
             const label = text(this._hass,{auto:"schedule",heat:"manual",cool:"cool",off:"off"}[mode]);
@@ -2221,6 +2252,8 @@
     constructor() {
       super();
       this.attachShadow({mode: "open"});
+      this._previewRooms = new Map();
+      this._previewRoomsByHub = new Map();
       this._hubForm = document.createElement("ha-form");
       this._hubForm.className = "hubs";
       this._hubForm.computeLabel = schema => schema.label;
@@ -2424,11 +2457,10 @@
       });
       const style = document.createElement("style");
       style.textContent = `
+        [hidden]{display:none!important}
         ha-form.hubs{display:block;margin-bottom:16px}
-        ha-form.hubs[hidden]{display:none}
         ha-form.settings::part(root){display:grid;grid-template-columns:minmax(0,1fr) 130px;column-gap:8px;align-items:start}
         .editor-hub-tabs{display:flex;min-width:0;overflow-x:auto;border-bottom:1px solid var(--divider-color);margin:12px 0 4px;scrollbar-width:thin}
-        .editor-hub-tabs[hidden]{display:none}
         .editor-hub-tabs button{flex:0 0 auto;min-height:42px;padding:8px 16px;border:0;border-bottom:3px solid transparent;background:transparent;opacity:.65;white-space:nowrap}
         .editor-hub-tabs button.active{color:var(--primary-color);border-bottom-color:var(--primary-color);opacity:1}
         .show-filter{display:block;margin-top:16px}
@@ -2656,6 +2688,7 @@
           event.stopPropagation();
           if (this._syncingHubConfig) return;
           this._selectedRoom = editor._selectedRoom;
+          this._previewRoomsByHub.set(this._editingHub, event.detail.config[PREVIEW_ROOMS] || []);
           const next = Object.fromEntries(Object.entries(event.detail.config || {})
             .filter(([name]) => !SHARED_CARD_CONFIG_KEYS.has(name)));
           delete next.hubs;
@@ -2671,13 +2704,25 @@
       this._hubConfigEditor._entries = this._entries;
       this._hubConfigEditor._hubs = this._hubs;
       this._hubConfigEditor.hass = this._hass;
+      this._hubConfigEditor._previewRooms = new Map((this._previewRoomsByHub.get(id) || []).flatMap(entityId => {
+        const state = this._hass?.states?.[entityId];
+        return state ? [[deviceType(state),entityId]] : [];
+      }));
+      const rememberedRoom = this._selectedRoomByHub?.get(id);
+      if (rememberedRoom && this._roomHubId(this._hass?.states?.[rememberedRoom]) === id) {
+        this._hubConfigEditor._selectedRoom = rememberedRoom;
+      }
       this._syncingHubConfig = true;
       const {hub,...options} = stored;
       this._hubConfigEditor.setConfig({...options,hubs:[hub]});
       this._syncingHubConfig = false;
+      const hadSelectedRoom = Boolean(this._selectedRoom);
       if (this._hubConfigEditor._selectedRoom) this._selectedRoom = this._hubConfigEditor._selectedRoom;
+      this._hubConfigEditor._rememberPreviewRoom(this._hubConfigEditor._selectedRoom);
+      this._previewRoomsByHub.set(id, [...this._hubConfigEditor._previewRooms.values()]);
       this._hubConfigHost.hidden = false;
       for (const element of [this._typeForm,this._modeForm,this._tabs,this._roomForm,this._featureList,this._message]) element.hidden = true;
+      if (!hadSelectedRoom && this._selectedRoom) this._dispatchConfig();
       return true;
     }
     _name(room) { return entityDisplayName(this._hass, room); }
@@ -3145,17 +3190,28 @@
     }
     _selectRoom(id, focusTab = false) {
       this._selectedRoom = id;
+      this._rememberPreviewRoom(id);
       this._render();
       this._dispatchConfig();
       if (focusTab) this._tabs.querySelector?.('[role="tab"][aria-selected="true"]')?.focus({preventScroll: true});
     }
     _dispatchConfig() {
       // Symbols pass to the live preview but are omitted when the config is saved as JSON/YAML.
+      this._rememberPreviewRoom(this._selectedRoom);
+      const previewRooms = this._previewRoomsByHub.size
+        ? [...this._previewRoomsByHub.values()].flat()
+        : [...this._previewRooms.values()];
       const config = {
         ...orderedCardConfig(this._config),
+        [PREVIEW_ALL_TYPES]: true,
         [PREVIEW_ROOM]: this._selectedRoom,
+        [PREVIEW_ROOMS]: previewRooms,
       };
       this.dispatchEvent(new CustomEvent("config-changed", {detail: {config}, bubbles: true, composed: true}));
+    }
+    _rememberPreviewRoom(id) {
+      const state = this._hass?.states?.[id];
+      if (state) this._previewRooms.set(deviceType(state), id);
     }
     _roomAction(action) {
       const rooms = this._tabRooms(this._editorRooms());
