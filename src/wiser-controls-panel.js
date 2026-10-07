@@ -126,13 +126,6 @@ class WiserRoomsPanel extends HTMLElement {
           );
         }
 
-        .dialog-description {
-          margin: 0 0 20px;
-          color: var(--secondary-text-color);
-          font-size: 14px;
-          line-height: 20px;
-        }
-
         .dialog-actions {
           display: flex;
           justify-content: flex-end;
@@ -314,9 +307,6 @@ class WiserRoomsPanel extends HTMLElement {
         </ha-button>
       </header>
       <ha-dialog id="editor-dialog" header-title="Panel settings" width="medium">
-        <p id="editor-description" class="dialog-description">
-          Customize this panel. Dashboard cards keep their own settings.
-        </p>
         <div id="editors"></div>
         <p id="editor-error" role="alert"></p>
         <div class="dialog-actions" id="editor-actions" slot="footer">
@@ -376,6 +366,22 @@ class WiserRoomsPanel extends HTMLElement {
     return window.WiserRoomsLocalize.localize(this._hass, key, values);
   }
 
+  _editorHeading() {
+    const hubs = this._config?.hubs || [];
+    const hub = hubs.includes(this._activeHub) ? this._activeHub : hubs[0];
+    return hub
+      ? this._t("panel_settings_for_hub", {hub})
+      : this._t("panel_settings");
+  }
+
+  _updateEditorHeading() {
+    const dialog = this.shadowRoot.getElementById("editor-dialog");
+    const title = this._editorHeading();
+    dialog.setAttribute("header-title", title);
+    dialog.headerTitle = title;
+    dialog.heading = title;
+  }
+
   _localizeControls() {
     const root = this.shadowRoot;
     root.getElementById("panel-title").textContent = this._t("panel_title");
@@ -385,15 +391,12 @@ class WiserRoomsPanel extends HTMLElement {
       element.setAttribute("aria-label", this._t(key));
       element.title = this._t(key);
     }
-    root.getElementById("editor-description").textContent = this._t("panel_description");
     const loading = root.getElementById("loading");
     if (loading) loading.textContent = this._t("panel_loading");
     root.getElementById("cancel").textContent = this._t("panel_cancel");
     root.getElementById("save").textContent = this._t("panel_save");
     root.getElementById("editor-mode").textContent = this._editorModeLabel();
-    const dialog = root.getElementById("editor-dialog");
-    dialog.setAttribute("header-title", this._t("panel_settings"));
-    dialog.heading = this._t("panel_settings");
+    this._updateEditorHeading();
   }
 
   connectedCallback() {
@@ -994,7 +997,10 @@ class WiserRoomsPanel extends HTMLElement {
     save.disabled = true;
     mode.disabled = true;
     mode.textContent = this._editorModeLabel();
-    dialog.heading = this._t("panel_settings");
+    const hub = this._config.hubs.includes(this._activeHub)
+      ? this._activeHub
+      : this._config.hubs[0];
+    this._updateEditorHeading();
 
     const dialogPrototype = customElements.get("ha-dialog")?.prototype || {};
     if (!("headerTitle" in dialogPrototype)) {
@@ -1015,9 +1021,6 @@ class WiserRoomsPanel extends HTMLElement {
       }
 
       const Card = customElements.get("wiser-controls-card");
-      const hub = this._config.hubs.includes(this._activeHub)
-        ? this._activeHub
-        : this._config.hubs[0];
       const hubIndex = this._config.hubs.indexOf(hub);
       if (hub) {
         const editor = await Card.getConfigElement();

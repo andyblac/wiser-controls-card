@@ -7,8 +7,7 @@ const vm = require("node:vm");
 function setup() {
   const translations={
     panel_title:"Controls",panel_menu:"Toggle sidebar",panel_hubs:"Wiser hubs",
-    panel_settings:"Panel settings",panel_edit_settings:"Edit controls card settings",
-    panel_description:"Customize this panel. Dashboard cards keep their own settings.",
+    panel_settings:"Panel settings",panel_settings_for_hub:"{hub} - Panel settings",panel_edit_settings:"Edit controls card settings",
     panel_loading:"Loading Wiser controls…",panel_cancel:"Cancel",panel_save:"Save",
     panel_retry:"Retry",panel_editor_error:"Unable to open the editor. Close this dialog and try again.",
     panel_save_error:"Unable to save settings to Home Assistant. Please try again.",
@@ -184,6 +183,14 @@ test("panel settings edit only the hub selected by the panel tabs",async()=>{
   panel._activeHub="Upstairs";
   await panel._openEditor();
   assert.equal(panel._editorEntries.length,1);
+  const dialog=panel.shadowRoot.getElementById("editor-dialog");
+  assert.equal(dialog.heading,"Upstairs - Panel settings");
+  assert.equal(dialog.headerTitle,"Upstairs - Panel settings");
+  assert.equal(dialog.attributes["header-title"],"Upstairs - Panel settings");
+  panel._localizeControls();
+  assert.equal(dialog.heading,"Upstairs - Panel settings");
+  assert.equal(dialog.headerTitle,"Upstairs - Panel settings");
+  assert.equal(dialog.attributes["header-title"],"Upstairs - Panel settings");
   const [upstairs]=panel._editorEntries;
   assert.equal(upstairs.hub,"Upstairs");
   assert.equal(upstairs.section.hidden,false);

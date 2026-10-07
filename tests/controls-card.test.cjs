@@ -1856,7 +1856,6 @@ test('localization follows the other Wiser cards and prefers Home Assistant text
   assert.equal(localize({language:'fr'}, 'resume_schedules'), 'Reprendre les programmes');
   assert.equal(localize({language:'de'}, 'no_schedule'), 'Kein Zeitplan zugewiesen');
   assert.equal(localize({language:'en-GB'}, 'cancel_overrides'), 'Cancel overrides');
-  assert.equal(localize({language:'en-GB'}, 'panel_description'), 'Customise this panel. Dashboard cards keep their own settings.');
   const hass = {language:'en',localize:key => key === 'ui.components.selectors.automation_behavior.trigger.options.all.label' ? 'Everything' : key};
   assert.equal(localize(hass, 'all'), 'Everything');
   assert.equal(localize(hass, 'cancel_overrides'), 'Cancel overrides');
