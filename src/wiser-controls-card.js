@@ -23,14 +23,14 @@
     "show_temperatures", "show_next_schedule", "secondary_status", "features_position", "features",
     "tap_action", "hold_action", "double_tap_action", "icon_tap_action", "icon_hold_action", "icon_double_tap_action",
   ];
-  const NATIVE_FEATURE_ORDER = ["type", "entity", "entities", "state_content", "show_labels", "override_end_time", "preset_modes"];
+  const NATIVE_FEATURE_ORDER = ["type", "entity", "entities", "state_content", "show_labels", "preset_modes"];
   const SECONDARY_STATUS_ORDER = ["entity", "entities", "state_content", "show_labels"];
   const SHARED_CARD_CONFIG_KEYS = new Set([
     "type", "title", "device_columns", "mobile_device_columns", "split_hubs", "hub_configs", "grid_options",
   ]);
   const WISER_PRESET_MODES = ["Advance Schedule", "Cancel Overrides", "Boost 30m", "Boost 1h", "Boost 2h", "Boost 3h"];
   const LEGACY_SECONDARY_STATUS_FEATURE = "wiser-secondary-status-feature";
-  const OVERRIDE_STATUS_FEATURE = "wiser-override-status-feature";
+  const LEGACY_OVERRIDE_STATUS_FEATURE = "wiser-override-status-feature";
   const NEXT_SCHEDULE_FEATURE = "wiser-next-schedule-feature";
   const PASSIVE_MODE_FEATURE = "wiser-passive-mode-feature";
   const WISER_NAME_TYPE = "wiser_name";
@@ -64,13 +64,11 @@
     return request;
   };
   const isLegacySecondaryFeature = feature => feature?.type === `custom:${LEGACY_SECONDARY_STATUS_FEATURE}`;
-  const isOverrideStatusFeature = feature => feature?.type === `custom:${OVERRIDE_STATUS_FEATURE}`;
-  const isHeaderFeature = feature => isOverrideStatusFeature(feature);
+  const isLegacyOverrideFeature = feature => feature?.type === `custom:${LEGACY_OVERRIDE_STATUS_FEATURE}`;
   const isIconFeature = feature => [NEXT_SCHEDULE_FEATURE, PASSIVE_MODE_FEATURE]
     .includes(feature?.type?.replace(/^custom:/, ""));
   const normalizedStateContent = value => Array.isArray(value) && value.length ? value : typeof value === "string" && value ? [value] : ["state"];
   const normalizedSecondaryStateContent = value => Array.isArray(value) ? value.filter(Boolean) : typeof value === "string" && value ? [value] : [];
-  const orderNativeFeatures = list => [...list.filter(isHeaderFeature), ...list.filter(feature => !isHeaderFeature(feature))];
   const featureForRoom = (feature, id) => {
     if (!feature.entities || typeof feature.entities !== "object" || Array.isArray(feature.entities)) return feature;
     const resolved = {...feature};
@@ -93,9 +91,16 @@
   const migrateSecondaryStatusOptions = value => {
     if (!value || typeof value !== "object" || Array.isArray(value) || !Array.isArray(value.features)) return value;
     const legacy = value.features.find(isLegacySecondaryFeature);
-    if (!legacy) return value;
-    const migrated = {...value,features:value.features.filter(feature => !isLegacySecondaryFeature(feature))};
-    if (!migrated.secondary_status) migrated.secondary_status = secondaryStatusFromFeature(legacy);
+    const overrideEnd = value.features.some(isLegacyOverrideFeature);
+    if (!legacy && !overrideEnd) return value;
+    const migrated = {...value,features:value.features.filter(feature => !isLegacySecondaryFeature(feature) && !isLegacyOverrideFeature(feature))};
+    if (!migrated.secondary_status && legacy) migrated.secondary_status = secondaryStatusFromFeature(legacy);
+    if (overrideEnd) {
+      const status = migrated.secondary_status && typeof migrated.secondary_status === "object"
+        && !Array.isArray(migrated.secondary_status) ? {...migrated.secondary_status} : {};
+      status.state_content = [...new Set([...normalizedSecondaryStateContent(status.state_content), "override_end_time"])];
+      migrated.secondary_status = status;
+    }
     return migrated;
   };
   const migrateSecondaryStatusConfig = value => {
@@ -154,9 +159,9 @@
       if (value === "temperature") return [{type: cover ? "cover-position" : "target-temperature"}];
       return cover ? [] : [{type:"climate-preset-modes",preset_modes:presetModes}];
     });
-    return orderNativeFeatures(list.map(feature => feature.type === "climate-preset-modes"
+    return list.map(feature => feature.type === "climate-preset-modes"
       && !Array.isArray(feature.preset_modes)
-      ? {...feature,preset_modes:presetModes} : feature));
+      ? {...feature,preset_modes:presetModes} : feature);
   };
   const validNativeFeatures = value => Array.isArray(value) && value.every(feature => feature && typeof feature === "object" && typeof feature.type === "string" && feature.type.length);
   const validAction = value => value && typeof value === "object" && !Array.isArray(value) && typeof value.action === "string";
@@ -349,7 +354,7 @@
   };
   const supportsNativeFeature = (feature, id) => {
     const type = feature?.type || "";
-    if (isOverrideStatusFeature(feature) || [NEXT_SCHEDULE_FEATURE, PASSIVE_MODE_FEATURE]
+    if ([NEXT_SCHEDULE_FEATURE, PASSIVE_MODE_FEATURE]
       .some(name => type === `custom:${name}`)) return id.startsWith("climate.");
     if (type === "toggle") return id.startsWith("light.") || id.startsWith("switch.");
     if (type.startsWith("light-")) return id.startsWith("light.");
@@ -361,13 +366,11 @@
     const options = roomConfig(config, id);
     const configured = nativeFeatures(options, id, state);
     if (!masterMode(config) || !Array.isArray(options.features)) return configured;
-    const headers = configured.filter(feature => isHeaderFeature(feature) && supportsNativeFeature(feature, id));
-    const controls = configured.filter(feature => !isHeaderFeature(feature));
-    const compatible = controls.filter(feature => supportsNativeFeature(feature, id));
-    if (!controls.length || compatible.length) return orderNativeFeatures([...headers, ...compatible]);
+    const compatible = configured.filter(feature => supportsNativeFeature(feature, id));
+    if (!configured.length || compatible.length) return compatible;
     const defaults = nativeFeatures({...options,features:undefined}, id, state)
-      .filter(feature => !isHeaderFeature(feature) && supportsNativeFeature(feature, id));
-    return orderNativeFeatures([...headers, ...defaults]);
+      .filter(feature => supportsNativeFeature(feature, id));
+    return defaults;
   };
   const isHeatingOverride = room => deviceType(room) === "heating" && available(room) && Boolean(room.attributes.is_override || room.attributes.is_boosted);
   const overrideEnd = room => {
@@ -773,28 +776,27 @@
     }
     _headerItems(room) {
       const secondary = secondaryStatusForRoom(this._config, room.entity_id, room);
-      const overrides = configuredNativeFeatures(this._config, room.entity_id, room)
-        .filter(isOverrideStatusFeature).map(feature => featureForRoom(feature, room.entity_id));
-      return [...(secondary ? [secondary] : []), ...overrides];
+      return secondary ? [secondary] : [];
     }
     _secondaryMarkup(room) {
       return this._headerItems(room).map((feature, index) => {
-        if (feature.kind === "secondary-status") {
-          const id = feature.entity || room.entity_id;
-          const state = this._hass.states[id];
-          const showLabels = feature.show_labels === true;
-          const items = normalizedStateContent(feature.state_content).map(item => {
-            const label = stateContentLabel(this._hass, state, item);
-            return `<span class="secondary-status-item" title="${escape(label)}">${showLabels ? `<span class="secondary-status-label">${escape(label)}</span>` : ""}<state-display data-secondary-status="${escape(id)}" data-secondary-content="${escape(item)}"></state-display></span>`;
-          }).join("");
-          return `<button type="button" class="secondary-status ${showLabels ? "labelled" : ""}" data-key="secondary-${index}" data-action="secondary-more-info" data-entity="${escape(id)}" title="${escape(state ? entityDisplayName(this._hass,state) : id)}" ${state ? "" : "disabled"}>${items}</button>`;
-        }
-        return `<${OVERRIDE_STATUS_FEATURE} data-key="secondary-${index}" data-header-feature-room="${escape(room.entity_id)}" data-header-feature-index="${index}"></${OVERRIDE_STATUS_FEATURE}>`;
+        const id = feature.entity || room.entity_id;
+        const state = this._hass.states[id];
+        const showLabels = feature.show_labels === true;
+        const items = normalizedStateContent(feature.state_content).map(item => {
+          const sourceId = item === "override_end_time" ? room.entity_id : id;
+          const source = this._hass.states[sourceId];
+          const label = item === "override_end_time"
+            ? text(this._hass, "override_end_time")
+            : stateContentLabel(this._hass, source, item);
+          return `<span class="secondary-status-item" title="${escape(label)}">${showLabels ? `<span class="secondary-status-label">${escape(label)}</span>` : ""}<state-display data-secondary-status="${escape(sourceId)}" data-secondary-content="${escape(item)}"></state-display></span>`;
+        }).join("");
+        return `<button type="button" class="secondary-status ${showLabels ? "labelled" : ""}" data-key="secondary-${index}" data-action="secondary-more-info" data-entity="${escape(id)}" title="${escape(state ? entityDisplayName(this._hass,state) : id)}" ${state ? "" : "disabled"}>${items}</button>`;
       }).join("");
     }
     _nativeMarkup(room) {
       const position = roomConfig(this._config, room.entity_id).features_position || "bottom";
-      const list = configuredNativeFeatures(this._config, room.entity_id, room).filter(feature => !isHeaderFeature(feature));
+      const list = configuredNativeFeatures(this._config, room.entity_id, room);
       if (!list.length) return "";
       const host = (feature, index) => `<hui-card-features class="features-${position}${isIconFeature(feature) ? " feature-icon-only" : ""}" data-key="features-${escape(room.entity_id)}-${index}" data-room-features="${escape(room.entity_id)}" data-feature-index="${index}" style="--feature-height:40px"></hui-card-features>`;
       if (position === "inline") return `<div class="features-inline-row">${list.map(host).join("")}</div>`;
@@ -830,20 +832,9 @@
         display.content = [display.dataset.secondaryContent];
         display.timestampTooltip = true;
       }
-      for (const element of this.shadowRoot.querySelectorAll?.("[data-header-feature-room]") || []) {
-        const id = element.dataset.headerFeatureRoom;
-        const config = this._headerItems(this._hass.states[id])[Number(element.dataset.headerFeatureIndex)];
-        if (!config) continue;
-        element.hass = this._hass;
-        element.context = {entity_id:id};
-        if (element._wiserConfig !== JSON.stringify(config)) {
-          element.setConfig(config);
-          element._wiserConfig = JSON.stringify(config);
-        }
-      }
       for (const element of this.shadowRoot.querySelectorAll?.("hui-card-features") || []) {
         const id = element.dataset.roomFeatures;
-        const allFeatures = configuredNativeFeatures(this._config, id, this._hass.states[id]).filter(feature => !isHeaderFeature(feature));
+        const allFeatures = configuredNativeFeatures(this._config, id, this._hass.states[id]);
         const featureIndex = element.dataset.featureIndex;
         const config = featureIndex === undefined ? allFeatures : allFeatures.slice(Number(featureIndex), Number(featureIndex) + 1);
         element.hass = this._hass;
@@ -2028,42 +2019,6 @@
       this._layoutHeaders();
     }
   }
-  class WiserOverrideStatusFeature extends HTMLElement {
-    constructor() {
-      super();
-      this.attachShadow({mode:"open"});
-      const style = document.createElement("style");
-      style.textContent = `:host{display:block;pointer-events:auto;min-width:0}button{display:flex;width:100%;min-width:0;align-items:center;gap:6px;padding:0;border:0;background:none;color:var(--secondary-text-color);font:inherit;font-size:12px;text-align:start;cursor:pointer}button:focus-visible{outline:2px solid var(--primary-color)}ha-icon{flex:0 0 auto;--mdc-icon-size:16px}.value{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}`;
-      this._button = document.createElement("button");
-      this._button.type = "button";
-      this._icon = document.createElement("ha-icon");
-      this._icon.icon = "mdi:timer-outline";
-      this._value = document.createElement("span");
-      this._value.className = "value";
-      this._button.append(this._icon, this._value);
-      this._button.addEventListener("click", event => {
-        event.stopPropagation();
-        const id = this._config?.entity || this._context?.entity_id || this._stateObj?.entity_id;
-        if (id && this._hass?.states[id]) this.dispatchEvent(new CustomEvent("hass-more-info", {bubbles:true, composed:true, detail:{entityId:id}}));
-      });
-      this.shadowRoot.append(style, this._button);
-    }
-    static getStubConfig() { return {type:`custom:${OVERRIDE_STATUS_FEATURE}`}; }
-    setConfig(config) { this._config = {...config}; this._render(); }
-    set hass(value) { this._hass = value; this._render(); }
-    set context(value) { this._context = value; this._render(); }
-    set stateObj(value) { this._stateObj = value; this._render(); }
-    _render() {
-      if (!this._hass || !this._config) return;
-      const id = this._config.entity || this._context?.entity_id || this._stateObj?.entity_id;
-      const state = this._hass.states[id];
-      this._button.disabled = !state;
-      this._button.title = state
-        ? entityDisplayName(this._hass, state)
-        : id || text(this._hass,"override_end_time");
-      this._value.textContent = state && isHeatingOverride(state) ? text(this._hass,"override_ends",{time:overrideEndValue(state, this._hass)}) : state ? text(this._hass,"no_override") : text(this._hass,"unavailable");
-    }
-  }
   class WiserNextScheduleFeature extends HTMLElement {
     constructor() {
       super();
@@ -2225,14 +2180,9 @@
       this._button.ariaLabel = this._button.title;
     }
   }
-  if (!customElements.get(OVERRIDE_STATUS_FEATURE)) customElements.define(OVERRIDE_STATUS_FEATURE, WiserOverrideStatusFeature);
   if (!customElements.get(NEXT_SCHEDULE_FEATURE)) customElements.define(NEXT_SCHEDULE_FEATURE, WiserNextScheduleFeature);
   if (!customElements.get(PASSIVE_MODE_FEATURE)) customElements.define(PASSIVE_MODE_FEATURE, WiserPassiveModeFeature);
   window.customCardFeatures = window.customCardFeatures || [];
-  if (!window.customCardFeatures.some(feature => feature.type === OVERRIDE_STATUS_FEATURE)) window.customCardFeatures.push({
-    type:OVERRIDE_STATUS_FEATURE, name:"Override end time", configurable:false,
-    isSupported:(hass, context) => Boolean(context?.entity_id?.startsWith("climate.") && hass.states[context.entity_id]),
-  });
   if (!window.customCardFeatures.some(feature => feature.type === NEXT_SCHEDULE_FEATURE)) window.customCardFeatures.push({
     type:NEXT_SCHEDULE_FEATURE, name:"Next schedule", configurable:false,
     isSupported:(hass, context) => Boolean(context?.entity_id?.startsWith("climate.") && hass.states[context.entity_id]),
@@ -2245,7 +2195,7 @@
     },
   });
   const updateFeatureTranslations = hass => {
-    const names = {[OVERRIDE_STATUS_FEATURE]:"override_end_time",[NEXT_SCHEDULE_FEATURE]:"next_schedule",[PASSIVE_MODE_FEATURE]:"passive_mode"};
+    const names = {[NEXT_SCHEDULE_FEATURE]:"next_schedule",[PASSIVE_MODE_FEATURE]:"passive_mode"};
     for (const feature of window.customCardFeatures) if (names[feature.type]) feature.name = text(hass,names[feature.type]);
   };
   class WiserRoomsCardEditor extends HTMLElement {
@@ -2830,14 +2780,22 @@
       const selectedOptions = roomConfig(this._config, this._selectedRoom);
       const selectedState = this._hass.states[this._selectedRoom];
       const secondaryStatus = this._secondaryStatusSource(this._selectedRoom);
+      const secondaryEntity = secondaryStatus?.entities?.[this._selectedRoom]
+        || secondaryStatus?.entity || this._selectedRoom;
       const secondaryRooms = masterMode(this._config)
         ? this._rooms().filter(room => deviceType(room) === typeForEntity(this._selectedRoom)) : [];
       const selectedType = selectedState ? deviceType(selectedState) : "heating";
       const shutter = selectedType === "shutters";
       const heating = selectedType === "heating";
-      this._roomForm.hass = heating && selectedState
-        ? {...this._hass, states:{...this._hass.states, [this._selectedRoom]:withOverrideEnd(selectedState, this._hass)}}
-        : this._hass;
+      if (heating && selectedState) {
+        const states = {...this._hass.states,[this._selectedRoom]:withOverrideEnd(selectedState, this._hass)};
+        const secondaryState = states[secondaryEntity];
+        if (secondaryState) states[secondaryEntity] = {
+          ...secondaryState,
+          attributes:{...secondaryState.attributes,override_end_time:overrideEndValue(selectedState, this._hass)},
+        };
+        this._roomForm.hass = {...this._hass,states};
+      } else this._roomForm.hass = this._hass;
       const metricLabel = text(this._hass,shutter ? "show_position" : selectedType === "lights" ? "show_brightness" : selectedType === "plugs" ? "show_status" : "show_temperatures");
       const identitySchema = [
         {name:"name", label:text(this._hass,"name"), selector:{entity_name:{}}, context:{entity:"entity"}},
@@ -2871,7 +2829,7 @@
         ...(secondaryRooms.length
           ? secondaryRooms.map((room, index) => ({name:`secondary_status_room_${index}`,label:this._name(room),selector:{entity:{}}}))
           : [{name:"secondary_status_entity",label:this._hass.localize?.("ui.panel.lovelace.editor.card.generic.entity") || "Entity",selector:{entity:{}}}]),
-        {name:"secondary_status_content",label:this._hass.localize?.("ui.panel.lovelace.editor.card.tile.state_content") || text(this._hass,"state_content"),selector:{ui_state_content:{allow_context:true,entity_id:secondaryStatus?.entity || this._selectedRoom || undefined}}},
+        {name:"secondary_status_content",label:this._hass.localize?.("ui.panel.lovelace.editor.card.tile.state_content") || text(this._hass,"state_content"),selector:{ui_state_content:{allow_context:true,entity_id:secondaryEntity || undefined}}},
         {name:"secondary_status_show_labels",label:text(this._hass,"show_state_labels"),selector:{boolean:{}}},
       ];
       const roomSchema = [
@@ -3007,17 +2965,17 @@
     _saveNativeFeatures(id, list) {
       if (!id || !validNativeFeatures(list)) return;
       const existingOptions = masterMode(this._config) ? masterOptions(this._config, id) || {} : this._config.device_options?.[id] || {};
-      const ordered = orderNativeFeatures(list);
+      const features = [...list];
       if (masterMode(this._config)) {
         const currentOptions = existingOptions;
         const roomType = typeForEntity(id);
-        const options = {...currentOptions,features:ordered};
+        const options = {...currentOptions,features};
         this._config = {...this._config,master_options_by_type:{
           ...this._config.master_options_by_type,
           [roomType]:options,
         }};
       } else {
-        const options = {...existingOptions,features:ordered};
+        const options = {...existingOptions,features};
         this._config = {...this._config,device_options:{...this._config.device_options,[id]:options}};
       }
       this._render();

@@ -52,7 +52,7 @@ function setup() {
   class Feature extends Element {
     static async getConfigElement(){return new Element()}
   }
-  const registry=new Map([["wiser-controls-card",Card],["ha-yaml-editor",Element],["wiser-secondary-status-feature",Feature]]);
+  const registry=new Map([["wiser-controls-card",Card],["ha-yaml-editor",Element],["wiser-test-feature",Feature]]);
   const media={matches:false,listeners:{},addEventListener(name,listener){this.listeners[name]=listener},removeEventListener(name,listener){if(this.listeners[name]===listener)delete this.listeners[name]}};
   const sessionValues=new Map();
   const sessionStorage={getItem:key=>sessionValues.get(key),setItem:(key,value)=>sessionValues.set(key,String(value))};
@@ -315,7 +315,7 @@ test("controls panel opens and saves feature detail editors",async()=>{
     stopPropagation(){},
     detail:{
       type:"feature",
-      config:{type:"custom:wiser-secondary-status-feature",state_content:["state"]},
+      config:{type:"custom:wiser-test-feature",state_content:["state"]},
       context:{entity_id:"climate.lounge"},
       saveConfig:config=>{saved=config},
     },
@@ -327,20 +327,20 @@ test("controls panel opens and saves feature detail editors",async()=>{
   const featureEditor=entry.featureState.featureEditor;
   assert.equal(featureEditor.hass,panel._hass);
   assert.equal(featureEditor.context.entity_id,"climate.lounge");
-  assert.equal(featureEditor.config.type,"custom:wiser-secondary-status-feature");
+  assert.equal(featureEditor.config.type,"custom:wiser-test-feature");
   featureEditor.listeners["config-changed"]({
     stopPropagation(){},
-    detail:{config:{type:"custom:wiser-secondary-status-feature",state_content:["temperature"]}},
+    detail:{config:{type:"custom:wiser-test-feature",state_content:["temperature"]}},
   });
   assert.deepEqual(saved.state_content,["temperature"]);
   entry.featureState.mode.listeners.click();
   await new Promise(resolve=>setTimeout(resolve,0));
   assert.equal(entry.featureState.visual.hidden,true);
   assert.equal(entry.featureState.code.hidden,false);
-  assert.equal(entry.featureState.yaml.defaultValue.type,"custom:wiser-secondary-status-feature");
+  assert.equal(entry.featureState.yaml.defaultValue.type,"custom:wiser-test-feature");
   entry.featureState.yaml.listeners["value-changed"]({
     stopPropagation(){},
-    detail:{isValid:true,config:undefined,value:{type:"custom:wiser-secondary-status-feature",state_content:["current_temperature"]}},
+    detail:{isValid:true,config:undefined,value:{type:"custom:wiser-test-feature",state_content:["current_temperature"]}},
   });
   assert.deepEqual(saved.state_content,["current_temperature"]);
   entry.featureState.mode.listeners.click();
@@ -348,7 +348,7 @@ test("controls panel opens and saves feature detail editors",async()=>{
   assert.equal(entry.featureState.code.hidden,true);
   featureEditor.listeners["config-changed"]({
     stopPropagation(){},
-    detail:{config:{type:"custom:wiser-secondary-status-feature",state_content:["temperature"]}},
+    detail:{config:{type:"custom:wiser-test-feature",state_content:["temperature"]}},
   });
   entry.featureState.mode.listeners.click();
   await new Promise(resolve=>setTimeout(resolve,0));

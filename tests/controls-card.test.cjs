@@ -1387,6 +1387,8 @@ test('Secondary status has its own editor section and is omitted from native fea
   const options = editor.lastEvent.detail.config.device_options['climate.bedroom'];
   assert.equal(options.features.map(feature => feature.type).join(','), 'climate-hvac-modes,target-temperature');
   assert.equal(JSON.stringify(options.secondary_status), '{"entity":"climate.lounge","state_content":["current_temperature"],"show_labels":true}');
+  assert.equal(editor._roomForm.hass.states['climate.lounge'].attributes.override_end_time, 'No override');
+  assert.equal(editor._roomForm.schema[1].schema[1].selector.ui_state_content.entity_id, 'climate.lounge');
   card.setConfig(editor.lastEvent.detail.config);
   assert.match(card.shadowRoot.innerHTML, /data-secondary-status="climate\.lounge"/);
   editor._roomForm.listeners['value-changed']({stopPropagation(){},detail:{value:{
@@ -1508,23 +1510,30 @@ test('Secondary status renders directly in the card and opens its source entity'
   assert.equal(card.lastEvent.detail.entityId, 'climate.lounge');
 });
 
-test('Override end time is a per-room header feature', () => {
-  const {card, elements, states, window} = setup();
+test('Override end time migrates from Features into Secondary status', () => {
+  const {card, states, window} = setup();
   Object.assign(states['climate.bedroom'].attributes, {is_override:true,next_schedule_datetime:'2099-09-27T12:30:00+01:00'});
-  const Feature = elements['wiser-override-status-feature'];
-  const feature = new Feature();
-  feature.setConfig({type:'custom:wiser-override-status-feature'});
-  feature.context = {entity_id:'climate.bedroom'};
-  feature.hass = card._hass;
-  assert.equal(feature._icon.icon, 'mdi:timer-outline');
-  assert.match(feature._value.textContent, /^Override ends /);
-  const entry = window.customCardFeatures.find(f => f.type === 'wiser-override-status-feature');
-  assert.equal(entry.name, 'Override end time');
-  assert.equal(entry.configurable, false);
-  assert.equal(entry.isSupported(card._hass,{entity_id:'climate.bedroom'}), true);
-  card.setConfig({entities:['climate.bedroom'],device_options:{'climate.bedroom':{features:[{type:'custom:wiser-override-status-feature'}]}}});
-  assert.match(card.shadowRoot.innerHTML, /<wiser-override-status-feature/);
-  assert.doesNotMatch(card.shadowRoot.innerHTML, /<hui-card-features /);
+  card.setConfig({entities:['climate.bedroom'],device_options:{'climate.bedroom':{features:[
+    {type:'target-temperature'},
+    {type:'custom:wiser-override-status-feature'},
+  ],secondary_status:{entity:'climate.lounge',state_content:['current_temperature']}}}});
+  const options = card._config.device_options['climate.bedroom'];
+  assert.equal(options.features.map(feature => feature.type).join(','), 'target-temperature');
+  assert.equal(options.secondary_status.state_content.join(','), 'current_temperature,override_end_time');
+  assert.equal(window.customCardFeatures.some(feature => feature.type === 'wiser-override-status-feature'), false);
+  assert.doesNotMatch(card.shadowRoot.innerHTML, /<wiser-override-status-feature/);
+  assert.equal((card.shadowRoot.innerHTML.match(/<hui-card-features /g) || []).length, 1);
+  assert.match(card.shadowRoot.innerHTML, /data-secondary-status="climate\.lounge" data-secondary-content="current_temperature"/);
+  assert.match(card.shadowRoot.innerHTML, /data-secondary-status="climate\.bedroom" data-secondary-content="override_end_time"/);
+  const displays = [
+    {dataset:{secondaryStatus:'climate.lounge',secondaryContent:'current_temperature'}},
+    {dataset:{secondaryStatus:'climate.bedroom',secondaryContent:'override_end_time'}},
+  ];
+  card.shadowRoot.querySelectorAll = selector => selector === 'state-display[data-secondary-status]' ? displays : [];
+  card._syncNativeFeatures();
+  assert.equal(displays[0].stateObj.entity_id, 'climate.lounge');
+  assert.equal(displays[1].stateObj.entity_id, 'climate.bedroom');
+  assert.notEqual(displays[1].stateObj.attributes.override_end_time, 'No override');
 });
 
 test('Next schedule is an icon feature that advances the schedule', () => {
