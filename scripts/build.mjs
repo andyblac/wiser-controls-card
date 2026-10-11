@@ -5,7 +5,7 @@ const root = new URL("../", import.meta.url);
 const source = readFileSync(new URL("src/wiser-controls-card.js", root), "utf8");
 const panelSource = readFileSync(new URL("src/wiser-controls-panel.js", root), "utf8");
 const localizeSource = readFileSync(new URL("src/localize/localize.js", root), "utf8");
-const translations = Object.fromEntries(["en-US", "en-GB", "de", "fr"].map(language => [
+const translations = Object.fromEntries(["en-US", "en-GB", "de", "fr", "hu"].map(language => [
   language,
   JSON.parse(readFileSync(new URL(`src/localize/languages/${language}.json`, root), "utf8")),
 ]));

@@ -13,7 +13,7 @@ provides room controls, schedule information and device-specific bulk actions.
 - Visual editor with per-device or per-type Master configuration
 - Native Home Assistant Tile features, interactions, icons and state displays
 - Multiple Wiser hub support
-- English, German and French localisation
+- English, German, French and Hungarian localisation
 
 ## Quick start
 

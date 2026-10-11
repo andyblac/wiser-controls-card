@@ -13,7 +13,7 @@ function setup() {
     attachShadow() { this.shadowRoot = {addEventListener() {}, append() {}, innerHTML: ''}; }
     dispatchEvent(event) { this.lastEvent = event; }
   }, customElements: {get() {}, define(name, cls) { elements[name] = cls; if (name === "wiser-controls-card") Card = cls; else if (name === "wiser-controls-card-editor") Editor = cls; }}};
-  const languages = Object.fromEntries(['en-US','en-GB','de','fr'].map(language => [language,
+  const languages = Object.fromEntries(['en-US','en-GB','de','fr','hu'].map(language => [language,
     JSON.parse(fs.readFileSync(path.join(__dirname, `../src/localize/languages/${language}.json`), 'utf8'))]));
   const localize = fs.readFileSync(path.join(__dirname, '../src/localize/localize.js'), 'utf8')
     .replace('__WISER_ROOMS_TRANSLATIONS__', JSON.stringify(languages));
@@ -1862,8 +1862,10 @@ test('localization follows the other Wiser cards and prefers Home Assistant text
   const {localize,languageFor} = window.WiserRoomsLocalize;
   assert.equal(languageFor({locale:{language:'fr-FR'}}), 'fr');
   assert.equal(languageFor({locale:{language:'en-GB'}}), 'en-GB');
+  assert.equal(languageFor({locale:{language:'hu-HU'}}), 'hu');
   assert.equal(localize({language:'fr'}, 'resume_schedules'), 'Reprendre les programmes');
   assert.equal(localize({language:'de'}, 'no_schedule'), 'Kein Zeitplan zugewiesen');
+  assert.equal(localize({language:'hu'}, 'no_schedule'), 'Nincs hozzárendelt ütemezés');
   assert.equal(localize({language:'en-GB'}, 'cancel_overrides'), 'Cancel overrides');
   const hass = {language:'en',localize:key => key === 'ui.components.selectors.automation_behavior.trigger.options.all.label' ? 'Everything' : key};
   assert.equal(localize(hass, 'all'), 'Everything');
@@ -1877,9 +1879,20 @@ test('language files contain no Home Assistant-owned labels or states', () => {
   const nativeOwned = ['all','show','name','unavailable','on','off','current','target','title','entity','features',
     'features_position','bottom','inline','state_content','icon','color','hide_state','content','interactions',
     'heating','cooling','idle','lights','open','closed','opening','closing','next'];
-  for (const language of ['en-US','en-GB','de','fr']) {
+  for (const language of ['en-US','en-GB','de','fr','hu']) {
     const translations = JSON.parse(fs.readFileSync(path.join(__dirname, `../src/localize/languages/${language}.json`), 'utf8'));
     assert.deepEqual(nativeOwned.filter(key => Object.hasOwn(translations,key)), [], language);
+  }
+});
+
+test('Hungarian matches the English key and placeholder set', () => {
+  const directory = path.join(__dirname, '../src/localize/languages');
+  const english = JSON.parse(fs.readFileSync(path.join(directory, 'en-US.json'), 'utf8'));
+  const translations = JSON.parse(fs.readFileSync(path.join(directory, 'hu.json'), 'utf8'));
+  const placeholders = value => [...String(value).matchAll(/\{(\w+)\}/g)].map(match => match[1]).sort();
+  assert.deepEqual(Object.keys(translations).sort(), Object.keys(english).sort(), 'Hungarian keys');
+  for (const key of Object.keys(english)) {
+    assert.deepEqual(placeholders(translations[key]), placeholders(english[key]), `hu.${key} placeholders`);
   }
 });
 
