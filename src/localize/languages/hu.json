@@ -50,8 +50,6 @@
   "heating_no_channel": "Fűtés — nincs csatorna",
   "next_schedule": "Következő ütemezés",
   "passive_mode": "Passzív mód",
-  "hot_water_control_modes": "Melegvíz-vezérlési módok",
-  "hot_water_control_presets": "Melegvíz-vezérlési előbeállítások",
   "no_schedule": "Nincs hozzárendelt ütemezés",
   "advance_schedule": "Ugrás a következő ütemezési időszakra",
   "advance_unavailable": "Az ütemezés előreléptetése nem érhető el",

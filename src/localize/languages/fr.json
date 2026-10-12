@@ -49,8 +49,6 @@
   "heating_channel": "Canal de chauffage {channel}",
   "heating_no_channel": "Chauffage — Aucun canal",
   "next_schedule": "Prochain programme",
-  "hot_water_control_modes": "Modes de contrôle de l’eau chaude",
-  "hot_water_control_presets": "Préréglages de contrôle de l’eau chaude",
   "no_schedule": "Aucun programme attribué",
   "advance_schedule": "Passer à la prochaine période programmée",
   "advance_unavailable": "Avancement du programme indisponible",

@@ -2284,8 +2284,6 @@
     const names = {
       [NEXT_SCHEDULE_FEATURE]:"next_schedule",
       [PASSIVE_MODE_FEATURE]:"passive_mode",
-      [HOT_WATER_MODES_FEATURE]:"hot_water_control_modes",
-      [HOT_WATER_PRESETS_FEATURE]:"hot_water_control_presets",
     };
     for (const feature of window.customCardFeatures) if (names[feature.type]) feature.name = text(hass,names[feature.type]);
   };
