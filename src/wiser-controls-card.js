@@ -2,7 +2,7 @@
 (() => {
   const CARD_VERSION = "__WISER_CARD_VERSION__";
   const {localize:text, languageFor} = window.WiserRoomsLocalize;
-  const DEVICE_TYPES = ["heating", "shutters", "lights", "plugs"];
+  const DEVICE_TYPES = ["heating", "hot_water", "shutters", "lights", "plugs"];
   const FEATURES = ["modes", "temperature", "advance"];
   const LEGACY_CONFIG_KEYS = {
     room_columns:"device_columns",
@@ -33,6 +33,9 @@
   const LEGACY_OVERRIDE_STATUS_FEATURE = "wiser-override-status-feature";
   const NEXT_SCHEDULE_FEATURE = "wiser-next-schedule-feature";
   const PASSIVE_MODE_FEATURE = "wiser-passive-mode-feature";
+  const LEGACY_HOT_WATER_TEMPERATURE_FEATURE = "wiser-hot-water-temperature-feature";
+  const HOT_WATER_MODES_FEATURE = "opentherm-hot-water-control-modes-feature";
+  const HOT_WATER_PRESETS_FEATURE = "opentherm-hot-water-control-presets-feature";
   const WISER_NAME_TYPE = "wiser_name";
   const WISER_NAME_LABEL = "Wiser name";
   const WISER_NAME_PICKER_VALUE = "___wiser_name___";
@@ -88,12 +91,17 @@
     } else status.state_content = normalizedStateContent(status.state_content);
     return status;
   };
-  const migrateSecondaryStatusOptions = value => {
+  const migrateLegacyOptions = value => {
     if (!value || typeof value !== "object" || Array.isArray(value) || !Array.isArray(value.features)) return value;
     const legacy = value.features.find(isLegacySecondaryFeature);
     const overrideEnd = value.features.some(isLegacyOverrideFeature);
-    if (!legacy && !overrideEnd) return value;
-    const migrated = {...value,features:value.features.filter(feature => !isLegacySecondaryFeature(feature) && !isLegacyOverrideFeature(feature))};
+    const legacyHotWaterTemperature = value.features.some(feature => feature?.type === `custom:${LEGACY_HOT_WATER_TEMPERATURE_FEATURE}`);
+    if (!legacy && !overrideEnd && !legacyHotWaterTemperature) return value;
+    const features = value.features
+      .filter(feature => !isLegacySecondaryFeature(feature) && !isLegacyOverrideFeature(feature))
+      .map(feature => feature?.type === `custom:${LEGACY_HOT_WATER_TEMPERATURE_FEATURE}` ? {type:"target-temperature"} : feature);
+    const migrated = {...value,features:features.filter((feature, index) => feature.type !== "target-temperature"
+      || features.findIndex(item => item.type === "target-temperature") === index)};
     if (!migrated.secondary_status && legacy) migrated.secondary_status = secondaryStatusFromFeature(legacy);
     if (overrideEnd) {
       const status = migrated.secondary_status && typeof migrated.secondary_status === "object"
@@ -103,21 +111,21 @@
     }
     return migrated;
   };
-  const migrateSecondaryStatusConfig = value => {
-    let config = migrateSecondaryStatusOptions(value);
+  const migrateLegacyConfig = value => {
+    let config = migrateLegacyOptions(value);
     if (Array.isArray(config.hub_configs)) {
       config = {...config,hub_configs:config.hub_configs.map(options => {
-        const migrated = migrateSecondaryStatusConfig(options);
+        const migrated = migrateLegacyConfig(options);
         return {...migrated,hub:options.hub};
       })};
     }
     if (config.device_options && typeof config.device_options === "object" && !Array.isArray(config.device_options)) {
       config = {...config,device_options:Object.fromEntries(Object.entries(config.device_options)
-        .map(([id, options]) => [id,migrateSecondaryStatusOptions(options)]))};
+        .map(([id, options]) => [id,migrateLegacyOptions(options)]))};
     }
     if (config.master_options_by_type && typeof config.master_options_by_type === "object" && !Array.isArray(config.master_options_by_type)) {
       config = {...config,master_options_by_type:Object.fromEntries(Object.entries(config.master_options_by_type)
-        .map(([type, options]) => [type,migrateSecondaryStatusOptions(options)]))};
+        .map(([type, options]) => [type,migrateLegacyOptions(options)]))};
     }
     return config;
   };
@@ -137,20 +145,26 @@
       delete config[legacy];
     }
     if (config.type === "custom:wiser-rooms-card") config.type = "custom:wiser-controls-card";
-    return migrateSecondaryStatusConfig(config);
+    return migrateLegacyConfig(config);
   };
   const masterMode = config => config.device_configuration === "master";
-  const typeForEntity = id => id?.startsWith("cover.") ? "shutters" : id?.startsWith("light.") ? "lights" : id?.startsWith("switch.") ? "plugs" : "heating";
+  const typeForEntity = id => id?.startsWith("water_heater.") ? "hot_water" : id?.startsWith("cover.") ? "shutters" : id?.startsWith("light.") ? "lights" : id?.startsWith("switch.") ? "plugs" : "heating";
   const masterOptions = (config, id) => config.master_options_by_type?.[typeForEntity(id)];
   const roomConfig = (config, id) => ({...config, ...(masterMode(config) ? masterOptions(config, id) : config.device_options?.[id])});
   const isNativeFeatureList = value => Array.isArray(value) && value.every(feature => feature && typeof feature === "object" && !Array.isArray(feature));
+  const uniqueNativeFeatures = list => list.filter((feature, index) =>
+    list.findIndex(item => item.type === feature.type) === index);
   const fallbackFeatures = config => config.features === undefined ? FEATURES : [];
   const featureOrder = () => FEATURES.map((value, index) => `--feature-${value}:${index}`).join(";");
   const nativeFeatures = (config, id, state) => {
     const supported = Array.isArray(state?.attributes?.preset_modes) ? state.attributes.preset_modes : [];
     const presetModes = WISER_PRESET_MODES.filter(mode => supported.includes(mode));
     if (!presetModes.length) presetModes.push("Advance Schedule");
-    const list = config.features ?? FEATURES.flatMap(value => {
+    const list = config.features ?? (id.startsWith("water_heater.") ? [
+      {type:`custom:${HOT_WATER_MODES_FEATURE}`},
+      {type:"target-temperature"},
+      {type:`custom:${HOT_WATER_PRESETS_FEATURE}`},
+    ] : FEATURES.flatMap(value => {
       const cover = id.startsWith("cover.");
       const light = id.startsWith("light.");
       if (light) return value === "modes" ? [{type:"toggle"}] : value === "temperature" ? [{type:"light-brightness"}] : [];
@@ -158,10 +172,10 @@
       if (value === "modes") return [{type: cover ? "cover-open-close" : "climate-hvac-modes"}];
       if (value === "temperature") return [{type: cover ? "cover-position" : "target-temperature"}];
       return cover ? [] : [{type:"climate-preset-modes",preset_modes:presetModes}];
-    });
-    return list.map(feature => feature.type === "climate-preset-modes"
+    }));
+    return uniqueNativeFeatures(list.map(feature => feature.type === "climate-preset-modes"
       && !Array.isArray(feature.preset_modes)
-      ? {...feature,preset_modes:presetModes} : feature);
+      ? {...feature,preset_modes:presetModes} : feature));
   };
   const validNativeFeatures = value => Array.isArray(value) && value.every(feature => feature && typeof feature === "object" && typeof feature.type === "string" && feature.type.length);
   const validAction = value => value && typeof value === "object" && !Array.isArray(value) && typeof value.action === "string";
@@ -325,9 +339,17 @@
   const isShutter = state => state?.entity_id.startsWith("cover.") && Object.hasOwn(state.attributes, "shutter_id");
   const isLight = state => state?.entity_id.startsWith("light.") && Object.hasOwn(state.attributes, "product_type");
   const isPlug = state => state?.entity_id.startsWith("switch.") && Object.hasOwn(state.attributes, "output_state") && Object.hasOwn(state.attributes, "schedule_id");
+  const storedHotWaterStates = new WeakSet();
+  const isOpenThermHotWater = state => state?.entity_id.startsWith("water_heater.") && state.attributes?.wiser_opentherm_hot_water === true;
+  const isStoredHotWaterClimate = state => state?.entity_id.startsWith("climate.")
+    && !Object.hasOwn(state.attributes || {}, "heating_type")
+    && Object.hasOwn(state.attributes || {}, "current_control_source")
+    && Object.hasOwn(state.attributes || {}, "control_output_state");
+  const isStoredHotWaterSwitch = state => state?.entity_id.startsWith("switch.") && storedHotWaterStates.has(state);
+  const isHotWater = state => isOpenThermHotWater(state) || isStoredHotWaterClimate(state) || isStoredHotWaterSwitch(state);
   const isSuggestedEntity = state => (state?.entity_id.startsWith("climate.") && Object.hasOwn(state.attributes, "heating_type"))
-    || isShutter(state) || isLight(state) || isPlug(state);
-  const deviceType = state => isShutter(state) ? "shutters" : isLight(state) ? "lights" : isPlug(state) ? "plugs" : "heating";
+    || isShutter(state) || isLight(state) || isPlug(state) || isOpenThermHotWater(state) || isStoredHotWaterClimate(state);
+  const deviceType = state => isHotWater(state) ? "hot_water" : isShutter(state) ? "shutters" : isLight(state) ? "lights" : isPlug(state) ? "plugs" : "heating";
   const heatingChannel = state => {
     const value = state?.attributes?.hydronic_channel_selection;
     const values = (Array.isArray(value) ? value : [value])
@@ -359,7 +381,9 @@
     if (type === "toggle") return id.startsWith("light.") || id.startsWith("switch.");
     if (type.startsWith("light-")) return id.startsWith("light.");
     if (type.startsWith("cover-")) return id.startsWith("cover.");
-    if (type.startsWith("climate-") || type === "target-temperature") return id.startsWith("climate.");
+    if (type === `custom:${HOT_WATER_MODES_FEATURE}` || type === `custom:${HOT_WATER_PRESETS_FEATURE}`) return id.startsWith("water_heater.");
+    if (type === "target-temperature") return id.startsWith("climate.") || id.startsWith("water_heater.");
+    if (type.startsWith("climate-")) return id.startsWith("climate.");
     return true;
   };
   const configuredNativeFeatures = (config, id, state) => {
@@ -417,8 +441,12 @@
     text(hass,left).localeCompare(text(hass,right), languageFor(hass), {sensitivity:"base"});
   const sortedDeviceTypes = hass => [...DEVICE_TYPES].sort((left, right) =>
     compareDeviceTypes(hass, left, right));
-  const isRoom = (entry, state) => entry.platform === "wiser" && !entry.disabled_by && state &&
-    (entry.entity_id.startsWith("climate.") && Object.hasOwn(state.attributes, "heating_type") || isShutter(state) || isLight(state) || isPlug(state));
+  const isRoom = (entry, state) => {
+    if (entry?.platform === "wiser" && !entry.disabled_by && state?.entity_id.startsWith("switch.")
+      && entry.translation_key === "hot_water") storedHotWaterStates.add(state);
+    return entry?.platform === "wiser" && !entry.disabled_by && state &&
+      (entry.entity_id.startsWith("climate.") && Object.hasOwn(state.attributes, "heating_type") || isShutter(state) || isLight(state) || isPlug(state) || isHotWater(state));
+  };
   const matchesType = (state, types = DEVICE_TYPES) => types.includes(deviceType(state));
   const matchesHub = (entry, hubs) => !hubs?.length || hubs.includes(entry.config_entry_id);
 
@@ -534,13 +562,13 @@
     }
     setConfig(config) {
       config = normalizeConfig(config);
-      if (config.entities !== undefined && (!Array.isArray(config.entities) || config.entities.some(id => typeof id !== "string" || !/^(climate|cover|light|switch)\./.test(id)))) {
+      if (config.entities !== undefined && (!Array.isArray(config.entities) || config.entities.some(id => typeof id !== "string" || !/^(climate|cover|light|switch|water_heater)\./.test(id)))) {
         throw new Error("entities must be a list of supported Wiser entity IDs");
       }
-      if (config.excluded_entities !== undefined && (!Array.isArray(config.excluded_entities) || config.excluded_entities.some(id => typeof id !== "string" || !/^(climate|cover|light|switch)\./.test(id)))) {
+      if (config.excluded_entities !== undefined && (!Array.isArray(config.excluded_entities) || config.excluded_entities.some(id => typeof id !== "string" || !/^(climate|cover|light|switch|water_heater)\./.test(id)))) {
         throw new Error("excluded_entities must be a list of supported Wiser entity IDs");
       }
-      if (config.device_order !== undefined && (!Array.isArray(config.device_order) || config.device_order.some(id => typeof id !== "string" || !/^(climate|cover|light|switch)\./.test(id)))) {
+      if (config.device_order !== undefined && (!Array.isArray(config.device_order) || config.device_order.some(id => typeof id !== "string" || !/^(climate|cover|light|switch|water_heater)\./.test(id)))) {
         throw new Error("device_order must be a list of supported Wiser entity IDs");
       }
       if (config.hubs !== undefined && (!Array.isArray(config.hubs) || config.hubs.some(id => typeof id !== "string" || !id.length))) {
@@ -562,7 +590,7 @@
       if (config.device_options !== undefined) {
         if (!config.device_options || typeof config.device_options !== "object" || Array.isArray(config.device_options)) throw new Error("device_options must be an entity settings map");
         for (const [id, options] of Object.entries(config.device_options)) {
-          if (!/^(climate|cover|light|switch)\./.test(id) || !options || typeof options !== "object" || Array.isArray(options)) throw new Error("Invalid room options");
+          if (!/^(climate|cover|light|switch|water_heater)\./.test(id) || !options || typeof options !== "object" || Array.isArray(options)) throw new Error("Invalid room options");
           if (options.features !== undefined && !validNativeFeatures(options.features)) throw new Error("Invalid room features");
           if (options.features_position !== undefined && !["bottom", "inline"].includes(options.features_position)) throw new Error("Invalid room features_position");
           if (options.temperature_focus !== undefined && !["current", "target"].includes(options.temperature_focus)) throw new Error("Invalid room temperature emphasis");
@@ -798,7 +826,7 @@
       const position = roomConfig(this._config, room.entity_id).features_position || "bottom";
       const list = configuredNativeFeatures(this._config, room.entity_id, room);
       if (!list.length) return "";
-      const host = (feature, index) => `<hui-card-features class="features-${position}${isIconFeature(feature) ? " feature-icon-only" : ""}" data-key="features-${escape(room.entity_id)}-${index}" data-room-features="${escape(room.entity_id)}" data-feature-index="${index}" style="--feature-height:40px"></hui-card-features>`;
+      const host = (feature, index) => `<hui-card-features class="features-${position}${isIconFeature(feature) ? " feature-icon-only" : ""}" data-key="features-${escape(room.entity_id)}-${escape(feature.type)}" data-room-features="${escape(room.entity_id)}" data-feature-index="${index}" style="--feature-height:40px"></hui-card-features>`;
       if (position === "inline") return `<div class="features-inline-row">${list.map(host).join("")}</div>`;
       const rows = [];
       list.forEach((feature, index) => {
@@ -910,15 +938,17 @@
     }
     _renderPoweredDevice(state, preview, previewRoom) {
       const options = roomConfig(this._config, state.entity_id);
-      const id = escape(state.entity_id), light = isLight(state), on = state.state === "on";
+      const id = escape(state.entity_id), light = isLight(state), hotWater = isStoredHotWaterSwitch(state), on = state.state === "on";
       const status = !available(state) ? text(this._hass,"unavailable") : on ? text(this._hass,"on") : text(this._hass,"off");
       const disabled = this._busy || !available(state) ? "disabled" : "";
       const brightness = light && typeof state.attributes.brightness === "number" ? Math.round(state.attributes.brightness / 255 * 100) : null;
       const reading = light
         ? (brightness === null ? "—" : `${brightness}%`)
         : on ? this._powerReading(state) || status : status;
-      const icon = light ? (on ? "mdi:lightbulb" : "mdi:lightbulb-outline") : (on ? "mdi:power-socket-uk" : "mdi:power-socket-uk");
-      const color = available(state) && on ? "var(--state-light-active-color,var(--primary-color))" : "var(--secondary-text-color)";
+      const icon = light ? (on ? "mdi:lightbulb" : "mdi:lightbulb-outline") : hotWater ? (on ? "mdi:water-boiler" : "mdi:water-boiler-off") : "mdi:power-socket-uk";
+      const color = available(state) && on ? hotWater
+        ? "var(--state-water_heater-active-color,var(--state-active-color,var(--primary-color)))"
+        : "var(--state-light-active-color,var(--primary-color))" : "var(--secondary-text-color)";
       const useNative = this._nativeReady || options.features !== undefined;
       const native = useNative ? this._nativeMarkup(state) : "";
       const brightnessControl = light ? `<input type="number" data-entity="${id}" data-field="brightness" aria-label="${escape(this._name(state))} brightness percent" title="Brightness" value="${brightness ?? ""}" min="1" max="100" step="1" ${disabled}>` : "";
@@ -932,12 +962,39 @@
         : `<div class="top ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" aria-label="Open device details">${this._contentIcon(state, icon)}</button>
         <div class="room-heading"><div class="identity"><button class="name" data-entity="${id}" data-interaction="card"><strong>${escape(this._name(state))}</strong></button><span class="status">${this._contentStatus(state, status)}</span></div>
         <div class="readings"><div class="temps">${readingMarkup}</div><div class="next">${next}</div></div></div></div>`;
-      return `<section data-key="${id}" class="room device-${light ? "light" : "plug"} ${on ? "powered" : ""} ${this._previewClasses(state, preview, previewRoom)}" style="--room-state-color:${this._contentColor(state, color)};${featureOrder(options)}"><div class="room-content">
+      return `<section data-key="${id}" class="room device-${light ? "light" : hotWater ? "hot-water" : "plug"} ${on ? "powered" : ""} ${this._previewClasses(state, preview, previewRoom)}" style="--room-state-color:${this._contentColor(state, color)};${featureOrder(options)}"><div class="room-content">
         ${header}
         ${fallbackControls}${native}</div></section>`;
     }
+    _renderHotWater(state, preview, previewRoom) {
+      const options = roomConfig(this._config, state.entity_id);
+      const id = escape(state.entity_id), a = state.attributes;
+      const active = available(state) && state.state !== "off";
+      const status = !available(state) ? text(this._hass,"unavailable") : state.state === "off" ? text(this._hass,"off") : state.state;
+      const target = this._temperature(a.temperature);
+      const current = this._temperature(a.current_temperature);
+      const reading = options.temperature_focus === "target"
+        ? `<small>${escape(current)}</small> ${escape(target)}`
+        : `${escape(current)}<small> ${escape(target)}</small>`;
+      const nextDate = a.next_schedule_event ? new Date(a.next_schedule_event) : null;
+      const nextTime = nextDate && Number.isFinite(nextDate.getTime())
+        ? nextDate.toLocaleString(this._hass.locale?.language || this._hass.language, {weekday:"short",hour:"2-digit",minute:"2-digit"}) : "";
+      const next = options.show_next_schedule === false ? "" : state.state === "Auto" && nextTime
+        ? `${text(this._hass,"next")} ${nextTime}` : a.schedule_name || text(this._hass,"no_schedule");
+      const secondary = this._secondaryMarkup(state);
+      const icon = !available(state) ? "mdi:alert-circle-outline" : active ? "mdi:water-boiler" : "mdi:water-boiler-off";
+      const color = active ? "var(--state-water_heater-active-color,var(--state-active-color,var(--primary-color)))" : "var(--secondary-text-color)";
+      const header = secondary ? `<div class="top has-secondary ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" aria-label="Open hot-water details">${this._contentIcon(state, icon)}</button>
+        <div class="secondary-layout"><div class="secondary-heading-line"><button class="name" data-entity="${id}" data-interaction="card"><strong>${escape(this._name(state))}</strong></button><div class="temps">${reading}</div></div>
+        <div class="secondary-primary-line"><span class="status">${this._contentStatus(state, status)}</span>${options.hide_state ? secondary : ""}<div class="next">${escape(next)}</div></div>${options.hide_state ? "" : secondary}</div></div>`
+        : `<div class="top aligned-header ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" aria-label="Open hot-water details">${this._contentIcon(state, icon)}</button>
+        <div class="secondary-layout"><div class="secondary-heading-line"><button class="name" data-entity="${id}" data-interaction="card"><strong>${escape(this._name(state))}</strong></button><div class="temps">${reading}</div></div>
+        <div class="secondary-primary-line"><span class="status">${this._contentStatus(state, status)}</span><div class="next">${escape(next)}</div></div></div></div>`;
+      return `<section data-key="${id}" class="room device-hot-water ${active ? "powered" : ""} ${this._previewClasses(state, preview, previewRoom)}" style="--room-state-color:${this._contentColor(state, color)};${featureOrder(options)}"><div class="room-content">
+        ${header}${this._nativeMarkup(state)}</div></section>`;
+    }
     async _deviceService(state, service, data = {}) {
-      const domain = isLight(state) ? "light" : isPlug(state) ? "switch" : "";
+      const domain = isLight(state) ? "light" : isPlug(state) || isStoredHotWaterSwitch(state) ? "switch" : "";
       if (this._busy || !domain || !available(state) || !["turn_on","turn_off"].includes(service) || !this._rooms().some(item => item.entity_id === state.entity_id)) return;
       this._busy = true; this._error = ""; this._render();
       try { await this._hass.callService(domain, service, {entity_id:state.entity_id, ...data}); }
@@ -1014,12 +1071,16 @@
       this._busy = false; this._render();
     }
     async _allDevicesOff(type) {
-      if (this._busy || !["lights","plugs"].includes(type) || !selectedTypes(this._config).includes(type)) return;
-      const devices = this._rooms().filter(state => deviceType(state) === type && available(state) && state.state === "on");
+      if (this._busy || !["lights","plugs","hot_water"].includes(type) || !selectedTypes(this._config).includes(type)) return;
+      const devices = this._rooms().filter(state => deviceType(state) === type && available(state)
+        && (type === "hot_water" ? state.state !== "off" : state.state === "on"));
       if (!devices.length) return;
-      const domain = type === "lights" ? "light" : "switch";
       this._busy = true; this._error = ""; this._render();
-      const results = await Promise.allSettled(devices.map(async state => this._hass.callService(domain, "turn_off", {entity_id:state.entity_id})));
+      const results = await Promise.allSettled(devices.map(state => isOpenThermHotWater(state)
+        ? this._hass.callService("water_heater", "turn_off", {entity_id:state.entity_id})
+        : isStoredHotWaterClimate(state)
+          ? this._hass.callService("climate", "set_hvac_mode", {entity_id:state.entity_id,hvac_mode:"off"})
+          : this._hass.callService(isLight(state) ? "light" : "switch", "turn_off", {entity_id:state.entity_id})));
       const failed = devices.filter((_, index) => results[index].status === "rejected");
       if (failed.length) this._error = `Could not turn off: ${failed.map(state => this._name(state)).join(", ")}. Please retry.`;
       this._busy = false; this._render();
@@ -1037,6 +1098,15 @@
       return null;
     }
     _scheduleModeTargets(type) {
+      if (type === "hot_water") return this._rooms().filter(device => deviceType(device) === type && available(device)).flatMap(device => {
+        if (isOpenThermHotWater(device)) return device.state !== "Auto" && device.attributes.operation_list?.includes("Auto")
+          ? [{device,domain:"water_heater",service:"set_operation_mode",data:{operation_mode:"Auto"}}] : [];
+        if (isStoredHotWaterClimate(device)) return device.attributes.hvac_modes?.includes("auto")
+          && (device.state !== "auto" || device.attributes.is_override || device.attributes.is_boosted)
+          ? [{device,domain:"climate",service:"set_hvac_mode",data:{hvac_mode:"auto"},cancelOverride:Boolean((device.attributes.is_override || device.attributes.is_boosted) && device.attributes.preset_modes?.includes("Cancel Overrides"))}] : [];
+        const target = this._scheduleModeTarget(device);
+        return target ? [{...target,domain:"select",service:"select_option",data:{entity_id:target.select.entity_id,option:target.option}}] : [];
+      });
       if (!["shutters","lights","plugs"].includes(type)) return [];
       return this._rooms().filter(device => deviceType(device) === type && available(device) && Boolean(device.attributes.schedule_id))
         .map(device => this._scheduleModeTarget(device)).filter(Boolean);
@@ -1046,7 +1116,11 @@
       const targets = this._scheduleModeTargets(type);
       if (!targets.length) return;
       this._busy = true; this._error = ""; this._render();
-      const results = await Promise.allSettled(targets.map(target => this._hass.callService("select", "select_option", {entity_id:target.select.entity_id, option:target.option})));
+      const results = await Promise.allSettled(targets.map(async target => {
+        if (!target.domain) return this._hass.callService("select", "select_option", {entity_id:target.select.entity_id, option:target.option});
+        await this._hass.callService(target.domain, target.service, {entity_id:target.device.entity_id,...target.data});
+        if (target.cancelOverride) await this._hass.callService("climate", "set_preset_mode", {entity_id:target.device.entity_id,preset_mode:"Cancel Overrides"});
+      }));
       const failed = targets.filter((_, index) => results[index].status === "rejected");
       if (failed.length) this._error = `Could not resume schedules: ${failed.map(target => this._name(target.device)).join(", ")}. Please retry.`;
       this._busy = false; this._render();
@@ -1066,6 +1140,7 @@
       if (button.dataset.action === "all-close") { this._closeAll(); return; }
       if (button.dataset.action === "all-lights-off") { this._allDevicesOff("lights"); return; }
       if (button.dataset.action === "all-plugs-off") { this._allDevicesOff("plugs"); return; }
+      if (button.dataset.action === "all-hot_water-off") { this._allDevicesOff("hot_water"); return; }
       if (button.dataset.action?.startsWith("resume-")) { this._resumeSchedules(button.dataset.action.slice(7)); return; }
       if (button.dataset.action === "retry") { this._discover(); return; }
       if (button.dataset.action === "secondary-more-info") {
@@ -1233,7 +1308,8 @@
       const boostCountdown = boostRemaining.length ? text(this._hass,"minutes_short",{count:Math.min(...boostRemaining)}) : "";
       const canFollowSchedule = this._heatingScheduleTargets().length > 0;
       const canClose = rooms.some(room => isShutter(room) && available(room) && room.state !== "closed" && (room.attributes.supported_features & 2));
-      const canTurnOff = type => rooms.some(state => deviceType(state) === type && available(state) && state.state === "on");
+      const canTurnOff = type => rooms.some(state => deviceType(state) === type && available(state)
+        && (type === "hot_water" ? state.state !== "off" : state.state === "on"));
       const canResume = type => this._scheduleModeTargets(type).length > 0;
       const allOffTitle = escape(text(this._hass,"turn_all_off",{devices:text(this._hass,"heating")}));
       const allOffAction = section => `<ha-button class="off${section ? " section-action" : ""}" data-action="all-off" size="m" appearance="filled" variant="danger" ${this._busy || !canOff ? "disabled" : ""} title="${allOffTitle}" aria-label="${allOffTitle}"><ha-icon slot="start" icon="mdi:power"></ha-icon><span class="action-label">${escape(text(this._hass,"all_off"))}</span></ha-button>`;
@@ -1300,9 +1376,10 @@
         const cooling = group.type === "heating" ? group.rooms.filter(room => available(room) && room.state !== "off" && room.attributes.hvac_action === "cooling").length : 0;
         const active = group.rooms.filter(room => available(room) && (group.type === "heating"
           ? room.state !== "off" && ["heating","cooling"].includes(room.attributes.hvac_action)
+          : group.type === "hot_water" ? room.state !== "off"
           : group.type === "shutters" ? room.state !== "closed" : room.state === "on")).length;
         const plural = new Intl.PluralRules(languageFor(this._hass)).select(total) === "one" ? "one" : "other";
-        const noun = text(this._hass,`${group.type === "heating" ? "room" : group.type === "shutters" ? "shutter" : group.type === "lights" ? "light" : "plug"}_${plural}`);
+        const noun = text(this._hass,`${group.type === "heating" ? "room" : group.type === "hot_water" ? "hot_water_control" : group.type === "shutters" ? "shutter" : group.type === "lights" ? "light" : "plug"}_${plural}`);
         const state = text(this._hass, group.type === "heating" ? cooling && !heating ? "cooling" : cooling ? "heating_or_cooling" : "heating" : group.type === "shutters" ? "open" : "on").toLocaleLowerCase(languageFor(this._hass));
         const overrides = group.type === "heating" ? group.rooms.filter(isHeatingOverride) : [];
         const remaining = overrides.map(overrideMinutes).filter(Number.isFinite);
@@ -1903,6 +1980,7 @@
         }
         .features-inline-row {
           display:flex;
+          flex-wrap:wrap;
           align-items:stretch;
           gap:4px;
           margin-top:8px;
@@ -1910,11 +1988,24 @@
         }
         .features-inline-row>hui-card-features {
           display:block;
-          flex:1 1 0;
+          flex:1 1 100%;
+          width:100%;
           min-width:0
         }
         .features-inline-row>hui-card-features.feature-icon-only {
           flex:0 0 var(--feature-height,40px)
+        }
+        @container room (min-width:260px) {
+          .features-inline-row>hui-card-features:not(.feature-icon-only) {
+            flex-basis:calc(50% - 2px);
+            width:calc(50% - 2px)
+          }
+        }
+        @container room (min-width:600px) {
+          .features-inline-row>hui-card-features:not(.feature-icon-only) {
+            flex-basis:calc(33.333% - 3px);
+            width:calc(33.333% - 3px)
+          }
         }
         .top.hide-status .status,.top.hide-temps .temps,.top.hide-next .next {
           display:none
@@ -1968,8 +2059,9 @@
             : rememberedPreviewRooms.find(id => group.rooms.some(item => item.entity_id === id)) || group.rooms[0]?.entity_id
           : previewRoom;
         if (preview && groupPreviewRoom !== room.entity_id) return "";
+        if (isOpenThermHotWater(room)) return this._renderHotWater(room, preview, highlightedPreviewRoom);
         if (isShutter(room)) return this._renderShutter(room, preview, highlightedPreviewRoom);
-        if (isLight(room) || isPlug(room)) return this._renderPoweredDevice(room, preview, highlightedPreviewRoom);
+        if (isLight(room) || isPlug(room) || isStoredHotWaterSwitch(room)) return this._renderPoweredDevice(room, preview, highlightedPreviewRoom);
         const a = room.attributes, id = escape(room.entity_id);
         const pending = this._targets.get(room.entity_id);
         if (pending && (Date.now() > pending.expires || (!this._temperatureSending && a.temperature === pending.value))) this._targets.delete(room.entity_id);
@@ -2195,7 +2287,12 @@
     },
   });
   const updateFeatureTranslations = hass => {
-    const names = {[NEXT_SCHEDULE_FEATURE]:"next_schedule",[PASSIVE_MODE_FEATURE]:"passive_mode"};
+    const names = {
+      [NEXT_SCHEDULE_FEATURE]:"next_schedule",
+      [PASSIVE_MODE_FEATURE]:"passive_mode",
+      [HOT_WATER_MODES_FEATURE]:"hot_water_control_modes",
+      [HOT_WATER_PRESETS_FEATURE]:"hot_water_control_presets",
+    };
     for (const feature of window.customCardFeatures) if (names[feature.type]) feature.name = text(hass,names[feature.type]);
   };
   class WiserRoomsCardEditor extends HTMLElement {
@@ -2362,7 +2459,7 @@
       this._featureList.querySelector?.(".content")?.append(this._nativeEditor, this._featurePositionForm);
       this._nativeEditor.addEventListener("features-changed", event => {
         event.stopPropagation();
-        this._saveNativeFeatures(this._selectedRoom, event.detail.features);
+        this._saveNativeFeatures(this._selectedRoom, event.detail.features, true);
       });
       this._nativeEditor.addEventListener("edit-detail-element", event => {
         event.stopPropagation();
@@ -2677,11 +2774,17 @@
     }
     _name(room) { return entityDisplayName(this._hass, room); }
     _tabNames(rooms) {
+      const originalNames = new Map((this._entries || [])
+        .filter(entry => entry.original_name)
+        .map(entry => [entry.entity_id,entry.original_name]));
       const details = rooms.map(room => {
         const area = room.attributes.room || "";
-        const name = deviceType(room) === "heating"
-          ? area || room.attributes.name || this._name(room)
-          : room.attributes.name || this._name(room) || area;
+        const roomType = deviceType(room);
+        const entityName = roomType === "hot_water"
+          ? originalNames.get(room.entity_id) || String(room.attributes.name || this._name(room))
+            .replace(/^Wiser HeatHub\s*\([^)]*\)\s*/i, "").trim()
+          : room.attributes.name || this._name(room);
+        const name = roomType === "heating" ? area || entityName : entityName || area;
         return {room, area, name};
       });
       const countNames = values => values.reduce((counts, value) => counts.set(value, (counts.get(value) || 0) + 1), new Map());
@@ -2787,6 +2890,7 @@
       const selectedType = selectedState ? deviceType(selectedState) : "heating";
       const shutter = selectedType === "shutters";
       const heating = selectedType === "heating";
+      const temperatureDevice = heating || isOpenThermHotWater(selectedState) || isStoredHotWaterClimate(selectedState);
       if (heating && selectedState) {
         const states = {...this._hass.states,[this._selectedRoom]:withOverrideEnd(selectedState, this._hass)};
         const secondaryState = states[secondaryEntity];
@@ -2796,7 +2900,7 @@
         };
         this._roomForm.hass = {...this._hass,states};
       } else this._roomForm.hass = this._hass;
-      const metricLabel = text(this._hass,shutter ? "show_position" : selectedType === "lights" ? "show_brightness" : selectedType === "plugs" ? "show_status" : "show_temperatures");
+      const metricLabel = text(this._hass,shutter ? "show_position" : selectedType === "lights" ? "show_brightness" : selectedType === "plugs" || isStoredHotWaterSwitch(selectedState) ? "show_status" : "show_temperatures");
       const identitySchema = [
         {name:"name", label:text(this._hass,"name"), selector:{entity_name:{}}, context:{entity:"entity"}},
         {name:"", type:"grid", schema:[
@@ -2808,7 +2912,7 @@
         ...identitySchema,
         {name:"",type:"grid",column_min_width:"180px",schema:[
           {name:"show_temperatures",label:metricLabel,selector:{boolean:{}}},
-          ...(heating ? [temperatureFocusSchema] : []),
+          ...(temperatureDevice ? [temperatureFocusSchema] : []),
           {name:"show_next_schedule",label:text(this._hass,"show_next_schedule"),selector:{boolean:{}}},
           {name:"hide_state",label:text(this._hass,"hide_state"),selector:{boolean:{}}},
         ]},
@@ -2962,10 +3066,10 @@
       }
       return context;
     }
-    _saveNativeFeatures(id, list) {
+    _saveNativeFeatures(id, list, editorOwnsList = false) {
       if (!id || !validNativeFeatures(list)) return;
       const existingOptions = masterMode(this._config) ? masterOptions(this._config, id) || {} : this._config.device_options?.[id] || {};
-      const features = [...list];
+      const features = uniqueNativeFeatures([...list]);
       if (masterMode(this._config)) {
         const currentOptions = existingOptions;
         const roomType = typeForEntity(id);
@@ -2977,6 +3081,10 @@
       } else {
         const options = {...existingOptions,features};
         this._config = {...this._config,device_options:{...this._config.device_options,[id]:options}};
+      }
+      if (editorOwnsList && id === this._selectedRoom) {
+        this._nativeEditor.features = features;
+        this._nativeEditorSignature = id + JSON.stringify(features);
       }
       this._render();
       this._dispatchConfig();
@@ -3226,7 +3334,7 @@
     window.customCards.push({
       type:"wiser-controls-card",
       name:"Wiser Controls",
-      description:"Heating, shutter, light and appliance controls for Wiser devices.",
+      description:"Heating, hot-water, shutter, light and appliance controls for Wiser devices.",
       documentationURL:"https://github.com/andyblac/wiser-controls-card/wiki",
       preview:true,
       getEntitySuggestion:(hass, entityId) => isSuggestedEntity(hass?.states?.[entityId])

@@ -1,12 +1,15 @@
 # Wiser Controls Card
 
-A compact Home Assistant dashboard card for Wiser heating, shutters, lights,
-dimmers and smart plugs. It automatically discovers supported Wiser entities and
-provides room controls, schedule information and device-specific bulk actions.
+A compact Home Assistant dashboard card for Wiser heating, OpenTherm hot water,
+shutters, lights, dimmers and smart plugs. It automatically discovers supported
+Wiser entities and provides room controls, schedule information and
+device-specific bulk actions.
 
 ## Features
 
 - Heating modes, target temperatures, schedules, boosts and overrides
+- Wiser stored-hot-water modes, temperature range, schedules and boosts
+- OpenTherm hot-water modes, target temperature, schedules and presets
 - Shutter open, stop, close and position controls
 - Light, dimmer and smart-plug controls
 - Separate sections and bulk actions for each selected device type

@@ -853,6 +853,24 @@ function addPlug(card, extra = {}, entity_id = 'switch.lamp') {
   card._entries.push({entity_id,platform:'wiser',config_entry_id:'hub-a'});
   return plug;
 }
+function addHotWater(card, extra = {}, entity_id = 'water_heater.opentherm_hot_water') {
+  const hotWater = {entity_id,state:'Auto',attributes:{name:'Wiser HeatHub (058A52) OpenTherm hot water',wiser_opentherm_hot_water:true,current_temperature:48,temperature:50,min_temp:35,max_temp:60,target_temp_step:.5,operation_list:['off','Manual','Auto','Boost 30 Mins'],schedule_id:-1000,schedule_name:'Hot water',next_schedule_event:'2026-10-13T07:00:00+01:00',supported_features:7,...extra}};
+  card._hass.states[entity_id] = hotWater;
+  card._entries.push({entity_id,platform:'wiser',config_entry_id:'hub-a',original_name:'OpenTherm hot water'});
+  return hotWater;
+}
+function addStoredHotWaterClimate(card, extra = {}, entity_id = 'climate.stored_hot_water') {
+  const hotWater = {entity_id,state:'auto',attributes:{name:'Stored hot water',current_temperature:48,target_temp_low:45,target_temp_high:55,min_temp:5,max_temp:80,target_temp_step:.5,hvac_modes:['auto','heat','off'],hvac_action:'idle',preset_modes:['Advance Schedule','Cancel Overrides','Boost 30m'],current_control_source:'FromSchedule',control_output_state:'Off',is_boosted:false,is_override:false,schedule_id:9,schedule_name:'Hot water',next_schedule_datetime:'2026-10-13T07:00:00+01:00',next_schedule_temp:'On',...extra}};
+  card._hass.states[entity_id] = hotWater;
+  card._entries.push({entity_id,platform:'wiser',config_entry_id:'hub-a'});
+  return hotWater;
+}
+function addStoredHotWaterSwitch(card, extra = {}, entity_id = 'switch.stored_hot_water') {
+  const hotWater = {entity_id,state:'on',attributes:{friendly_name:'Stored hot water',...extra}};
+  card._hass.states[entity_id] = hotWater;
+  card._entries.push({entity_id,platform:'wiser',translation_key:'hot_water',config_entry_id:'hub-a',device_id:'device-stored-hot-water'});
+  return hotWater;
+}
 test('appliances show related power usage as their primary reading', () => {
   const {card} = setup();
   addPlug(card);
@@ -895,6 +913,107 @@ test('card suggestions are offered only for supported Wiser entities', () => {
   assert.equal(registration.getEntitySuggestion(card._hass, 'sensor.outside'), null);
   assert.equal(registration.getEntitySuggestion(card._hass, 'climate.generic'), null);
   assert.equal(registration.getEntitySuggestion(card._hass, 'climate.missing'), null);
+});
+test('OpenTherm hot water is discovered, rendered, configured and controlled', async () => {
+  const {card,calls,Editor,window} = setup();
+  const hotWater = addHotWater(card);
+  card._hass.states['water_heater.other'] = {entity_id:'water_heater.other',state:'on',attributes:{temperature:50}};
+  card._entries.push({entity_id:'water_heater.other',platform:'wiser',config_entry_id:'hub-a'});
+  card.setConfig({device_types:['hot_water']});
+  assert.deepEqual(Array.from(card._rooms(), state => state.entity_id), [hotWater.entity_id]);
+  assert.match(card.shadowRoot.innerHTML, /device-hot-water powered/);
+  assert.match(card.shadowRoot.innerHTML, /48°C<small> 50°C<\/small>/);
+  assert.match(card.shadowRoot.innerHTML, /data-action="resume-hot_water"[^>]*disabled/);
+  assert.match(card.shadowRoot.innerHTML, /data-action="all-hot_water-off"/);
+  assert.equal(window.customCards[0].getEntitySuggestion(card._hass, hotWater.entity_id).config.entities[0], hotWater.entity_id);
+
+  const editor = new Editor(); editor._hass = card._hass; editor._entries = card._entries;
+  editor.setConfig({device_types:['hot_water']}); editor._selectRoom(hotWater.entity_id);
+  assert.match(editor._tabs.innerHTML, />OpenTherm hot water<\/button>/);
+  assert.doesNotMatch(editor._tabs.innerHTML, /Wiser HeatHub/);
+  assert.equal(editor._nativeEditor.features.map(feature => feature.type).join(','), [
+    'custom:opentherm-hot-water-control-modes-feature',
+    'target-temperature',
+    'custom:opentherm-hot-water-control-presets-feature',
+  ].join(','));
+  assert.equal(editor._roomForm.schema[0].schema[2].schema.some(field => field.name === 'temperature_focus'), true);
+
+  const reordered = [
+    {type:'custom:opentherm-hot-water-control-presets-feature'},
+    {type:'custom:opentherm-hot-water-control-modes-feature'},
+    {type:'custom:opentherm-hot-water-control-presets-feature'},
+    {type:'target-temperature'},
+  ];
+  const previousFeatures = editor._nativeEditor.features;
+  editor._nativeEditor.listeners['features-changed']({stopPropagation(){},detail:{features:reordered}});
+  assert.equal(editor.lastEvent.detail.config.device_options[hotWater.entity_id].features.map(feature => feature.type).join(','), [
+    'custom:opentherm-hot-water-control-presets-feature',
+    'custom:opentherm-hot-water-control-modes-feature',
+    'target-temperature',
+  ].join(','));
+  assert.notEqual(editor._nativeEditor.features, previousFeatures);
+  assert.equal(editor._nativeEditor.features.map(feature => feature.type).join(','), [
+    'custom:opentherm-hot-water-control-presets-feature',
+    'custom:opentherm-hot-water-control-modes-feature',
+    'target-temperature',
+  ].join(','));
+
+  const added = [
+    {type:'custom:opentherm-hot-water-control-presets-feature'},
+    {type:'target-temperature'},
+    {type:'custom:opentherm-hot-water-control-modes-feature'},
+  ];
+  editor._nativeEditor.features = added.slice(0, 2);
+  editor._nativeEditor.listeners['features-changed']({stopPropagation(){},detail:{features:added}});
+  assert.equal(editor._nativeEditor.features.map(feature => feature.type).join(','), added.map(feature => feature.type).join(','));
+
+  card.setConfig(editor.lastEvent.detail.config);
+  const previewKeys = [...card.shadowRoot.innerHTML.matchAll(/data-key="features-[^"]+-(custom:[^"]+|target-temperature)"/g)]
+    .map(match => match[1]);
+  assert.deepEqual(previewKeys, added.map(feature => feature.type));
+
+  editor.setConfig({device_types:['hot_water'],device_options:{[hotWater.entity_id]:{features:[
+    {type:'custom:wiser-hot-water-temperature-feature'},
+  ]}}});
+  assert.equal(editor._config.device_options[hotWater.entity_id].features[0].type, 'target-temperature');
+
+  await card._allDevicesOff('hot_water');
+  assert.equal(JSON.stringify(calls.at(-1)), JSON.stringify(['water_heater','turn_off',{entity_id:hotWater.entity_id}]));
+  hotWater.state = 'Manual';
+  await card._resumeSchedules('hot_water');
+  assert.equal(JSON.stringify(calls.at(-1)), JSON.stringify(['water_heater','set_operation_mode',{entity_id:hotWater.entity_id,operation_mode:'Auto'}]));
+});
+test('classic Wiser climate and switch hot-water controls share the Hot water section', async () => {
+  const {card,calls,Editor} = setup();
+  const climate = addStoredHotWaterClimate(card);
+  const hotWaterSwitch = addStoredHotWaterSwitch(card);
+  const modeSelect = addModeSelect(card, hotWaterSwitch);
+  card.setConfig({device_types:['hot_water']});
+  assert.deepEqual(Array.from(card._rooms(), state => state.entity_id), [climate.entity_id,hotWaterSwitch.entity_id]);
+  assert.match(card.shadowRoot.innerHTML, /45°C – 55°C/);
+  assert.match(card.shadowRoot.innerHTML, /device-hot-water powered/);
+
+  const editor = new Editor(); editor._hass = card._hass; editor._entries = card._entries;
+  editor.setConfig({device_types:['hot_water']});
+  editor._selectRoom(climate.entity_id);
+  assert.equal(editor._nativeEditor.features.map(feature => feature.type).join(','),'climate-hvac-modes,target-temperature,climate-preset-modes');
+  editor._selectRoom(hotWaterSwitch.entity_id);
+  assert.equal(editor._nativeEditor.features.map(feature => feature.type).join(','),'toggle');
+  assert.equal(editor._roomForm.schema[0].schema[2].schema.some(field => field.name === 'temperature_focus'), false);
+
+  await card._allDevicesOff('hot_water');
+  assert.equal(JSON.stringify(calls), JSON.stringify([
+    ['climate','set_hvac_mode',{entity_id:climate.entity_id,hvac_mode:'off'}],
+    ['switch','turn_off',{entity_id:hotWaterSwitch.entity_id}],
+  ]));
+  climate.state = 'heat';
+  climate.attributes.is_override = true;
+  modeSelect.state = 'Manual';
+  await card._resumeSchedules('hot_water');
+  const resumed = calls.slice(2).map(call => JSON.stringify(call));
+  assert.equal(resumed.includes(JSON.stringify(['climate','set_hvac_mode',{entity_id:climate.entity_id,hvac_mode:'auto'}])), true);
+  assert.equal(resumed.includes(JSON.stringify(['climate','set_preset_mode',{entity_id:climate.entity_id,preset_mode:'Cancel Overrides'}])), true);
+  assert.equal(resumed.includes(JSON.stringify(['select','select_option',{entity_id:modeSelect.entity_id,option:'Auto'}])), true);
 });
 function addModeSelect(card, device, state = 'Manual') {
   const entry = card._entries.find(item => item.entity_id === device.entity_id);
@@ -1239,7 +1358,7 @@ test('lights and smart plugs are detected, sectioned, filtered and controlled', 
   const editor = new Editor(); editor._hass = card._hass; editor._entries = card._entries;
   editor.setConfig({device_types:['lights']});
   assert.equal(editor._rooms()[0].entity_id,'light.kitchen');
-  assert.equal(editor._typeForm.schema[0].selector.select.options.length,5);
+  assert.equal(editor._typeForm.schema[0].selector.select.options.length,6);
   editor._selectRoom('light.kitchen');
   assert.equal(editor._nativeEditor.features.map(feature => feature.type).join(','),'toggle,light-brightness');
   editor.setConfig({device_types:['plugs']}); editor._selectRoom('switch.lamp');
@@ -1452,6 +1571,10 @@ test('feature position is configured per room and renders native features inline
   assert.match(card.shadowRoot.innerHTML, /class="room-content"/);
   assert.doesNotMatch(card.shadowRoot.innerHTML, /class="room-content features-inline"/);
   assert.match(card.shadowRoot.innerHTML, /class="features-inline-row"/);
+  const compactSource = fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8').replace(/\s+/g, '');
+  assert.match(compactSource, /\.features-inline-row\{display:flex;flex-wrap:wrap;/);
+  assert.match(compactSource, /@containerroom\(min-width:260px\)\{\.features-inline-row>hui-card-features:not\(\.feature-icon-only\)\{flex-basis:calc\(50%-2px\);width:calc\(50%-2px\)/);
+  assert.match(compactSource, /@containerroom\(min-width:600px\)\{\.features-inline-row>hui-card-features:not\(\.feature-icon-only\)\{flex-basis:calc\(33\.333%-3px\);width:calc\(33\.333%-3px\)/);
   assert.equal((card.shadowRoot.innerHTML.match(/class="features-inline(?: |")/g) || []).length, 3);
   assert.match(card.shadowRoot.innerHTML, /class="features-inline"[^>]*data-room-features="climate.bedroom"/);
   assert.match(card.shadowRoot.innerHTML, /class="features-inline feature-icon-only"/);
