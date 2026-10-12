@@ -33,7 +33,6 @@
   const LEGACY_OVERRIDE_STATUS_FEATURE = "wiser-override-status-feature";
   const NEXT_SCHEDULE_FEATURE = "wiser-next-schedule-feature";
   const PASSIVE_MODE_FEATURE = "wiser-passive-mode-feature";
-  const LEGACY_HOT_WATER_TEMPERATURE_FEATURE = "wiser-hot-water-temperature-feature";
   const HOT_WATER_MODES_FEATURE = "opentherm-hot-water-control-modes-feature";
   const HOT_WATER_PRESETS_FEATURE = "opentherm-hot-water-control-presets-feature";
   const WISER_NAME_TYPE = "wiser_name";
@@ -95,13 +94,8 @@
     if (!value || typeof value !== "object" || Array.isArray(value) || !Array.isArray(value.features)) return value;
     const legacy = value.features.find(isLegacySecondaryFeature);
     const overrideEnd = value.features.some(isLegacyOverrideFeature);
-    const legacyHotWaterTemperature = value.features.some(feature => feature?.type === `custom:${LEGACY_HOT_WATER_TEMPERATURE_FEATURE}`);
-    if (!legacy && !overrideEnd && !legacyHotWaterTemperature) return value;
-    const features = value.features
-      .filter(feature => !isLegacySecondaryFeature(feature) && !isLegacyOverrideFeature(feature))
-      .map(feature => feature?.type === `custom:${LEGACY_HOT_WATER_TEMPERATURE_FEATURE}` ? {type:"target-temperature"} : feature);
-    const migrated = {...value,features:features.filter((feature, index) => feature.type !== "target-temperature"
-      || features.findIndex(item => item.type === "target-temperature") === index)};
+    if (!legacy && !overrideEnd) return value;
+    const migrated = {...value,features:value.features.filter(feature => !isLegacySecondaryFeature(feature) && !isLegacyOverrideFeature(feature))};
     if (!migrated.secondary_status && legacy) migrated.secondary_status = secondaryStatusFromFeature(legacy);
     if (overrideEnd) {
       const status = migrated.secondary_status && typeof migrated.secondary_status === "object"

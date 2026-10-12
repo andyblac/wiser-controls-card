@@ -972,11 +972,6 @@ test('OpenTherm hot water is discovered, rendered, configured and controlled', a
     .map(match => match[1]);
   assert.deepEqual(previewKeys, added.map(feature => feature.type));
 
-  editor.setConfig({device_types:['hot_water'],device_options:{[hotWater.entity_id]:{features:[
-    {type:'custom:wiser-hot-water-temperature-feature'},
-  ]}}});
-  assert.equal(editor._config.device_options[hotWater.entity_id].features[0].type, 'target-temperature');
-
   await card._allDevicesOff('hot_water');
   assert.equal(JSON.stringify(calls.at(-1)), JSON.stringify(['water_heater','turn_off',{entity_id:hotWater.entity_id}]));
   hotWater.state = 'Manual';
