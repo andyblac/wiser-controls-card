@@ -234,17 +234,18 @@ test("clicking a device opens registry-backed control, states, settings, identif
   assert.equal(panel._deviceCardConfig("Home","plugs")._panel_card_click,true);
   assert.equal(panel._detailCards[0].config._panel_card_click,false);
   const summary=panel.shadowRoot.getElementById("device-detail").children[0].children[0];
-  assert.equal(summary.children[2].localName,"img");
-  assert.equal(summary.children[2].src,"__WISER_DEVICE_IMAGE_SMARTPLUG__");
-  assert.equal(summary.children[3].localName,"ha-state-icon");
-  assert.equal(summary.children[3].hidden,true);
-  summary.children[2].listeners.error();
-  assert.equal(summary.children[2].hidden,true);
-  assert.equal(summary.children[3].hidden,false);
+  assert.equal(summary.children.length,2);
+  assert.equal(summary.children[0].localName,"img");
+  assert.equal(summary.children[0].src,"__WISER_DEVICE_IMAGE_SMARTPLUG__");
+  assert.equal(summary.children[1].localName,"ha-state-icon");
+  assert.equal(summary.children[1].hidden,true);
+  summary.children[0].listeners.error();
+  assert.equal(summary.children[0].hidden,true);
+  assert.equal(summary.children[1].hidden,false);
 
   states["switch.socket"].attributes.entity_picture="/api/image/serve/custom-plug";
   const configuredSummary=panel._detailSummary("switch.socket",panel._hass.devices["device-a"]);
-  assert.equal(configuredSummary.children[2].src,"/api/image/serve/custom-plug");
+  assert.equal(configuredSummary.children[0].src,"/api/image/serve/custom-plug");
   delete states["switch.socket"].attributes.entity_picture;
   const imageModels={
     Controller:"CONTROLLER",RoomStat:"ROOMSTAT",SmartPlug:"SMARTPLUG",
@@ -357,8 +358,8 @@ test("climate details include the room climate, thermostat and every iTRV",async
   assert.deepEqual(Array.from(panel._detailCards[0].config.entities),["climate.kitchen"]);
   assert.equal(panel._detailCards.length,1);
   const climateSummary=panel.shadowRoot.getElementById("device-detail").children[0].children[0];
-  assert.equal(climateSummary.children[2].src,"__WISER_DEVICE_IMAGE_ROOMSTAT__");
-  assert.equal(climateSummary.children[2].alt,"RoomStat");
+  assert.equal(climateSummary.children[0].src,"__WISER_DEVICE_IMAGE_ROOMSTAT__");
+  assert.equal(climateSummary.children[0].alt,"RoomStat");
   assert.equal(panel._climateProductDevice({physicalDevices:[
     {model:"iTRV"},{model:"TemperatureHumiditySensor"},
   ]}).model,"TemperatureHumiditySensor");

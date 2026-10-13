@@ -291,16 +291,11 @@ class WiserRoomsPanel extends HTMLElement {
         .detail-summary {
           display: grid;
           min-height: 260px;
-          grid-template-rows: auto auto minmax(140px,1fr);
-          align-items: start;
-          gap: 8px;
+          place-items: center;
           padding: 16px;
-          text-align: start;
         }
 
         .detail-summary ha-state-icon {
-          align-self: center;
-          justify-self: center;
           --mdc-icon-size: 88px;
           color: var(--state-icon-color,var(--primary-color));
           padding: 56px;
@@ -309,27 +304,11 @@ class WiserRoomsPanel extends HTMLElement {
         }
 
         .detail-summary .detail-device-image {
-          align-self: center;
-          justify-self: center;
           display: block;
           width: min(78%,320px);
           max-height: 300px;
           object-fit: contain;
           border-radius: 24px;
-        }
-
-        .detail-summary h3,
-        .detail-summary p {
-          margin: 0;
-        }
-
-        .detail-summary h3 {
-          color: var(--primary-color);
-          font-size: 24px;
-        }
-
-        .detail-summary p {
-          color: var(--secondary-text-color);
         }
 
         .detail-activity {
@@ -1351,24 +1330,20 @@ class WiserRoomsPanel extends HTMLElement {
     const icon = document.createElement("ha-state-icon");
     icon.hass = this._hass;
     icon.stateObj = state;
-    const name = document.createElement("h3");
-    name.textContent = this._roomName(entityId);
-    const status = document.createElement("p");
-    status.textContent = this._hass.formatEntityState?.(state) || state.state;
     const imageSource = this._detailProductImage(state,device);
     if (imageSource) {
       const image = document.createElement("img");
       image.className = "detail-device-image";
-      image.alt = device?.model || name.textContent;
+      image.alt = device?.model || this._roomName(entityId);
       image.src = imageSource;
       icon.hidden = true;
       image.addEventListener("error",() => {
         image.hidden = true;
         icon.hidden = false;
       });
-      summary.append(name,status,image,icon);
+      summary.append(image,icon);
     } else {
-      summary.append(name,status,icon);
+      summary.append(icon);
     }
     return summary;
   }
