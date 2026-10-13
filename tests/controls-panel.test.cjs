@@ -3,10 +3,17 @@ const assert = require("node:assert/strict");
 const {readFileSync} = require("node:fs");
 const {resolve} = require("node:path");
 const vm = require("node:vm");
+const configuredEntityIds = card => Array.from(card.config.entities,item => typeof item === "string" ? item : item.entity);
 
 function setup() {
   const translations={
+    heating:"Heating",hot_water:"Hot water",plugs:"Appliances",lights:"Lights",shutters:"Shutters",
     panel_title:"Controls",panel_menu:"Toggle sidebar",panel_hubs:"Wiser hubs",
+    panel_view:"Controls view",panel_device_types:"Device types",panel_device_details:"Device details",panel_overview:"Overview",panel_devices:"Devices",panel_default_view:"Default view",
+    panel_back_to_devices:"Back to devices",panel_detail_control:"Control",panel_detail_heating:"Heating",panel_detail_hot_water:"Hot water",panel_detail_appliance:"Appliance",panel_detail_light:"Light",panel_detail_shutter:"Shutter",panel_detail_states:"States",panel_detail_settings:"Settings",panel_detail_identification:"Identification",panel_detail_activity:"Activity",
+    panel_detail_empty:"No information is available for this device.",panel_device_manufacturer:"Manufacturer",panel_device_model:"Model",panel_device_serial:"Serial number",panel_device_software:"Software version",panel_device_hardware:"Hardware version",
+    panel_identification:"Identification",panel_zigbee:"Zigbee",panel_positions:"Positions",panel_power:"Power",panel_schedule:"Schedule",panel_parameters:"Parameters",panel_modes:"Modes",panel_room_settings:"Room settings",panel_seasonal_comfort:"Seasonal comfort",
+    panel_device_equipment:"Equipment",panel_device_reference:"Reference",panel_device_firmware:"Firmware",panel_product_type:"Product type",panel_hub_route:"Hub route",panel_zigbee_channel:"Zigbee channel",panel_signal_quality:"Signal quality",panel_device_reception:"Device reception",panel_device_reception_details:"Device reception",panel_controller_reception:"Controller reception",panel_controller_reception_details:"Controller reception",panel_zigbee_route:"Route",panel_zigbee_node:"Node ID",panel_zigbee_uuid:"UUID",
     panel_settings:"Panel settings",panel_settings_for_hub:"{hub} - Panel settings",panel_edit_settings:"Edit controls card settings",
     panel_loading:"Loading Wiser controls…",panel_cancel:"Cancel",panel_save:"Save",
     panel_retry:"Retry",panel_editor_error:"Unable to open the editor. Close this dialog and try again.",
@@ -23,16 +30,26 @@ function setup() {
   const localize=(_hass,key,values={})=>(translations[key]||key)
     .replace(/\{(\w+)\}/g,(token,name)=>String(values[name]??token));
   class Element {
-    constructor() { this.listeners={}; this.attributes={}; this.children=[]; this.hidden=false; }
+    constructor() { this.listeners={}; this.attributes={}; this.children=[]; this.hidden=false; this.dataset={}; }
     addEventListener(name,listener){this.listeners[name]=listener}
     setAttribute(name,value=""){this.attributes[name]=String(value)}
     removeAttribute(name){delete this.attributes[name]}
     toggleAttribute(name,force){if(force)this.setAttribute(name,"");else this.removeAttribute(name)}
-    append(child){this.children.push(child)}
+    append(...children){this.children.push(...children)}
     replaceChildren(...children){this.children=children}
     setConfig(config){this.config=config;this.hassWhenConfigured=this.hass}
     focus(){}
-    attachShadow(){const main=new Element(),elements=new Map();this.shadowRoot={innerHTML:"",querySelector:selector=>selector==="main"?main:null,getElementById:id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id)}}}
+    attachShadow(){
+      const main=new Element(),elements=new Map();
+      elements.set("overview-view",main);
+      const viewButtons=["overview","devices"].map(view=>{const button=new Element();button.dataset={view};return button});
+      this.shadowRoot={
+        innerHTML:"",
+        querySelector:selector=>selector==="main"?main:null,
+        querySelectorAll:selector=>selector===".view-button"?viewButtons:[],
+        getElementById:id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id)},
+      };
+    }
   }
   class Card extends Element {
     static panelApiVersion=1;
@@ -57,7 +74,8 @@ function setup() {
   const sessionValues=new Map();
   const sessionStorage={getItem:key=>sessionValues.get(key),setItem:(key,value)=>sessionValues.set(key,String(value))};
   const frames=[];
-  const context=vm.createContext({HTMLElement:Element,window:{WiserRoomsLocalize:{localize},loadCardHelpers:async()=>({}),matchMedia:()=>media,requestAnimationFrame:callback=>{frames.push(callback);return frames.length},cancelAnimationFrame(){},sessionStorage},setTimeout,clearTimeout,CustomEvent:class{constructor(type,options){Object.assign(this,{type},options)}},customElements:{get:key=>registry.get(key),define:(key,value)=>registry.set(key,value)},document:{createElement:name=>name==="wiser-controls-card"?new Card():new Element()},console:{error(){}}});
+  const createElement=name=>{const element=name==="wiser-controls-card"?new Card():new Element();element.localName=name;return element};
+  const context=vm.createContext({HTMLElement:Element,window:{WiserRoomsLocalize:{localize},loadCardHelpers:async()=>({createCardElement:config=>{const card=createElement("hui-card");card.setConfig(config);return card}}),matchMedia:()=>media,requestAnimationFrame:callback=>{frames.push(callback);return frames.length},cancelAnimationFrame(){},sessionStorage},setTimeout,clearTimeout,CustomEvent:class{constructor(type,options){Object.assign(this,{type},options)}},customElements:{get:key=>registry.get(key),define:(key,value)=>registry.set(key,value)},document:{createElement},console:{error(){}}});
   vm.runInContext(readFileSync(resolve(__dirname,"../src/wiser-controls-panel.js"),"utf8"),context);
   const panel=new (registry.get("wiser-controls-panel"))();
   panel._testMedia=media;
@@ -82,10 +100,325 @@ test("rooms panel creates one filtered card per hub",()=>{
   assert.equal(cards.length,2);
   assert.deepEqual(Array.from(cards[0].config.hubs),["entry-a"]);
   assert.equal(cards[0].config._panel_hide_title,true);
+  assert.equal(cards[0].config._panel_card_click,true);
   assert.deepEqual(Array.from(cards[1].config.hubs),["entry-b"]);
   assert.equal(cards[1].config.device_columns,3);
   assert.equal(cards[0].hass,hass);
   assert.equal(cards[0].hassWhenConfigured,hass);
+});
+
+test("controls panel exposes Overview and Devices views with a configurable default",async()=>{
+  const panel=setup(),calls=[];
+  panel.hass={user:{is_admin:true},callWS:async message=>calls.push(message)};
+  panel.panel={config:{panel_id:"registry-panel",hubs:["Home"],hub_ids:{Home:"entry-a"},card_configs:{Home:{default_view:"devices"}}}};
+
+  assert.equal(panel._activeView,"devices");
+  assert.equal(panel.shadowRoot.getElementById("view-title").textContent,"Devices");
+  assert.equal(panel.shadowRoot.getElementById("overview-view").hidden,true);
+  assert.equal(panel.shadowRoot.getElementById("devices-view").hidden,false);
+  assert.equal(panel._cards[0].config.default_view,undefined);
+  assert.match(readFileSync(resolve(__dirname,"../src/wiser-controls-panel.js"),"utf8"),/\.device-tab\s*\{[^}]*font-size:\s*17px/s);
+  assert.match(readFileSync(resolve(__dirname,"../src/wiser-controls-panel.js"),"utf8"),/\.detail-column\s*\{[^}]*min-width:\s*0;[^}]*overflow:\s*hidden/s);
+
+  const buttons=panel.shadowRoot.querySelectorAll(".view-button");
+  buttons[0].listeners.click();
+  assert.equal(panel._activeView,"overview");
+  assert.equal(buttons[0].attributes["aria-pressed"],"true");
+  assert.equal(buttons[1].attributes["aria-pressed"],"false");
+
+  await panel._openEditor();
+  const entry=panel._editorEntries[0];
+  assert.equal(entry.defaultView.value,"devices");
+  entry.defaultView.listeners["value-changed"]({stopPropagation(){},detail:{value:"overview"}});
+  await panel._saveEditor();
+  assert.equal(calls[0].configs.Home.default_view,"overview");
+  assert.equal(calls[0].configs.Home._panel_hide_title,undefined);
+  assert.equal(calls[0].configs.Home._panel_card_click,undefined);
+});
+
+test("Devices tabs render and save independent settings per device type",async()=>{
+  const panel=setup(),calls=[];
+  panel.hass={user:{is_admin:true},callWS:async message=>calls.push(message)};
+  panel.panel={config:{
+    panel_id:"registry-panel",
+    hubs:["Home"],
+    hub_ids:{Home:"entry-a"},
+    card_configs:{Home:{
+      default_view:"devices",
+      device_columns:5,
+      device_view_configs:{
+        heating:{device_columns:2},
+        plugs:{device_columns:3},
+      },
+    }},
+  }};
+
+  assert.deepEqual(Array.from(panel._deviceCards[0].config.device_types),["heating"]);
+  assert.equal(panel._deviceCards[0].config.device_columns,2);
+  panel._selectDeviceType("plugs");
+  assert.deepEqual(Array.from(panel._deviceCards[0].config.device_types),["plugs"]);
+  assert.equal(panel._deviceCards[0].config.device_columns,3);
+
+  await panel._openEditor();
+  const entry=panel._editorEntries[0];
+  assert.equal(entry.editor.hideDeviceTypes,true);
+  assert.equal(entry.editor.hideVisibilityControl,true);
+  assert.deepEqual(Array.from(panel._drafts.Home.device_types),["plugs"]);
+  entry.columns.listeners["value-changed"]({stopPropagation(){},detail:{value:{device_columns:4}}});
+  await panel._saveEditor();
+
+  const saved=calls[0].configs.Home;
+  assert.equal(saved.device_columns,5);
+  assert.equal(saved.device_view_configs.heating.device_columns,2);
+  assert.equal(saved.device_view_configs.plugs.device_columns,4);
+  assert.deepEqual(Array.from(saved.device_view_configs.plugs.device_types),["plugs"]);
+  assert.equal(saved.device_view_configs.plugs._panel_hide_title,undefined);
+  assert.equal(saved.device_view_configs.plugs._panel_card_click,undefined);
+  assert.equal(panel._activeView,"devices");
+  assert.equal(panel._activeDeviceType,"plugs");
+
+  const replacement=panel._testCreatePanel();
+  replacement.hass=panel._hass;
+  replacement.panel={config:panel._config};
+  assert.equal(replacement._activeView,"devices");
+  assert.equal(replacement._activeDeviceType,"plugs");
+  assert.equal(replacement.shadowRoot.getElementById("overview-view").hidden,true);
+  assert.equal(replacement.shadowRoot.getElementById("devices-view").hidden,false);
+});
+
+test("clicking a device opens registry-backed control, states, settings, identification, and activity tabs",async()=>{
+  const panel=setup();
+  const states={
+    "switch.socket":{entity_id:"switch.socket",state:"on",attributes:{friendly_name:"Wiser Kitchen plug",product_identifier:"NHPB/PLUG/1",product_type:"SmartPlug",product_model:"SmartPlug",serial_number:"ABC123",firmware:"1.2.3"}},
+    "sensor.socket_power":{entity_id:"sensor.socket_power",state:"12",attributes:{friendly_name:"Power"}},
+    "binary_sensor.socket_controllable":{entity_id:"binary_sensor.socket_controllable",state:"on",attributes:{friendly_name:"Controllable"}},
+    "select.socket_mode":{entity_id:"select.socket_mode",state:"auto",attributes:{friendly_name:"Wiser Smart Plug Mode"}},
+    "sensor.socket_signal":{entity_id:"sensor.socket_signal",state:"good",attributes:{friendly_name:"Signal",zigbee_channel:20,displayed_signal_strength:"VeryGood",node_id:31,device_reception_percent:90,device_reception_RSSI:-50,device_reception_LQI:100,controller_reception_percent:100,controller_reception_RSSI:-45,controller_reception_LQI:110,hub_route:"direct",uuid:"00ABC"}},
+    "sensor.kitchen_temperature":{entity_id:"sensor.kitchen_temperature",state:"20",attributes:{friendly_name:"Kitchen temperature",device_class:"temperature"}},
+    "switch.kitchen_seasonal_comfort":{entity_id:"switch.kitchen_seasonal_comfort",state:"on",attributes:{friendly_name:"Seasonal comfort"}},
+    "sensor.lounge_temperature":{entity_id:"sensor.lounge_temperature",state:"19",attributes:{friendly_name:"Lounge temperature"}},
+    "update.kitchen_light_firmware":{entity_id:"update.kitchen_light_firmware",state:"on",attributes:{friendly_name:"Kitchen light firmware"}},
+  };
+  panel.hass={
+    user:{is_admin:true},
+    states,
+    entities:{
+      "switch.socket":{device_id:"device-a",config_entry_id:"entry-a",platform:"wiser"},
+      "sensor.socket_power":{device_id:"device-a",config_entry_id:"entry-a",platform:"wiser"},
+      "binary_sensor.socket_controllable":{device_id:"device-a",config_entry_id:"entry-a",platform:"wiser"},
+      "select.socket_mode":{device_id:"device-a",config_entry_id:"entry-a",platform:"wiser",entity_category:"config"},
+      "sensor.socket_signal":{device_id:"device-a",config_entry_id:"entry-a",platform:"wiser",entity_category:"diagnostic"},
+      "sensor.kitchen_temperature":{device_id:"device-b",config_entry_id:"entry-a",platform:"wiser"},
+      "switch.kitchen_seasonal_comfort":{device_id:"device-b",config_entry_id:"entry-a",platform:"wiser",entity_category:"config"},
+      "sensor.lounge_temperature":{device_id:"device-c",config_entry_id:"entry-a",platform:"wiser"},
+      "update.kitchen_light_firmware":{device_id:"device-d",platform:"mqtt",entity_category:"config"},
+    },
+    devices:{
+      "device-a":{area_id:"kitchen",config_entries:["entry-a"],manufacturer:"Drayton Wiser",model:"Smart Plug",name:"Wiser Smart Plug",serial_number:"ABC123",sw_version:"1.2.3"},
+      "device-b":{area_id:"kitchen",config_entries:["entry-a"],manufacturer:"Drayton Wiser",model:"Room"},
+      "device-c":{area_id:"lounge",config_entries:["entry-a"],manufacturer:"Drayton Wiser",model:"Room Sensor"},
+      "device-d":{area_id:"kitchen",config_entries:["mqtt-a"],manufacturer:"Other",model:"Light"},
+    },
+    formatEntityName:state=>state.attributes.friendly_name,
+    callWS:async()=>[],
+  };
+  panel.panel={config:{panel_id:"registry-panel",hubs:["Home"],hub_ids:{Home:"entry-a"},card_configs:{Home:{default_view:"devices"}}}};
+
+  await panel._openDeviceDetail("switch.socket");
+  assert.equal(panel.shadowRoot.getElementById("view-title").textContent,"Kitchen plug");
+  assert.equal(panel.shadowRoot.getElementById("devices-view").hidden,true);
+  assert.equal(panel.shadowRoot.getElementById("device-detail").hidden,false);
+  assert.equal(panel.shadowRoot.getElementById("detail-tabs").hidden,false);
+  assert.deepEqual(Array.from(panel._detailTabs).map(tab=>tab.textContent),["Appliance","States","Settings","Identification","Activity"]);
+  assert.deepEqual(Array.from(panel._detailCards[0].config.entities),["switch.socket"]);
+  assert.equal(panel._deviceCardConfig("Home","plugs")._panel_card_click,true);
+  assert.equal(panel._detailCards[0].config._panel_card_click,false);
+  const summary=panel.shadowRoot.getElementById("device-detail").children[0].children[0];
+  assert.equal(summary.children[2].localName,"img");
+  assert.equal(summary.children[2].src,"__WISER_DEVICE_IMAGE_SMARTPLUG__");
+  assert.equal(summary.children[3].localName,"ha-state-icon");
+  assert.equal(summary.children[3].hidden,true);
+  summary.children[2].listeners.error();
+  assert.equal(summary.children[2].hidden,true);
+  assert.equal(summary.children[3].hidden,false);
+
+  states["switch.socket"].attributes.entity_picture="/api/image/serve/custom-plug";
+  const configuredSummary=panel._detailSummary("switch.socket",panel._hass.devices["device-a"]);
+  assert.equal(configuredSummary.children[2].src,"/api/image/serve/custom-plug");
+  delete states["switch.socket"].attributes.entity_picture;
+  const imageModels={
+    Controller:"CONTROLLER",RoomStat:"ROOMSTAT",SmartPlug:"SMARTPLUG",
+    TemperatureHumiditySensor:"TEMPERATUREHUMIDITYSENSOR",iTRV:"ITRV",
+    UnderFloorHeating:"UNDERFLOORHEATING",HeatingActuator:"HEATINGACTUATOR",
+    DimmableLight:"DIMMABLELIGHT",OnOffLight:"ONOFFLIGHT",LoadControl:"ONOFFLIGHT",
+    Shutter:"SHUTTER",SmokeAlarmDevice:"SMOKEALARMDEVICE",
+    WaterLeakageSensor:"WATERLEAKAGESENSOR",MotionLightSensor:"MOTIONLIGHTSENSOR",
+    WindowDoorSensor:"WINDOWDOORSENSOR",CFMT:"CFMT",PowerTagE:"POWERTAGE",
+    ButtonPanel:"BUTTONPANEL",BoilerInterface:"BOILERINTERFACE",
+  };
+  for (const [model,token] of Object.entries(imageModels)) {
+    assert.equal(panel._detailProductImage({attributes:{}},{model}),`__WISER_DEVICE_IMAGE_${token}__`);
+  }
+  assert.equal(panel._detailProductImage({attributes:{}},{model:"Smart Plug"}),"__WISER_DEVICE_IMAGE_SMARTPLUG__");
+  assert.equal(panel._detailProductImage({attributes:{}},{model:"CCTFR6311G2"}),"__WISER_DEVICE_IMAGE_CONTROLLER__");
+
+  await panel._selectDetailTab("states");
+  assert.equal(panel._detailCards[0].config.type,"entities");
+  assert.deepEqual(configuredEntityIds(panel._detailCards[0]),["binary_sensor.socket_controllable"]);
+  assert.deepEqual(configuredEntityIds(panel._detailCards[1]),["sensor.socket_power"]);
+  const plugStatus=panel.shadowRoot.getElementById("device-detail");
+  assert.equal(plugStatus.children[0].className,"detail-columns three-column status");
+  assert.equal(plugStatus.children[0].children[0].children[0].textContent,"States");
+  assert.equal(plugStatus.children[0].children[1].children[0].textContent,"Modes");
+  assert.equal(plugStatus.children[0].children[2].children[0].textContent,"Schedule");
+  assert.equal(plugStatus.children[0].children[2].children[2].textContent,"Power");
+
+  await panel._selectDetailTab("settings");
+  assert.deepEqual(configuredEntityIds(panel._detailCards[0]),["select.socket_mode"]);
+  assert.equal(panel._detailCards.length,1);
+  const plugSettings=panel.shadowRoot.getElementById("device-detail");
+  assert.equal(plugSettings.children[0].children[0].children[0].textContent,"Parameters");
+  assert.equal(plugSettings.children[0].children[1].children[0].textContent,"Settings");
+  assert.equal(plugSettings.children[0].children[1].children[1].textContent,"Smart Plug");
+  assert.equal(panel._detailCards[0].config.entities[0].name,"Mode");
+
+  await panel._selectDetailTab("identification");
+  const identification=panel.shadowRoot.getElementById("device-detail");
+  const identityRows=identification.children[0].children[0].children[1];
+  const zigbeeRows=identification.children[0].children[1].children[1];
+  assert.equal(identityRows.children[0].children[1].children[0].textContent,"Equipment = NHPB/PLUG/1");
+  assert.equal(identityRows.children[0].children[1].children[1].textContent,"Product type = SmartPlug");
+  assert.equal(identityRows.children[1].children[1].children[0].textContent,"Reference = SmartPlug");
+  assert.equal(zigbeeRows.children[0].children[1].children[0].textContent,"Zigbee channel = 20");
+  assert.equal(zigbeeRows.children[2].children[1].children[0].textContent,"Device reception = 90");
+  assert.equal(zigbeeRows.children[2].children[1].children[1].textContent,"Device reception = -50 RSSI · 100 LQI");
+  assert.equal(panel._detailCards.length,0);
+
+  await panel._selectDetailTab("activity");
+  assert.equal(panel._detailCards[0].config.type,"logbook");
+  assert.deepEqual(Array.from(panel._detailCards[0].config.entities),["switch.socket","sensor.socket_power","binary_sensor.socket_controllable","select.socket_mode"]);
+  assert.equal(panel._detailCards[0].config.hours_to_show,24);
+
+  panel._closeDeviceDetail();
+  assert.equal(panel.shadowRoot.getElementById("devices-view").hidden,false);
+  assert.equal(panel.shadowRoot.getElementById("device-detail").hidden,true);
+
+  panel._selectView("overview");
+  assert.equal(panel.shadowRoot.getElementById("overview-view").listeners["hass-more-info"],undefined);
+  assert.equal(panel._activeView,"overview");
+  assert.equal(panel.shadowRoot.getElementById("device-detail").hidden,true);
+  assert.equal(panel.shadowRoot.getElementById("overview-view").hidden,false);
+});
+
+test("climate details include the room climate, thermostat and every iTRV",async()=>{
+  const panel=setup();
+  const states={
+    "climate.kitchen":{entity_id:"climate.kitchen",state:"heat",attributes:{name:"Kitchen",schedule_id:2,schedule_name:"Kitchen",is_heating:false,heating_rate:1200,percentage_demand:0,current_humidity:78,heating_type:"Unknown",number_of_heating_actuators:0,target_temperature_origin:"FromSchedule",control_direction:"Heat",heating_supported:true,cooling_supported:false}},
+    "sensor.kitchen_temperature":{entity_id:"sensor.kitchen_temperature",state:"20",attributes:{friendly_name:"Kitchen temperature"}},
+    "switch.kitchen_passive":{entity_id:"switch.kitchen_passive",state:"off",attributes:{friendly_name:"Kitchen passive mode"}},
+    "sensor.thermostat_temperature":{entity_id:"sensor.thermostat_temperature",state:"20.1",attributes:{friendly_name:"Thermostat temperature",device_class:"temperature"}},
+    "sensor.thermostat_battery":{entity_id:"sensor.thermostat_battery",state:"90",attributes:{friendly_name:"Thermostat battery",device_class:"battery"}},
+    "switch.thermostat_lock":{entity_id:"switch.thermostat_lock",state:"off",attributes:{friendly_name:"Wiser Thermostat lock"}},
+    "sensor.thermostat_signal":{entity_id:"sensor.thermostat_signal",state:"VeryGood",attributes:{zigbee_channel:20,displayed_signal_strength:"VeryGood",product_identifier:"NHPB/ROOMSTAT/1",product_type:"RoomStat",product_model:"RoomStat",serial_number:"STAT1",firmware:"1.0",hub_route:"direct"}},
+    "sensor.itrv_temperature":{entity_id:"sensor.itrv_temperature",state:"19.8",attributes:{friendly_name:"iTRV temperature",device_class:"temperature"}},
+    "sensor.itrv_battery":{entity_id:"sensor.itrv_battery",state:"80",attributes:{friendly_name:"iTRV battery",device_class:"battery"}},
+    "switch.itrv_lock":{entity_id:"switch.itrv_lock",state:"off",attributes:{friendly_name:"iTRV lock"}},
+    "sensor.itrv_signal":{entity_id:"sensor.itrv_signal",state:"Good",attributes:{zigbee_channel:20,displayed_signal_strength:"Good",product_identifier:"NHPB/ITRV/1",product_type:"iTRV",product_model:"iTRV",serial_number:"TRV1",firmware:"2.0",hub_route:"direct"}},
+    "sensor.other_temperature":{entity_id:"sensor.other_temperature",state:"18",attributes:{friendly_name:"Other temperature"}},
+  };
+  panel.hass={
+    user:{is_admin:true},states,
+    entities:{
+      "climate.kitchen":{device_id:"room",config_entry_id:"entry-a",platform:"wiser"},
+      "sensor.kitchen_temperature":{device_id:"room",config_entry_id:"entry-a",platform:"wiser"},
+      "switch.kitchen_passive":{device_id:"room",config_entry_id:"entry-a",platform:"wiser",entity_category:"config"},
+      "sensor.thermostat_temperature":{device_id:"stat",config_entry_id:"entry-a",platform:"wiser"},
+      "sensor.thermostat_battery":{device_id:"stat",config_entry_id:"entry-a",platform:"wiser"},
+      "switch.thermostat_lock":{device_id:"stat",config_entry_id:"entry-a",platform:"wiser",entity_category:"config"},
+      "sensor.thermostat_signal":{device_id:"stat",config_entry_id:"entry-a",platform:"wiser",entity_category:"diagnostic"},
+      "sensor.itrv_temperature":{device_id:"itrv",config_entry_id:"entry-a",platform:"wiser"},
+      "sensor.itrv_battery":{device_id:"itrv",config_entry_id:"entry-a",platform:"wiser"},
+      "switch.itrv_lock":{device_id:"itrv",config_entry_id:"entry-a",platform:"wiser",entity_category:"config"},
+      "sensor.itrv_signal":{device_id:"itrv",config_entry_id:"entry-a",platform:"wiser",entity_category:"diagnostic"},
+      "sensor.other_temperature":{device_id:"other",config_entry_id:"mqtt",platform:"mqtt"},
+    },
+    devices:{
+      room:{area_id:"kitchen",config_entries:["entry-a"],model:"Room",name:"Kitchen"},
+      stat:{area_id:"kitchen",config_entries:["entry-a"],model:"RoomStat",name:"Wiser Thermostat"},
+      itrv:{area_id:"kitchen",config_entries:["entry-a"],model:"iTRV",name:"Wiser iTRV"},
+      other:{area_id:"kitchen",config_entries:["mqtt"],model:"Sensor",name:"Other"},
+    },
+    formatEntityName:state=>state.attributes.friendly_name || state.attributes.name,
+    callWS:async()=>[],
+  };
+  panel.panel={config:{panel_id:"registry-panel",hubs:["Home"],hub_ids:{Home:"entry-a"},card_configs:{Home:{default_view:"devices"}}}};
+
+  await panel._openDeviceDetail("climate.kitchen");
+  assert.deepEqual(Array.from(panel._detailCards[0].config.entities),["climate.kitchen"]);
+  assert.equal(panel._detailCards.length,1);
+  const climateSummary=panel.shadowRoot.getElementById("device-detail").children[0].children[0];
+  assert.equal(climateSummary.children[2].src,"__WISER_DEVICE_IMAGE_ROOMSTAT__");
+  assert.equal(climateSummary.children[2].alt,"RoomStat");
+  assert.equal(panel._climateProductDevice({physicalDevices:[
+    {model:"iTRV"},{model:"TemperatureHumiditySensor"},
+  ]}).model,"TemperatureHumiditySensor");
+  assert.equal(panel._climateProductDevice({physicalDevices:[{model:"iTRV"}]}).model,"iTRV");
+
+  await panel._selectDetailTab("states");
+  assert.deepEqual(configuredEntityIds(panel._detailCards[0]),[
+    "sensor.kitchen_temperature",
+  ]);
+  assert.deepEqual(configuredEntityIds(panel._detailCards[1]),[
+    "sensor.thermostat_temperature","sensor.thermostat_battery",
+  ]);
+  assert.deepEqual(configuredEntityIds(panel._detailCards[2]),[
+    "sensor.itrv_temperature","sensor.itrv_battery",
+  ]);
+  const statusDetail=panel.shadowRoot.getElementById("device-detail");
+  assert.equal(statusDetail.children[0].className,"detail-columns three-column status");
+  assert.equal(statusDetail.children[0].children[0].children[0].textContent,"States");
+  assert.equal(statusDetail.children[0].children[1].children[0].textContent,"Devices");
+  assert.equal(statusDetail.children[0].children[1].children[1].textContent,"Kitchen");
+  assert.equal(statusDetail.children[0].children[1].children[3].textContent,"Thermostat");
+  assert.equal(statusDetail.children[0].children[1].children[5].textContent,"iTRV");
+  assert.equal(statusDetail.children[0].children[2].children[0].textContent,"Schedule");
+  const scheduleRows=statusDetail.children[0].children[2].children[1].children[0];
+  assert.equal(scheduleRows.children[0].children[1].textContent,"Schedule id");
+  assert.equal(scheduleRows.children[0].children[2].textContent,"2");
+  assert.equal(scheduleRows.children[1].children[1].textContent,"Schedule name");
+  assert.equal(scheduleRows.children[1].children[2].textContent,"Kitchen");
+
+  await panel._selectDetailTab("settings");
+  assert.deepEqual(configuredEntityIds(panel._detailCards[0]),["switch.thermostat_lock"]);
+  assert.equal(panel._detailCards[0].config.entities[0].name,"Lock");
+  assert.deepEqual(configuredEntityIds(panel._detailCards[1]),["switch.itrv_lock"]);
+  assert.equal(panel._detailCards[1].config.entities[0].name,"Lock");
+  assert.deepEqual(configuredEntityIds(panel._detailCards[2]),["switch.kitchen_passive"]);
+  const settingsDetail=panel.shadowRoot.getElementById("device-detail");
+  assert.equal(settingsDetail.children[0].className,"detail-columns three-column settings");
+  assert.equal(settingsDetail.children[0].children.length,3);
+  assert.equal(settingsDetail.children[0].children[0].children[0].textContent,"Parameters");
+  assert.equal(settingsDetail.children[0].children[0].className,"detail-column");
+  assert.equal(settingsDetail.children[0].children[1].children[0].textContent,"Settings");
+  assert.equal(settingsDetail.children[0].children[1].children[1].textContent,"Thermostat");
+  assert.equal(settingsDetail.children[0].children[1].children[3].textContent,"iTRV");
+  assert.equal(settingsDetail.children[0].children[2].children[0].textContent,"Seasonal comfort");
+
+  await panel._selectDetailTab("identification");
+  const detail=panel.shadowRoot.getElementById("device-detail");
+  const identityList=detail.children[0].children[0].children[1];
+  const zigbeeList=detail.children[0].children[1].children[1];
+  assert.equal(identityList.children[0].textContent,"Thermostat");
+  assert.equal(identityList.children[4].textContent,"iTRV");
+  assert.equal(zigbeeList.children[0].textContent,"Thermostat");
+  assert.equal(zigbeeList.children[3].textContent,"iTRV");
+
+  await panel._selectDetailTab("activity");
+  assert.deepEqual(Array.from(panel._detailCards[0].config.entities),[
+    "climate.kitchen","sensor.kitchen_temperature","switch.kitchen_passive",
+    "sensor.thermostat_temperature","sensor.thermostat_battery","switch.thermostat_lock",
+    "sensor.itrv_temperature","sensor.itrv_battery","switch.itrv_lock",
+  ]);
 });
 
 test("controls panel migrates legacy room settings before rendering",()=>{

@@ -176,6 +176,22 @@ test('hub selection filters detected rooms and master control', async () => {
   assert.equal(editor.lastEvent.detail.config.hubs, undefined);
   assert.throws(() => card.setConfig({hubs:'hub-a'}));
 });
+test('panel device-type editor hides controls that belong to the overview', () => {
+  const {card,Editor} = setup();
+  const editor = new Editor();
+  editor.hideTitle = true;
+  editor.hideRoomColumns = true;
+  editor.hideDeviceTypes = true;
+  editor.hideVisibilityControl = true;
+  editor.hideHubSelector = true;
+  editor._hass = card._hass;
+  editor._entries = card._entries;
+  editor.setConfig({device_types:['heating']});
+  assert.equal(editor._form.hidden, true);
+  assert.equal(editor._typeForm.hidden, true);
+  assert.doesNotMatch(editor._tabs.innerHTML, /class="room-type-label"/);
+  assert.doesNotMatch(editor._tabs.innerHTML, /data-action="hide"/);
+});
 test('temperature and mode edits call the room services', async () => {
   const {card,calls,states} = setup();
   await card._service(states['climate.bedroom'], 'set_temperature', {temperature:22});
@@ -302,7 +318,28 @@ test('temperatures use the configured Celsius or Fahrenheit unit', () => {
   assert.equal(card._temperature(null), '—');
 });
 
-test('cooling climate rooms use cooling status, icon, colour and fallback mode', () => {
+test('all supported device types use native domain, device-class and state colours', () => {
+  const {card} = setup();
+  const color = (entity_id,state,device_class) => card._nativeStateColor({entity_id,state,attributes:{device_class}});
+  assert.match(color('climate.room','auto'), /^var\(--state-climate-auto-color,var\(--state-climate-active-color,var\(--state-active-color/);
+  assert.match(color('cover.shutter','closed','shutter'), /^var\(--state-cover-shutter-closed-color,var\(--state-cover-closed-color,var\(--state-cover-inactive-color/);
+  assert.match(color('light.lamp','on','light'), /^var\(--state-light-light-on-color,var\(--state-light-on-color,var\(--state-light-active-color/);
+  assert.match(color('switch.socket','on','outlet'), /^var\(--state-switch-outlet-on-color,var\(--state-switch-on-color,var\(--state-switch-active-color/);
+  assert.match(color('water_heater.boiler','Auto'), /^var\(--state-water_heater-auto-color,var\(--state-water_heater-active-color/);
+  assert.equal(color('switch.socket','unavailable'), 'var(--state-unavailable-color,var(--disabled-text-color))');
+});
+
+test('unconfigured RGB lights use the same contrast-adjusted colour as native Tile cards', () => {
+  const {card} = setup();
+  const light = {entity_id:'light.lamp',state:'on',attributes:{rgb_color:[255,255,255]}};
+  assert.equal(card._contentColor(light, 'fallback'), '#e1e1e1');
+  light.attributes.rgb_color = [255,0,0];
+  assert.equal(card._contentColor(light, 'fallback'), '#ff0000');
+  card.setConfig({device_options:{'light.lamp':{color:'primary'}}});
+  assert.equal(card._contentColor(light, 'fallback'), 'var(--primary-color)');
+});
+
+test('cooling climate rooms use cooling status and icon with the native entity state colour', () => {
   const {card, states} = setup();
   const room = states['climate.bedroom'];
   room.state = 'auto';
@@ -312,7 +349,7 @@ test('cooling climate rooms use cooling status, icon, colour and fallback mode',
   const html = card.shadowRoot.innerHTML;
   assert.match(html, /class="room cooling/);
   assert.match(html, /icon="mdi:snowflake"/);
-  assert.match(html, /--room-state-color:var\(--state-climate-cool-color/);
+  assert.match(html, /--room-state-color:var\(--state-climate-auto-color,var\(--state-climate-active-color,var\(--state-active-color/);
   assert.match(html, /data-mode="cool"[^>]*aria-label="Cool"/);
   assert.match(html, /1 of 3 rooms cooling · 1 unavailable/);
 });
@@ -818,7 +855,7 @@ test('editor preview shows the selected device plus one device from every availa
   const config = editor.lastEvent.detail.config;
   card.hasAttribute = name => name === 'editor-preview';
   card.setConfig(config);
-  assert.match(card.shadowRoot.innerHTML, /data-key="climate.lounge" class="room  preview-selected"/);
+  assert.match(card.shadowRoot.innerHTML, /data-key="climate.lounge"[^>]*class="room  preview-selected"/);
   assert.doesNotMatch(card.shadowRoot.innerHTML, /<section data-key="climate.bedroom"/);
   assert.match(card.shadowRoot.innerHTML, /<section data-key="switch.lamp"/);
   assert.match(card.shadowRoot.innerHTML, /style="--room-columns:1"/);
@@ -827,7 +864,7 @@ test('editor preview shows the selected device plus one device from every availa
   card.setConfig(editor.lastEvent.detail.config);
   assert.match(card.shadowRoot.innerHTML, /<section data-key="climate.lounge"/);
   assert.doesNotMatch(card.shadowRoot.innerHTML, /<section data-key="climate.bedroom"/);
-  assert.match(card.shadowRoot.innerHTML, /data-key="switch.lamp" class="room device-plug powered preview-selected/);
+  assert.match(card.shadowRoot.innerHTML, /data-key="switch.lamp"[^>]*class="room device-plug powered preview-selected/);
   card.hasAttribute = () => false;
   card._render();
   assert.doesNotMatch(card.shadowRoot.innerHTML, /class="room  preview-selected"/);
@@ -1420,6 +1457,7 @@ test('features use native objects while omitted features retain defaults', () =>
   card._nativeReady = true;
   card.setConfig(configured);
   assert.match(card.shadowRoot.innerHTML, /data-room-features="climate\.bedroom"/);
+  assert.match(card.shadowRoot.innerHTML, /--feature-color:var\(--room-state-color,var\(--state-icon-color\)\)/);
   assert.doesNotMatch(card.shadowRoot.innerHTML, /data-field="temperature"/);
 });
 
@@ -1784,6 +1822,7 @@ test('Content options persist per room and change header rendering', () => {
   assert.match(card.shadowRoot.innerHTML, /Bedroom custom/);
   assert.match(card.shadowRoot.innerHTML, /icon="mdi:bed"/);
   assert.match(card.shadowRoot.innerHTML, /hide-status hide-temps hide-next/);
+  assert.match(card.shadowRoot.innerHTML, /--room-native-state-color:var\(--state-climate-auto-color/);
   assert.match(card.shadowRoot.innerHTML, /--room-state-color:var\(--blue-color\)/);
   editor._selectRoom('climate.lounge');
   assert.equal(editor._roomForm.data.hide_state, false);
@@ -1839,6 +1878,32 @@ test('icon interaction uses the native per-domain default action', () => {
   assert.deepEqual(calls.map(call => `${call[0]}.${call[1]}`),['light.toggle','switch.toggle']);
 });
 
+test('panel device cards use the whole card as the detail interaction', () => {
+  const {card} = setup();
+  card.setConfig({_panel_card_click:true});
+  const room = card._hass.states['climate.bedroom'];
+  const cardElement = {dataset:{entity:room.entity_id}};
+  card._click({target:{closest:selector => selector === '.room[data-entity]' ? cardElement : null}});
+  assert.equal(card.lastEvent.type,'hass-more-info');
+  assert.equal(card.lastEvent.detail.entityId,room.entity_id);
+
+  card.lastEvent = undefined;
+  const icon = {dataset:{entity:room.entity_id,interaction:'icon'}};
+  card._click({target:{closest:selector => selector === 'button,ha-button' ? icon : null}});
+  assert.equal(card.lastEvent.type,'hass-more-info');
+  assert.equal(card.lastEvent.detail.entityId,room.entity_id);
+
+  card.lastEvent = undefined;
+  const secondary = {
+    dataset:{action:'secondary-more-info',entity:'climate.lounge'},
+    disabled:false,
+    closest:selector => selector === '.room[data-entity]' ? cardElement : null,
+  };
+  card._click({target:{closest:selector => selector === 'button,ha-button' ? secondary : selector === '.room[data-entity]' ? cardElement : null}});
+  assert.equal(card.lastEvent.type,'hass-more-info');
+  assert.equal(card.lastEvent.detail.entityId,room.entity_id);
+});
+
 test('Content supports native composed names and omits the entity-picture option', () => {
   const {card, Editor} = setup();
   card._hass.formatEntityName = (state, name) => name[0].type === 'area' ? 'Bedroom area' : state.entity_id;
@@ -1873,6 +1938,9 @@ test('default entity names use the native Home Assistant formatter', () => {
   const editor = new Editor();
   editor._hass = card._hass;
   assert.equal(editor._name(states['climate.bedroom']), 'Native climate.bedroom');
+  card._hass.formatEntityName = () => 'Wiser Bedroom thermostat';
+  assert.equal(card._name(states['climate.bedroom']), 'Bedroom thermostat');
+  assert.equal(editor._name(states['climate.bedroom']), 'Bedroom thermostat');
 });
 
 test('empty composed names fall back to the entity name', () => {
@@ -1991,9 +2059,19 @@ test('localization follows the other Wiser cards and prefers Home Assistant text
   const integrationHass = {language:'de',localize:key => key === 'component.wiser.entity.switch.passive_mode.name' ? 'Passivmodus' : key};
   assert.equal(localize(integrationHass, 'passive_mode'), 'Passivmodus');
   assert.equal(localize({language:'de',localize:key => key}, 'passive_mode'), 'Passive mode');
+  const panelHass = {language:'fr',localize:key => ({
+    'panel.home':'Accueil natif',
+    'ui.dialogs.more_info_control.logbook':'Journal natif',
+    'ui.panel.config.devices.data_table.manufacturer':'Fabricant natif',
+  })[key] || key};
+  assert.equal(localize(panelHass, 'panel_overview'), 'Accueil natif');
+  assert.equal(localize(panelHass, 'panel_detail_activity'), 'Journal natif');
+  assert.equal(localize(panelHass, 'panel_device_manufacturer'), 'Fabricant natif');
+  assert.equal(localize({language:'fr',localize:key => key}, 'panel_overview'), 'Vue d’ensemble');
+  assert.equal(localize({language:'de',localize:key => key}, 'shutters'), 'Rollläden');
 });
 
-test('language files contain no Home Assistant-owned labels or states', () => {
+test('language files omit stable core labels while retaining compatibility fallbacks', () => {
   const nativeOwned = ['all','show','name','unavailable','on','off','current','target','title','entity','features',
     'features_position','bottom','inline','state_content','icon','color','hide_state','content','interactions',
     'heating','cooling','idle','lights','open','closed','opening','closing','next'];

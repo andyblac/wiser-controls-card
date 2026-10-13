@@ -243,6 +243,11 @@
   const PREVIEW_ROOMS = Symbol.for("wiser-rooms-card-preview-rooms");
   const PREVIEW_ALL_TYPES = Symbol.for("wiser-rooms-card-preview-all-types");
   const escape = (value) => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const unbrandName = value => {
+    const name = String(value ?? "");
+    const unbranded = name.replace(/^wiser\s+/i,"").trimStart();
+    return unbranded || name;
+  };
   const wiserName = state => String(state?.attributes?.name ?? "");
   const resolvedEntityName = (state, configuredName) => {
     const resolve = item => item?.type === WISER_NAME_TYPE
@@ -254,11 +259,11 @@
     if (state && typeof hass?.formatEntityName === "function") {
       try {
         const formatted = hass.formatEntityName(state, resolvedEntityName(state, configuredName));
-        if (typeof formatted === "string" && formatted.trim()) return formatted;
+        if (typeof formatted === "string" && formatted.trim()) return unbrandName(formatted);
       } catch (_) {}
     }
-    if (typeof configuredName === "string") return configuredName;
-    return state?.attributes?.name || state?.attributes?.friendly_name || state?.entity_id || "";
+    if (typeof configuredName === "string") return unbrandName(configuredName);
+    return unbrandName(state?.attributes?.name || state?.attributes?.friendly_name || state?.entity_id || "");
   };
   const findInShadowRoots = (root, selector) => {
     if (!root?.querySelector) return undefined;
@@ -330,6 +335,27 @@
     return true;
   };
   const available = state => state && !["unknown", "unavailable"].includes(state.state);
+  const tileLightColor = state => {
+    if (!state?.entity_id.startsWith("light.") || !Array.isArray(state.attributes.rgb_color)) return undefined;
+    const [r, g, b] = state.attributes.rgb_color.map(Number);
+    if (![r, g, b].every(Number.isFinite)) return undefined;
+    const value = Math.max(r, g, b);
+    const chroma = value - Math.min(r, g, b);
+    const rawHue = chroma && (value === r ? (g - b) / chroma : value === g ? 2 + (b - r) / chroma : 4 + (r - g) / chroma);
+    const hue = 60 * (rawHue < 0 ? rawHue + 6 : rawHue);
+    let saturation = value && chroma / value;
+    let adjustedValue = value;
+    if (saturation < 0.4) {
+      if (saturation < 0.1) adjustedValue = 225;
+      else saturation = 0.4;
+    }
+    const component = offset => {
+      const key = (offset + hue / 60) % 6;
+      const result = adjustedValue - adjustedValue * saturation * Math.max(Math.min(key, 4 - key, 1), 0);
+      return Math.round(Math.min(Math.max(result, 0), 255)).toString(16).padStart(2, "0");
+    };
+    return `#${component(5)}${component(3)}${component(1)}`;
+  };
   const isShutter = state => state?.entity_id.startsWith("cover.") && Object.hasOwn(state.attributes, "shutter_id");
   const isLight = state => state?.entity_id.startsWith("light.") && Object.hasOwn(state.attributes, "product_type");
   const isPlug = state => state?.entity_id.startsWith("switch.") && Object.hasOwn(state.attributes, "output_state") && Object.hasOwn(state.attributes, "schedule_id");
@@ -741,9 +767,31 @@
     }
     _contentColor(room, fallback) {
       const color = roomConfig(this._config, room.entity_id).color;
-      if (!available(room) || ["off","closed"].includes(room.state) || !color || color === "state") return fallback;
-      if (/^#[0-9a-f]{3,8}$/i.test(color)) return color;
-      return /^[a-z][a-z0-9-]*$/i.test(color) ? `var(--${color}-color)` : fallback;
+      if (!available(room) || ["off","closed"].includes(room.state)) return fallback;
+      if (color && color !== "state") {
+        if (/^#[0-9a-f]{3,8}$/i.test(color)) return color;
+        if (/^[a-z][a-z0-9-]*$/i.test(color)) return `var(--${color}-color)`;
+      }
+      return tileLightColor(room) || fallback;
+    }
+    _nativeStateColor(room) {
+      if (!available(room)) return "var(--state-unavailable-color,var(--disabled-text-color))";
+      const domain = room.entity_id.split(".")[0];
+      const state = String(room.state).trim().toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/^_|_$/g,"");
+      const inactive = ["off","closed","idle","standby","unknown","unavailable"].includes(state);
+      const activity = inactive ? "inactive" : "active";
+      const deviceClass = String(room.attributes.device_class || "").trim().toLowerCase()
+        .replace(/[^a-z0-9]+/g,"_").replace(/^_|_$/g,"");
+      const properties = [
+        ...(deviceClass ? [`--state-${domain}-${deviceClass}-${state}-color`] : []),
+        `--state-${domain}-${state}-color`,
+        `--state-${domain}-${activity}-color`,
+        `--state-${activity}-color`,
+      ];
+      return properties.reduceRight(
+        (fallback, property) => `var(${property},${fallback})`,
+        "var(--secondary-text-color)",
+      );
     }
     _temperature(value) {
       return typeof value === "number" && Number.isFinite(value) ? `${new Intl.NumberFormat(this._hass.locale?.language || this._hass.language, {maximumFractionDigits: 1}).format(value)}${this._hass.config?.unit_system?.temperature || "°C"}` : "—";
@@ -861,6 +909,8 @@
         const config = featureIndex === undefined ? allFeatures : allFeatures.slice(Number(featureIndex), Number(featureIndex) + 1);
         element.hass = this._hass;
         element.context = {entity_id:id};
+        const configuredColor = roomConfig(this._config, id).color;
+        element.color = configuredColor && configuredColor !== "state" ? configuredColor : undefined;
         element.stateObj = this._hass.states[id];
         element.columns = 1;
         if (element._wiserConfig !== JSON.stringify(config)) {
@@ -875,7 +925,7 @@
       const status = !available(room) ? text(this._hass,"unavailable") : ({open:text(this._hass,"open"),closed:text(this._hass,"closed"),opening:text(this._hass,"opening"),closing:text(this._hass,"closing")}[room.state] || room.state);
       const disabled = this._busy || !available(room);
       const position = typeof a.current_position === "number" ? a.current_position : null;
-      const color = available(room) ? "var(--state-cover-active-color,var(--primary-color))" : "var(--disabled-text-color)";
+      const color = this._nativeStateColor(room);
       const secondary = this._secondaryMarkup(room);
       const reading = position === null ? "—" : `${position}%`;
       const header = secondary ? `<div class="top has-secondary ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" aria-label="Open shutter details">${this._contentIcon(room, room.state === "closed" ? "mdi:window-shutter" : "mdi:window-shutter-open")}</button>
@@ -884,7 +934,7 @@
         : `<div class="top ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" aria-label="Open shutter details">${this._contentIcon(room, room.state === "closed" ? "mdi:window-shutter" : "mdi:window-shutter-open")}</button>
         <div class="room-heading"><div class="identity"><button class="name" data-entity="${id}" data-interaction="card"><strong>${escape(this._name(room))}</strong></button><span class="status">${this._contentStatus(room, status)}</span></div>
         <div class="readings"><div class="temps">${reading}</div><div class="next">${escape(a.room || "")}</div></div></div></div>`;
-      return `<section data-key="${id}" class="room ${this._previewClasses(room, preview, previewRoom)}" style="--room-state-color:${this._contentColor(room, color)};${featureOrder(options)}"><div class="room-content">
+      return `<section data-key="${id}" data-entity="${id}" class="room ${this._previewClasses(room, preview, previewRoom)}" style="--room-native-state-color:${color};--room-state-color:${this._contentColor(room, color)};${featureOrder(options)}"><div class="room-content">
         ${header}
         ${this._nativeReady || options.features !== undefined ? this._nativeMarkup(room) : fallbackFeatures(options).some(feature => feature === "modes" || feature === "temperature" && (a.supported_features & 4)) ? `<div class="controls">${fallbackFeatures(options).includes("modes") ? `<div class="modes" role="group" aria-label="Shutter controls">${[["open_cover",1,"arrow-up","Open"],["stop_cover",8,"stop","Stop"],["close_cover",2,"arrow-down","Close"]].map(([service,feature,icon,label]) =>
           `<button class="mode" data-action="shutter" data-entity="${id}" data-service="${service}" title="${label}" aria-label="${label}" ${disabled || !(a.supported_features & feature) ? "disabled" : ""}><ha-icon icon="mdi:${icon}"></ha-icon></button>`).join("")}</div>` : ""}
@@ -940,9 +990,7 @@
         ? (brightness === null ? "—" : `${brightness}%`)
         : on ? this._powerReading(state) || status : status;
       const icon = light ? (on ? "mdi:lightbulb" : "mdi:lightbulb-outline") : hotWater ? (on ? "mdi:water-boiler" : "mdi:water-boiler-off") : "mdi:power-socket-uk";
-      const color = available(state) && on ? hotWater
-        ? "var(--state-water_heater-active-color,var(--state-active-color,var(--primary-color)))"
-        : "var(--state-light-active-color,var(--primary-color))" : "var(--secondary-text-color)";
+      const color = this._nativeStateColor(state);
       const useNative = this._nativeReady || options.features !== undefined;
       const native = useNative ? this._nativeMarkup(state) : "";
       const brightnessControl = light ? `<input type="number" data-entity="${id}" data-field="brightness" aria-label="${escape(this._name(state))} brightness percent" title="Brightness" value="${brightness ?? ""}" min="1" max="100" step="1" ${disabled}>` : "";
@@ -956,7 +1004,7 @@
         : `<div class="top ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" aria-label="Open device details">${this._contentIcon(state, icon)}</button>
         <div class="room-heading"><div class="identity"><button class="name" data-entity="${id}" data-interaction="card"><strong>${escape(this._name(state))}</strong></button><span class="status">${this._contentStatus(state, status)}</span></div>
         <div class="readings"><div class="temps">${readingMarkup}</div><div class="next">${next}</div></div></div></div>`;
-      return `<section data-key="${id}" class="room device-${light ? "light" : hotWater ? "hot-water" : "plug"} ${on ? "powered" : ""} ${this._previewClasses(state, preview, previewRoom)}" style="--room-state-color:${this._contentColor(state, color)};${featureOrder(options)}"><div class="room-content">
+      return `<section data-key="${id}" data-entity="${id}" class="room device-${light ? "light" : hotWater ? "hot-water" : "plug"} ${on ? "powered" : ""} ${this._previewClasses(state, preview, previewRoom)}" style="--room-native-state-color:${color};--room-state-color:${this._contentColor(state, color)};${featureOrder(options)}"><div class="room-content">
         ${header}
         ${fallbackControls}${native}</div></section>`;
     }
@@ -977,14 +1025,14 @@
         ? `${text(this._hass,"next")} ${nextTime}` : a.schedule_name || text(this._hass,"no_schedule");
       const secondary = this._secondaryMarkup(state);
       const icon = !available(state) ? "mdi:alert-circle-outline" : active ? "mdi:water-boiler" : "mdi:water-boiler-off";
-      const color = active ? "var(--state-water_heater-active-color,var(--state-active-color,var(--primary-color)))" : "var(--secondary-text-color)";
+      const color = this._nativeStateColor(state);
       const header = secondary ? `<div class="top has-secondary ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" aria-label="Open hot-water details">${this._contentIcon(state, icon)}</button>
         <div class="secondary-layout"><div class="secondary-heading-line"><button class="name" data-entity="${id}" data-interaction="card"><strong>${escape(this._name(state))}</strong></button><div class="temps">${reading}</div></div>
         <div class="secondary-primary-line"><span class="status">${this._contentStatus(state, status)}</span>${options.hide_state ? secondary : ""}<div class="next">${escape(next)}</div></div>${options.hide_state ? "" : secondary}</div></div>`
         : `<div class="top aligned-header ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" aria-label="Open hot-water details">${this._contentIcon(state, icon)}</button>
         <div class="secondary-layout"><div class="secondary-heading-line"><button class="name" data-entity="${id}" data-interaction="card"><strong>${escape(this._name(state))}</strong></button><div class="temps">${reading}</div></div>
         <div class="secondary-primary-line"><span class="status">${this._contentStatus(state, status)}</span><div class="next">${escape(next)}</div></div></div></div>`;
-      return `<section data-key="${id}" class="room device-hot-water ${active ? "powered" : ""} ${this._previewClasses(state, preview, previewRoom)}" style="--room-state-color:${this._contentColor(state, color)};${featureOrder(options)}"><div class="room-content">
+      return `<section data-key="${id}" data-entity="${id}" class="room device-hot-water ${active ? "powered" : ""} ${this._previewClasses(state, preview, previewRoom)}" style="--room-native-state-color:${color};--room-state-color:${this._contentColor(state, color)};${featureOrder(options)}"><div class="room-content">
         ${header}${this._nativeMarkup(state)}</div></section>`;
     }
     async _deviceService(state, service, data = {}) {
@@ -1122,6 +1170,15 @@
     _click(event) {
       const button = event.target.closest("button,ha-button");
       if (!button || button.disabled) {
+        if (!button && this._config._panel_card_click
+          && !event.target.closest?.("hui-card-features,input,select,textarea")) {
+          const card = event.target.closest?.(".room[data-entity]");
+          const room = card && this._rooms().find(item => item.entity_id === card.dataset.entity);
+          if (room) {
+            this._tap(event, room, "card");
+            return;
+          }
+        }
         if (this._boostMenuOpen) { this._boostMenuOpen = false; this._render(); }
         return;
       }
@@ -1138,7 +1195,9 @@
       if (button.dataset.action?.startsWith("resume-")) { this._resumeSchedules(button.dataset.action.slice(7)); return; }
       if (button.dataset.action === "retry") { this._discover(); return; }
       if (button.dataset.action === "secondary-more-info") {
-        const entityId = button.dataset.entity;
+        const entityId = this._config._panel_card_click
+          ? button.closest?.(".room[data-entity]")?.dataset.entity
+          : button.dataset.entity;
         if (entityId && this._hass.states[entityId]) this.dispatchEvent(new CustomEvent("hass-more-info", {detail:{entityId}, bubbles:true, composed:true}));
         return;
       }
@@ -1160,7 +1219,7 @@
         if (room.state === "auto" && room.attributes.schedule_id && room.attributes.preset_modes?.includes("Advance Schedule")) this._service(room, "set_preset_mode", {preset_mode: "Advance Schedule"});
         return;
       }
-      if (room) this._tap(event, room, button.dataset.interaction === "icon" ? "icon" : "card");
+      if (room) this._tap(event, room, this._config._panel_card_click ? "card" : button.dataset.interaction === "icon" ? "icon" : "card");
     }
     _interactionTarget(event) {
       const button = event.target.closest?.("button[data-entity][data-interaction]:not([data-action])");
@@ -1963,6 +2022,9 @@
           margin-top:8px;
           min-width:0
         }
+        hui-card-features {
+          --feature-color:var(--room-state-color,var(--state-icon-color))
+        }
         .features-bottom-row>hui-card-features {
           display:block;
           flex:1 1 0;
@@ -2072,13 +2134,7 @@
         const nextDate = a.next_schedule_datetime ? new Date(a.next_schedule_datetime) : null;
         const nextTime = nextDate && Number.isFinite(nextDate.getTime()) ? nextDate.toLocaleString(this._hass.locale?.language || this._hass.language, {weekday:"short",hour:"2-digit",minute:"2-digit"}) : a.next_schedule_change;
         const next = room.state !== "auto" ? "" : scheduled && nextTime ? `${text(this._hass,"next")} ${nextTime} · ${this._temperature(a.next_schedule_temp)}` : scheduled ? a.schedule_name : text(this._hass,"no_schedule");
-        // Match the native tile's climate state colour and theme fallbacks.
-        const mode = ["auto", "heat", "cool", "off"].includes(room.state) ? room.state : "off";
-        const colorMode = cooling ? "cool" : heating ? "heat" : mode;
-        const activity = colorMode === "off" ? "inactive" : "active";
-        const stateColor = available(room)
-          ? `var(--state-climate-${colorMode}-color,var(--state-climate-${activity}-color,var(--state-${activity}-color,var(--secondary-text-color))))`
-          : "var(--state-unavailable-color,var(--disabled-text-color))";
+        const stateColor = this._nativeStateColor(room);
         const secondary = this._secondaryMarkup(room);
         const temperatureMarkup = options.temperature_focus === "target"
           ? `<small>${escape(this._temperature(a.current_temperature))}</small> ${escape(target)}`
@@ -2090,7 +2146,7 @@
           : `<div class="top aligned-header ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" title="${escape(status)} — open room controls" aria-label="${escape(this._name(room))}: ${status}">${this._contentIcon(room, icon)}</button>
           <div class="secondary-layout"><div class="secondary-heading-line"><button class="name" data-entity="${id}" data-interaction="card" title="Open room controls"><strong>${escape(this._name(room))}</strong></button><div class="temps" title="Current ${escape(unit)} → target ${escape(unit)}" aria-label="Current ${escape(this._temperature(a.current_temperature))}; Target ${escape(target)}">${temperatureMarkup}</div></div>
           <div class="secondary-primary-line"><span class="status">${statusMarkup}</span><div class="next" title="${escape(a.schedule_name || "")}">${escape(next)}</div></div></div></div>`;
-        return `<section data-key="${id}" class="room ${heating ? "heating" : cooling ? "cooling" : ""} ${this._previewClasses(room, preview, highlightedPreviewRoom)}" style="--room-state-color:${this._contentColor(room, stateColor)};${featureOrder(options)}"><div class="room-content">
+        return `<section data-key="${id}" data-entity="${id}" class="room ${heating ? "heating" : cooling ? "cooling" : ""} ${this._previewClasses(room, preview, highlightedPreviewRoom)}" style="--room-native-state-color:${stateColor};--room-state-color:${this._contentColor(room, stateColor)};${featureOrder(options)}"><div class="room-content">
           ${headerMarkup}
           ${this._nativeReady || options.features !== undefined ? this._nativeMarkup(room) : fallbackFeatures(options).length ? `<div class="controls">${fallbackFeatures(options).includes("modes") ? `<div class="modes" role="group" aria-label="${escape(this._name(room))} mode">${["auto", "heat", "cool", "off"].filter(mode => a.hvac_modes?.includes(mode)).map(mode => {
             const label = text(this._hass,{auto:"schedule",heat:"manual",cool:"cool",off:"off"}[mode]);
@@ -2850,6 +2906,7 @@
       if (hasMultipleHubs) data.split_hubs = this._config.split_hubs ?? false;
       if (hasMultipleHeatingChannels) data.split_heating_channels = this._config.split_heating_channels ?? false;
       if (JSON.stringify(data) !== JSON.stringify(this._form.data)) this._form.data = data;
+      this._form.hidden = !appearanceSchema.length;
       if (this._renderHubConfigEditor(editorHubIds)) return;
       this._hubConfigHost.hidden = true;
       const activeTypes = selectedTypes(this._config);
@@ -2860,6 +2917,7 @@
         return `<ha-button size="s" variant="${active ? "brand" : "neutral"}" appearance="${active ? "filled" : "outlined"}" data-room-type="${option.value}" aria-pressed="${active}">${option.label}</ha-button>`;
       }).join("")}</div>`;
       if (typeMarkup !== this._typeMarkup) { this._typeForm.innerHTML = typeMarkup; this._typeMarkup = typeMarkup; }
+      this._typeForm.hidden = this.hideDeviceTypes === true;
       this._modeForm.hass = this._hass;
       const modeSchema = [{name:"device_configuration",label:text(this._hass,"configuration_mode"),selector:{button_toggle:{size:"small",options:[
         {value:"master",label:text(this._hass,"master")},{value:"individual",label:text(this._hass,"individual")},
@@ -3219,11 +3277,17 @@
       const groups = DEVICE_TYPES.map(roomType => ({roomType, rooms:tabRooms.filter(room => deviceType(room) === roomType)}))
         .filter(group => group.rooms.length);
       const scrollPositions = this._tabScrollPositions();
-      const structureSignature = JSON.stringify(groups.map(group => [group.roomType, group.rooms.map(room => [
-        room.entity_id, tabNames.get(room.entity_id), this._shown(room.entity_id),
-      ])]));
+      const structureSignature = JSON.stringify([
+        this.hideVisibilityControl === true,
+        groups.map(group => [group.roomType, group.rooms.map(room => [
+          room.entity_id, tabNames.get(room.entity_id), this._shown(room.entity_id),
+        ])]),
+      ]);
       const markup = !selected ? "" : `<div class="room-tab-rows">${groups.map(group => {
-        return `<div class="room-tab-bar" data-device-type="${group.roomType}"><span class="room-type-label">${escape(text(this._hass,group.roomType))}</span>
+        const typeLabel = groups.length > 1
+          ? `<span class="room-type-label">${escape(text(this._hass,group.roomType))}</span>`
+          : "";
+        return `<div class="room-tab-bar" data-device-type="${group.roomType}">${typeLabel}
           <div class="room-tabs-viewport"><div class="room-tabs named-tabs" role="tablist" aria-label="${escape(text(this._hass,group.roomType))}">${group.rooms.map(room => {
             const active = room.entity_id === this._selectedRoom;
             const hidden = !this._shown(room.entity_id);
@@ -3232,7 +3296,7 @@
             return `<button type="button" role="tab" title="${escape(label)}" data-room="${escape(room.entity_id)}" aria-selected="${active}" tabindex="${active ? 0 : -1}" class="${active ? "active" : ""}${hidden ? " hidden-room" : ""}" aria-label="${escape(label)}">${escape(name)}</button>`;
           }).join("")}</div><button type="button" class="tab-overflow-indicator left" data-tab-scroll="left" aria-label="Scroll tabs left"><ha-icon icon="mdi:chevron-left"></ha-icon></button><button type="button" class="tab-overflow-indicator right" data-tab-scroll="right" aria-label="Scroll tabs right"><ha-icon icon="mdi:chevron-right"></ha-icon></button></div></div>`;
       }).join("")}<div class="room-tools" hidden>
-        <ha-icon-button data-action="hide"><ha-icon></ha-icon></ha-icon-button>
+        ${this.hideVisibilityControl ? "" : '<ha-icon-button data-action="hide"><ha-icon></ha-icon></ha-icon-button>'}
         <ha-icon-button data-action="left" label="Move left"><ha-icon icon="mdi:arrow-left"></ha-icon></ha-icon-button>
         <ha-icon-button data-action="right" label="Move right"><ha-icon icon="mdi:arrow-right"></ha-icon></ha-icon-button>
       </div></div>`;
