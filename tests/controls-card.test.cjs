@@ -1878,14 +1878,19 @@ test('icon interaction uses the native per-domain default action', () => {
   assert.deepEqual(calls.map(call => `${call[0]}.${call[1]}`),['light.toggle','switch.toggle']);
 });
 
-test('panel device cards use the whole card as the detail interaction', () => {
+test('dashboard and panel device cards use the whole card as the primary interaction', () => {
   const {card} = setup();
-  card.setConfig({_panel_card_click:true});
   const room = card._hass.states['climate.bedroom'];
   const cardElement = {dataset:{entity:room.entity_id}};
   card._click({target:{closest:selector => selector === '.room[data-entity]' ? cardElement : null}});
   assert.equal(card.lastEvent.type,'hass-more-info');
   assert.equal(card.lastEvent.detail.entityId,room.entity_id);
+
+  card.lastEvent = undefined;
+  card._click({target:{closest:selector => selector === 'hui-card-features,input,select,textarea' ? {} : selector === '.room[data-entity]' ? cardElement : null}});
+  assert.equal(card.lastEvent,undefined);
+
+  card.setConfig({_panel_card_click:true});
 
   card.lastEvent = undefined;
   const icon = {dataset:{entity:room.entity_id,interaction:'icon'}};

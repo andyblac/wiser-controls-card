@@ -1170,12 +1170,10 @@
     _click(event) {
       const button = event.target.closest("button,ha-button");
       if (!button || button.disabled) {
-        if (!button && this._config._panel_card_click
-          && !event.target.closest?.("hui-card-features,input,select,textarea")) {
-          const card = event.target.closest?.(".room[data-entity]");
-          const room = card && this._rooms().find(item => item.entity_id === card.dataset.entity);
-          if (room) {
-            this._tap(event, room, "card");
+        if (!button) {
+          const target = this._interactionTarget(event);
+          if (target) {
+            this._tap(event,target.room,target.scope);
             return;
           }
         }
@@ -1224,7 +1222,11 @@
     _interactionTarget(event) {
       const button = event.target.closest?.("button[data-entity][data-interaction]:not([data-action])");
       const room = button && !button.disabled ? this._rooms().find(room => room.entity_id === button.dataset.entity) : null;
-      return room ? {room, scope:button.dataset.interaction === "icon" ? "icon" : "card"} : null;
+      if (room) return {room, scope:button.dataset.interaction === "icon" ? "icon" : "card"};
+      if (event.target.closest?.("hui-card-features,input,select,textarea")) return null;
+      const card = event.target.closest?.(".room[data-entity]");
+      const cardRoom = card && this._rooms().find(item => item.entity_id === card.dataset.entity);
+      return cardRoom ? {room:cardRoom,scope:"card"} : null;
     }
     _action(room, key) {
       const configured = roomConfig(this._config, room.entity_id)[key];
@@ -1515,7 +1517,8 @@
         }
         .room-content {
           container-type:inline-size;
-          container-name:room
+          container-name:room;
+          cursor:pointer
         }
         .room.preview-selected,
         .room.preview-hidden {
