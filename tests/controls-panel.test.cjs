@@ -78,12 +78,14 @@ function setup() {
   const context=vm.createContext({HTMLElement:Element,window:{WiserRoomsLocalize:{localize},loadCardHelpers:async()=>({createCardElement:config=>{const card=createElement("hui-card");card.setConfig(config);return card}}),matchMedia:()=>media,requestAnimationFrame:callback=>{frames.push(callback);return frames.length},cancelAnimationFrame(){},sessionStorage},setTimeout,clearTimeout,CustomEvent:class{constructor(type,options){Object.assign(this,{type},options)}},customElements:{get:key=>registry.get(key),define:(key,value)=>registry.set(key,value)},document:{createElement},console:{error(){}}});
   vm.runInContext(readFileSync(resolve(__dirname,"../src/wiser-controls-panel.js"),"utf8"),context);
   const panel=new (registry.get("wiser-controls-panel"))();
+  panel._testWindow=context.window;
   panel._testMedia=media;
   panel._testFrames=frames;
   panel._testCreatePanel=()=>{
     const replacement=new (registry.get("wiser-controls-panel"))();
     replacement._testMedia=media;
     replacement._testFrames=frames;
+    replacement._testWindow=context.window;
     replacement.connectedCallback();
     return replacement;
   };
@@ -311,6 +313,85 @@ test("clicking a device opens registry-backed control, states, settings, identif
   assert.equal(panel.shadowRoot.getElementById("overview-view").hidden,false);
 });
 
+test("late startup registry data refreshes open states and settings tabs without a state change",async()=>{
+  for(const tabName of ["states","settings"]){
+    const panel=setup();
+    const primary={entity_id:"switch.socket",state:"on",attributes:{friendly_name:"Socket"}};
+    const registryEntries=[
+      {entity_id:"switch.socket",device_id:"device-a",config_entry_id:"entry-a",platform:"wiser"},
+      {entity_id:"binary_sensor.socket_controllable",device_id:"device-a",config_entry_id:"entry-a",platform:"wiser"},
+      {entity_id:"select.socket_mode",device_id:"device-a",config_entry_id:"entry-a",platform:"wiser",entity_category:"config"},
+    ];
+    let entityRegistryCalls=0;
+    panel.hass={
+      user:{is_admin:true},states:{
+        "switch.socket":primary,
+        "binary_sensor.socket_controllable":{entity_id:"binary_sensor.socket_controllable",state:"on",attributes:{friendly_name:"Controllable"}},
+        "select.socket_mode":{entity_id:"select.socket_mode",state:"auto",attributes:{friendly_name:"Mode"}},
+      },entities:{},devices:{},
+      formatEntityName:state=>state.attributes.friendly_name,
+      callWS:async message=>message.type==="config/entity_registry/list"
+        ? (++entityRegistryCalls===1 ? [] : registryEntries)
+        : message.type==="config/device_registry/list"
+          ? [{id:"device-a",config_entries:["entry-a"],model:"Smart Plug"}]
+          : [],
+    };
+    panel.panel={config:{panel_id:`startup-${tabName}`,hubs:["Home"],hub_ids:{Home:"entry-a"},card_configs:{Home:{default_view:"devices"}}}};
+
+    await panel._openDeviceDetail("switch.socket");
+    await panel._selectDetailTab(tabName);
+    assert.equal(panel._detailCards.length,0);
+    assert.equal(panel._detailNeedsHydration,true);
+
+    await new Promise(resolve=>setTimeout(resolve,350));
+
+    assert.equal(panel._detailNeedsHydration,false);
+    assert.equal(entityRegistryCalls,2);
+    assert.equal(panel._detailCards.length,1);
+    assert.deepEqual(configuredEntityIds(panel._detailCards[0]),[
+      tabName === "states" ? "binary_sensor.socket_controllable" : "select.socket_mode",
+    ]);
+  }
+});
+
+test("states and settings render when Home Assistant card helpers are unavailable",async()=>{
+  const panel=setup();
+  delete panel._testWindow.loadCardHelpers;
+  panel.hass={
+    user:{is_admin:true},
+    states:{
+      "switch.socket":{entity_id:"switch.socket",state:"on",attributes:{friendly_name:"Socket"}},
+      "sensor.socket_power":{entity_id:"sensor.socket_power",state:"12",attributes:{friendly_name:"Power"}},
+      "select.socket_mode":{entity_id:"select.socket_mode",state:"auto",attributes:{friendly_name:"Mode",options:["auto","manual"]}},
+    },
+    entities:{
+      "switch.socket":{device_id:"device-a",config_entry_id:"entry-a",platform:"wiser"},
+      "sensor.socket_power":{device_id:"device-a",config_entry_id:"entry-a",platform:"wiser"},
+      "select.socket_mode":{device_id:"device-a",config_entry_id:"entry-a",platform:"wiser",entity_category:"config"},
+    },
+    devices:{"device-a":{id:"device-a",config_entries:["entry-a"],model:"Smart Plug"}},
+    formatEntityName:state=>state.attributes.friendly_name,
+    callWS:async()=>[],callService:async()=>{},
+  };
+  panel.panel={config:{panel_id:"no-card-helpers",hubs:["Home"],hub_ids:{Home:"entry-a"},card_configs:{Home:{default_view:"devices"}}}};
+  await panel._openDeviceDetail("switch.socket");
+
+  await panel._selectDetailTab("states");
+  assert.equal(panel._detailCards.length,1);
+  assert.equal(panel._detailCards[0].className,"detail-entity-card");
+  assert.deepEqual(configuredEntityIds(panel._detailCards[0]),["sensor.socket_power"]);
+
+  await panel._selectDetailTab("settings");
+  assert.equal(panel._detailCards.length,1);
+  assert.equal(panel._detailCards[0].className,"detail-entity-card");
+  assert.deepEqual(configuredEntityIds(panel._detailCards[0]),["select.socket_mode"]);
+  assert.equal(panel._detailCards[0].children[0].children[2].localName,"select");
+
+  await panel._selectDetailTab("activity");
+  assert.equal(panel._detailCards.length,0);
+  assert.equal(panel.shadowRoot.getElementById("device-detail").children[0].className,"detail-empty");
+});
+
 test("climate details include the room climate, thermostat and every iTRV",async()=>{
   const panel=setup();
   const states={
@@ -432,6 +513,29 @@ test("controls panel migrates legacy room settings before rendering",()=>{
   assert.equal(config.mobile_device_columns,2);
   assert.deepEqual(Array.from(config.device_types),["heating"]);
   assert.equal(config.room_columns,undefined);
+});
+
+test("controls panel ignores stale room options while preserving valid settings",()=>{
+  const panel=setup();
+  panel.hass={user:{is_admin:true}};
+  panel.panel={config:{panel_id:"registry-panel",hubs:["Home"],hub_ids:{Home:"entry-a"},card_configs:{Home:{room_options:{
+    "sensor.removed_battery":{color:"red"},
+    "light.kitchen":{color:"green"},
+    "light.invalid":null,
+  }}}}};
+  const config=panel._storedCardConfig("Home");
+  assert.deepEqual(Object.keys(config.device_options),["light.kitchen"]);
+  assert.equal(config.device_options["light.kitchen"].color,"green");
+});
+
+test("controls panel ignores malformed options in saved device views",()=>{
+  const panel=setup();
+  panel.hass={user:{is_admin:true}};
+  panel.panel={config:{panel_id:"registry-panel",hubs:["Home"],hub_ids:{Home:"entry-a"},card_configs:{Home:{
+    device_view_configs:{lights:{device_options:null}},
+  }}}};
+  const config=panel._storedDeviceCardConfig("Home","lights");
+  assert.equal(config.device_options,undefined);
 });
 
 test("rooms panel defaults mobile layouts to one device per row",()=>{

@@ -2,6 +2,8 @@
 const ACTIVE_HUB_STORAGE_PREFIX = "wiser-controls-panel:active-hub:";
 const PANEL_DEVICE_TYPES = ["heating", "hot_water", "plugs", "lights", "shutters"];
 const DEVICE_DETAIL_TABS = ["control", "states", "settings", "identification", "activity"];
+const DETAIL_HYDRATION_RETRIES = 30;
+const CONTROL_ENTITY_ID = /^(climate|cover|light|switch|water_heater)\./;
 const unbrandWiserName = value => {
   const name = String(value ?? "");
   const unbranded = name.replace(/^wiser\s+/i,"").trimStart();
@@ -313,6 +315,54 @@ class WiserRoomsPanel extends HTMLElement {
 
         .detail-activity {
           width: 100%;
+        }
+
+        .detail-entity-card {
+          display: grid;
+          overflow: hidden;
+          border: 1px solid var(--divider-color);
+          border-radius: var(--ha-card-border-radius,12px);
+          background: var(--card-background-color);
+        }
+
+        .detail-entity-row {
+          display: grid;
+          grid-template-columns: 24px minmax(0,1fr) auto;
+          gap: 12px;
+          align-items: center;
+          min-height: 44px;
+          padding: 4px 14px;
+          border-bottom: 1px solid var(--divider-color);
+        }
+
+        .detail-entity-row:last-child {
+          border-bottom: 0;
+        }
+
+        .detail-entity-row ha-state-icon {
+          --mdc-icon-size: 20px;
+        }
+
+        .detail-entity-name {
+          min-width: 0;
+          padding: 0;
+          border: 0;
+          color: var(--primary-text-color);
+          background: transparent;
+          font: inherit;
+          text-align: start;
+          cursor: pointer;
+        }
+
+        .detail-entity-value {
+          color: var(--secondary-text-color);
+          text-align: end;
+        }
+
+        .detail-entity-row select,
+        .detail-entity-row input[type="number"] {
+          max-width: 140px;
+          box-sizing: border-box;
         }
 
         .detail-identification {
@@ -907,6 +957,7 @@ class WiserRoomsPanel extends HTMLElement {
     window.removeEventListener?.("resize", this._handleMobileMediaChange);
     clearTimeout(this._responsiveInitTimer);
     this._responsiveInitTimer = undefined;
+    this._stopDetailHydration();
     if (this._scrollRestoreFrame !== undefined) {
       window.cancelAnimationFrame?.(this._scrollRestoreFrame);
       this._scrollRestoreFrame = undefined;
@@ -944,6 +995,48 @@ class WiserRoomsPanel extends HTMLElement {
     }
 
     this.shadowRoot.getElementById("settings").hidden = Boolean(this._detailEntity) || !hass?.user?.is_admin;
+    if (this._detailEntity && this._detailNeedsHydration) {
+      const hydrationIdle = this._detailHydrationTimer === undefined && !this._detailHydrationPromise;
+      if (hydrationIdle && (this._detailHydrationAttempts || 0) >= DETAIL_HYDRATION_RETRIES) {
+        this._detailHydrationAttempts = 0;
+      }
+      this._scheduleDetailHydration();
+    }
+  }
+
+  _stopDetailHydration() {
+    clearTimeout(this._detailHydrationTimer);
+    this._detailHydrationTimer = undefined;
+    this._detailHydrationAttempts = 0;
+  }
+
+  _scheduleDetailHydration(delay = 0) {
+    if (!this._detailEntity || !this._detailNeedsHydration || this._detailHydrationPromise) return;
+    if ((this._detailHydrationAttempts || 0) >= DETAIL_HYDRATION_RETRIES) return;
+    if (this._detailHydrationTimer !== undefined) {
+      if (delay) return;
+      clearTimeout(this._detailHydrationTimer);
+      this._detailHydrationTimer = undefined;
+    }
+    if (delay) {
+      this._detailHydrationTimer = setTimeout(() => {
+        this._detailHydrationTimer = undefined;
+        this._scheduleDetailHydration();
+      }, delay);
+      return;
+    }
+    this._detailHydrationAttempts = (this._detailHydrationAttempts || 0) + 1;
+    this._registryEntriesPromise = undefined;
+    this._deviceRegistryPromise = undefined;
+    this._detailHydrationPromise = Promise.resolve()
+      .then(() => this._renderDeviceDetail())
+      .catch(error => console.error("Unable to refresh Wiser device details", error))
+      .finally(() => {
+        this._detailHydrationPromise = undefined;
+        if (!this._detailNeedsHydration) return;
+        const delayMs = Math.min(250 * 2 ** Math.min(this._detailHydrationAttempts - 1,3),2000);
+        this._scheduleDetailHydration(delayMs);
+      });
   }
 
   set panel(panel) {
@@ -1099,7 +1192,7 @@ class WiserRoomsPanel extends HTMLElement {
   async _deviceContext(entityId) {
     const entries = await this._registryEntries();
     const selected = entries.find(entry => entry.entity_id === entityId);
-    if (!selected) return {selected:undefined,device:undefined,deviceEntries:[],roomEntries:[]};
+    if (!selected) return {selected:undefined,device:undefined,deviceEntries:[],roomEntries:[],pendingData:true};
     const device = await this._deviceRegistryEntry(selected.device_id);
     const areaId = selected.area_id || device?.area_id;
     const devices = new Map(Object.entries(this._hass?.devices || {})
@@ -1126,15 +1219,24 @@ class WiserRoomsPanel extends HTMLElement {
       if (selected.platform && entry.platform) return true;
       return entry.device_id === selected.device_id;
     };
+    const eligible = entry => !entry.hidden_by
+      && !entry.disabled_by
+      && sameIntegration(entry);
     const usable = entry => this._hass.states?.[entry.entity_id]
       && !entry.hidden_by
+      && !entry.disabled_by
       && sameIntegration(entry);
     const deviceEntries = entries.filter(entry => entry.device_id === selected.device_id && usable(entry));
     const roomEntries = areaId
       ? entries.filter(entry => usable(entry)
         && (entry.area_id || devices.get(entry.device_id)?.area_id) === areaId)
       : deviceEntries;
-    return {selected,device,devices,areaId,deviceEntries,roomEntries};
+    const expectedEntries = areaId
+      ? entries.filter(entry => eligible(entry)
+        && (entry.area_id || devices.get(entry.device_id)?.area_id) === areaId)
+      : entries.filter(entry => entry.device_id === selected.device_id && eligible(entry));
+    const pendingData = !device || expectedEntries.some(entry => !this._hass.states?.[entry.entity_id]);
+    return {selected,device,devices,areaId,deviceEntries,roomEntries,pendingData};
   }
 
   _renderDetailTabs(focus = false) {
@@ -1175,7 +1277,9 @@ class WiserRoomsPanel extends HTMLElement {
 
   async _openDeviceDetail(entityId) {
     if (!this._hass?.states?.[entityId]) return;
+    this._stopDetailHydration();
     this._detailEntity = entityId;
+    this._detailNeedsHydration = false;
     this._detailRoomTitle = this._roomName(entityId);
     this._activeDetailTab = "control";
     this._syncView();
@@ -1185,7 +1289,9 @@ class WiserRoomsPanel extends HTMLElement {
 
   _closeDeviceDetail() {
     this._detailGeneration = (this._detailGeneration || 0) + 1;
+    this._stopDetailHydration();
     this._detailEntity = undefined;
+    this._detailNeedsHydration = false;
     this._detailRoomTitle = undefined;
     this._detailCards = [];
     this.shadowRoot.getElementById("device-detail").replaceChildren();
@@ -1222,9 +1328,99 @@ class WiserRoomsPanel extends HTMLElement {
   }
 
   async _nativeCard(config) {
-    const helpers = await window.loadCardHelpers();
-    if (typeof helpers?.createCardElement !== "function") return undefined;
-    const card = helpers.createCardElement(config);
+    let card;
+    if (typeof window.loadCardHelpers === "function") {
+      try {
+        const helpers = await window.loadCardHelpers();
+        if (typeof helpers?.createCardElement === "function") card = helpers.createCardElement(config);
+      } catch {}
+    }
+    if (!card) {
+      const tag = config.type === "entities" ? "hui-entities-card"
+        : config.type === "logbook" ? "hui-logbook-card" : undefined;
+      if (tag && customElements.get(tag)) {
+        try {
+          card = document.createElement(tag);
+          card.setConfig(config);
+        } catch {
+          card = undefined;
+        }
+      }
+    }
+    if (!card) return this._fallbackEntityCard(config);
+    card.hass = this._hass;
+    return card;
+  }
+
+  _fallbackEntityCard(config) {
+    if (config.type !== "entities" || !Array.isArray(config.entities)) return undefined;
+    const card = document.createElement("div");
+    card.className = "detail-entity-card";
+    card.config = config;
+    let hass;
+    const openMoreInfo = entityId => card.dispatchEvent?.(new CustomEvent("hass-more-info", {
+      bubbles:true,composed:true,detail:{entityId},
+    }));
+    const callService = (domain,service,data) => hass?.callService?.(domain,service,data);
+    const render = () => {
+      const rows = config.entities.map(item => {
+        const entityId = typeof item === "string" ? item : item.entity;
+        const state = hass?.states?.[entityId];
+        const row = document.createElement("div");
+        row.className = "detail-entity-row";
+        const icon = document.createElement("ha-state-icon");
+        icon.hass = hass;
+        icon.stateObj = state;
+        const name = document.createElement("button");
+        name.type = "button";
+        name.className = "detail-entity-name";
+        name.textContent = typeof item === "object" && item.name || this._entityName(entityId);
+        name.addEventListener("click",() => openMoreInfo(entityId));
+        const domain = entityId.split(".")[0];
+        let value;
+        if (domain === "switch") {
+          value = document.createElement("input");
+          value.type = "checkbox";
+          value.checked = state?.state === "on";
+          value.addEventListener("change",() => callService("switch",value.checked ? "turn_on" : "turn_off",{entity_id:entityId}));
+        } else if (domain === "select" && Array.isArray(state?.attributes?.options)) {
+          value = document.createElement("select");
+          for (const optionValue of state.attributes.options) {
+            const option = document.createElement("option");
+            option.value = optionValue;
+            option.textContent = optionValue;
+            option.selected = optionValue === state.state;
+            value.append(option);
+          }
+          value.addEventListener("change",() => callService("select","select_option",{entity_id:entityId,option:value.value}));
+        } else if (domain === "number") {
+          value = document.createElement("input");
+          value.type = "number";
+          value.value = state?.state;
+          if (state?.attributes?.min !== undefined) value.min = state.attributes.min;
+          if (state?.attributes?.max !== undefined) value.max = state.attributes.max;
+          if (state?.attributes?.step !== undefined) value.step = state.attributes.step;
+          value.addEventListener("change",() => callService("number","set_value",{entity_id:entityId,value:Number(value.value)}));
+        } else if (domain === "button") {
+          value = document.createElement("button");
+          value.type = "button";
+          value.textContent = this._hass.localize?.("ui.components.button.press") || "Press";
+          value.addEventListener("click",() => callService("button","press",{entity_id:entityId}));
+        } else {
+          value = document.createElement("span");
+          value.className = "detail-entity-value";
+          value.textContent = state ? hass?.formatEntityState?.(state) || state.state : "";
+        }
+        row.append(icon,name,value);
+        return row;
+      });
+      card.replaceChildren(...rows);
+    };
+    Object.defineProperty(card,"hass",{
+      configurable:true,
+      get:() => hass,
+      set:value => { hass = value; render(); },
+    });
     card.hass = this._hass;
     return card;
   }
@@ -1626,6 +1822,13 @@ class WiserRoomsPanel extends HTMLElement {
 
     const context = await this._deviceContext(entityId);
     if (generation !== this._detailGeneration || entityId !== this._detailEntity) return;
+    this._detailNeedsHydration = context.pendingData;
+    if (this._detailNeedsHydration) {
+      const delayMs = Math.min(250 * 2 ** Math.min(this._detailHydrationAttempts || 0,3),2000);
+      this._scheduleDetailHydration(delayMs);
+    } else {
+      this._stopDetailHydration();
+    }
     const climate = this._climateRoomContext(context);
     const scopedEntries = climate?.entries || context.deviceEntries;
     const signalStates = scopedEntries.map(entry => this._hass.states?.[entry.entity_id])
@@ -1811,7 +2014,9 @@ class WiserRoomsPanel extends HTMLElement {
     } =
       this._config.card_configs?.[hub] || {};
     const Card = customElements.get("wiser-controls-card");
-    const normalized = Card?.orderConfig?.(stored) || stored;
+    const normalized = this._sanitiseStoredCardConfig(
+      Card?.orderConfig?.(stored) || stored,
+    );
     return Card?.orderConfig?.({
       title: this._config.hubs.length > 1 ? hub : "Wiser controls",
       ...normalized,
@@ -1823,13 +2028,40 @@ class WiserRoomsPanel extends HTMLElement {
     }) || normalized;
   }
 
+  _sanitiseStoredCardConfig(config) {
+    const sanitised = {...config};
+    if (Object.hasOwn(sanitised,"device_options")) {
+      if (
+        !sanitised.device_options
+        || typeof sanitised.device_options !== "object"
+        || Array.isArray(sanitised.device_options)
+      ) {
+        delete sanitised.device_options;
+        return sanitised;
+      }
+      sanitised.device_options = Object.fromEntries(
+        Object.entries(sanitised.device_options).filter(([entityId, options]) =>
+          CONTROL_ENTITY_ID.test(entityId)
+          && options
+          && typeof options === "object"
+          && !Array.isArray(options)),
+      );
+      if (!Object.keys(sanitised.device_options).length) {
+        delete sanitised.device_options;
+      }
+    }
+    return sanitised;
+  }
+
   _storedDeviceCardConfig(hub, type) {
     const stored = this._config.card_configs?.[hub]?.device_view_configs?.[type];
     const base = stored && typeof stored === "object"
       ? stored
       : this._storedCardConfig(hub);
     const Card = customElements.get("wiser-controls-card");
-    const normalized = Card?.orderConfig?.({...base, device_types:[type]}) || {...base, device_types:[type]};
+    const normalized = this._sanitiseStoredCardConfig(
+      Card?.orderConfig?.({...base, device_types:[type]}) || {...base, device_types:[type]},
+    );
     return Card?.orderConfig?.({
       ...normalized,
       title: this._t(type),
