@@ -1508,6 +1508,9 @@
           font-weight:500;
           margin:0
         }
+        .section-title-copy {
+          min-width:0
+        }
         .rooms {
           display:grid;
           grid-template-columns:repeat(var(--room-columns),minmax(0,1fr))
@@ -1871,7 +1874,22 @@
             align-items:flex-start;
             gap:10px
           }
+          .section-title-copy {
+            display:contents
+          }
+          .section-title h3 {
+            grid-column:1;
+            grid-row:1;
+            align-self:center
+          }
+          .section-title p {
+            grid-column:1 / -1;
+            grid-row:2;
+            min-width:0
+          }
           .section-title .bulk-actions {
+            grid-column:2;
+            grid-row:1;
             width:auto;
             flex-wrap:nowrap;
             justify-content:flex-end
@@ -2164,7 +2182,7 @@
         }
       </style><ha-card data-key="card" class="${preview ? "editor-preview" : ""}">${cardHeader}
           ${this._error ? `<div data-key="error" class="message error" role="alert">${escape(this._error)}${this._discoveryFailed ? '<ha-button data-action="retry" size="s" appearance="outlined" variant="danger">Retry</ha-button>' : ""}</div>` : ""}
-      ${!rooms.length ? `<p data-key="empty" class="message">${this._loading ? text(this._hass,"finding") : text(this._hass,"no_devices")}</p>` : renderGroups.map(group => `${group.startsHub ? `<section class="hub-section" data-key="hub-${escape(group.hubKey)}"><div class="hub-title"><h2>${escape(group.hubTitle)}</h2></div>` : ""}${grouped ? `<section class="room-section" data-key="section-${group.key}"><div class="section-title" data-key="heading-${group.key}"><div><h3>${escape(group.title)}</h3><p>${groupStatus(group)}</p></div>${group.showSectionActions ? group.type === "heating" ? heatingActions(true) : scheduledDeviceActions(group.type, true) : ""}</div>` : ""}<div class="rooms" data-key="rooms-${group.key}" style="--room-columns:${preview ? 1 : this._config.device_columns}">${group.rooms.map(room => {
+      ${!rooms.length ? `<p data-key="empty" class="message">${this._loading ? text(this._hass,"finding") : text(this._hass,"no_devices")}</p>` : renderGroups.map(group => `${group.startsHub ? `<section class="hub-section" data-key="hub-${escape(group.hubKey)}"><div class="hub-title"><h2>${escape(group.hubTitle)}</h2></div>` : ""}${grouped ? `<section class="room-section" data-key="section-${group.key}"><div class="section-title" data-key="heading-${group.key}"><div class="section-title-copy"><h3>${escape(group.title)}</h3><p>${groupStatus(group)}</p></div>${group.showSectionActions ? group.type === "heating" ? heatingActions(true) : scheduledDeviceActions(group.type, true) : ""}</div>` : ""}<div class="rooms" data-key="rooms-${group.key}" style="--room-columns:${preview ? 1 : this._config.device_columns}">${group.rooms.map(room => {
         const options = roomConfig(this._config, room.entity_id);
         const groupPreviewRoom = typePreview
           ? group.rooms.some(item => item.entity_id === previewRoom) ? previewRoom
