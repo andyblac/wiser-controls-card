@@ -1974,6 +1974,59 @@
           text-overflow:clip;
           text-align:right
         }
+        .passive-header {
+          min-height:79px
+        }
+        .passive-range {
+          flex:0 0 auto;
+          color:var(--secondary-text-color);
+          font-size:18px;
+          line-height:18px;
+          white-space:nowrap;
+          font-variant-numeric:tabular-nums
+        }
+        .passive-header.target-focus .temps {
+          color:var(--secondary-text-color);
+          font-size:18px
+        }
+        .passive-header.target-focus .passive-range {
+          color:var(--primary-text-color);
+          font-size:22px;
+          line-height:24px
+        }
+        .passive-schedule-line {
+          display:flex;
+          align-items:baseline;
+          justify-content:space-between;
+          gap:10px;
+          min-width:0;
+          min-height:18px
+        }
+        .passive-schedule-line .secondary-status {
+          flex:1 1 auto;
+          overflow:hidden
+        }
+        .passive-schedule-line .next {
+          flex:0 0 auto;
+          min-width:0;
+          max-width:none;
+          margin:0;
+          line-height:18px;
+          white-space:nowrap;
+          overflow:visible;
+          text-overflow:clip;
+          text-align:right
+        }
+        .schedule-next {
+          display:flex;
+          align-items:center;
+          justify-content:flex-end;
+          gap:4px
+        }
+        .schedule-next ha-icon {
+          --mdc-icon-size:16px;
+          flex:0 0 16px
+        }
         .secondary-primary-line .secondary-status {
           flex:1 1 auto;
           overflow:hidden
@@ -2066,7 +2119,7 @@
             width:calc(33.333% - 3px)
           }
         }
-        .top.hide-status .status,.top.hide-temps .temps,.top.hide-next .next {
+        .top.hide-status .status,.top.hide-temps .temps,.top.hide-temps .passive-range,.top.hide-next .next {
           display:none
         }
         .state-icon img {
@@ -2131,24 +2184,33 @@
         const status = !available(room) ? text(this._hass,"unavailable") : room.state === "off" ? text(this._hass,"off") : heating ? text(this._hass,"heating") : cooling ? text(this._hass,"cooling") : text(this._hass,"idle");
         const disabled = this._busy || !available(room) ? "disabled" : "";
         const ranged = typeof a.target_temp_low === "number" && typeof a.target_temp_high === "number";
+        const passive = ranged && a.is_passive === true;
         const target = ranged ? `${this._temperature(a.target_temp_low)} – ${this._temperature(a.target_temp_high)}` : this._temperature(targetTemperature);
         const scheduled = Boolean(a.schedule_id);
         const icon = !available(room) ? "mdi:alert-circle-outline" : room.state === "off" ? "mdi:power" : heating ? "mdi:radiator" : cooling ? "mdi:snowflake" : "mdi:radiator-disabled";
         const nextDate = a.next_schedule_datetime ? new Date(a.next_schedule_datetime) : null;
         const nextTime = nextDate && Number.isFinite(nextDate.getTime()) ? nextDate.toLocaleString(this._hass.locale?.language || this._hass.language, {weekday:"short",hour:"2-digit",minute:"2-digit"}) : a.next_schedule_change;
-        const next = room.state !== "auto" ? "" : scheduled && nextTime ? `${text(this._hass,"next")} ${nextTime} · ${this._temperature(a.next_schedule_temp)}` : scheduled ? a.schedule_name : text(this._hass,"no_schedule");
+        const nextDetail = room.state === "auto" && scheduled && nextTime ? `${nextTime} · ${this._temperature(a.next_schedule_temp)}` : "";
+        const next = room.state !== "auto" ? "" : nextDetail ? `${text(this._hass,"next")} ${nextDetail}` : scheduled ? a.schedule_name : text(this._hass,"no_schedule");
+        const nextMarkup = nextDetail ? `<ha-icon icon="mdi:calendar-clock"></ha-icon><span>${escape(nextDetail)}</span>` : escape(next);
         const stateColor = this._nativeStateColor(room);
         const secondary = this._secondaryMarkup(room);
         const temperatureMarkup = options.temperature_focus === "target"
           ? `<small>${escape(this._temperature(a.current_temperature))}</small> ${escape(target)}`
           : `${escape(this._temperature(a.current_temperature))}<small> ${escape(target)}</small>`;
+        const passiveTemperatureMarkup = escape(this._temperature(a.current_temperature));
         const statusMarkup = this._contentStatus(room, status + (a.is_boosted ? " · Boost" : a.is_override ? " · Override" : ""));
-        const headerMarkup = secondary ? `<div class="top has-secondary ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" title="${escape(status)} — open room controls" aria-label="${escape(this._name(room))}: ${status}">${this._contentIcon(room, icon)}</button>
+        const headerMarkup = passive
+          ? `<div class="top aligned-header passive-header ${options.temperature_focus === "target" ? "target-focus" : ""} ${secondary ? "has-secondary" : ""} ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" title="${escape(status)} — open room controls" aria-label="${escape(this._name(room))}: ${status}">${this._contentIcon(room, icon)}</button>
+          <div class="secondary-layout"><div class="secondary-heading-line"><button class="name" data-entity="${id}" data-interaction="card" title="Open room controls"><strong>${escape(this._name(room))}</strong></button><div class="temps" title="Current ${escape(unit)}" aria-label="Current ${escape(this._temperature(a.current_temperature))}">${passiveTemperatureMarkup}</div></div>
+          <div class="secondary-primary-line"><span class="status">${statusMarkup}</span><div class="passive-range" title="Lower and upper target ${escape(unit)}" aria-label="Lower target ${escape(this._temperature(a.target_temp_low))}; Upper target ${escape(this._temperature(a.target_temp_high))}">${escape(target)}</div></div>
+          <div class="passive-schedule-line">${secondary || ""}<div class="next schedule-next" title="${escape(next)}" aria-label="${escape(next)}">${nextMarkup}</div></div></div></div>`
+          : secondary ? `<div class="top has-secondary ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" title="${escape(status)} — open room controls" aria-label="${escape(this._name(room))}: ${status}">${this._contentIcon(room, icon)}</button>
           <div class="secondary-layout"><div class="secondary-heading-line"><button class="name" data-entity="${id}" data-interaction="card" title="Open room controls"><strong>${escape(this._name(room))}</strong></button><div class="temps" title="Current ${escape(unit)} → target ${escape(unit)}" aria-label="Current ${escape(this._temperature(a.current_temperature))}; Target ${escape(target)}">${temperatureMarkup}</div></div>
-          <div class="secondary-primary-line"><span class="status">${statusMarkup}</span>${options.hide_state ? secondary : ""}<div class="next" title="${escape(a.schedule_name || "")}">${escape(next)}</div></div>${options.hide_state ? "" : secondary}</div></div>`
+          <div class="secondary-primary-line"><span class="status">${statusMarkup}</span>${options.hide_state ? secondary : ""}<div class="next schedule-next" title="${escape(next)}" aria-label="${escape(next)}">${nextMarkup}</div></div>${options.hide_state ? "" : secondary}</div></div>`
           : `<div class="top aligned-header ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" title="${escape(status)} — open room controls" aria-label="${escape(this._name(room))}: ${status}">${this._contentIcon(room, icon)}</button>
           <div class="secondary-layout"><div class="secondary-heading-line"><button class="name" data-entity="${id}" data-interaction="card" title="Open room controls"><strong>${escape(this._name(room))}</strong></button><div class="temps" title="Current ${escape(unit)} → target ${escape(unit)}" aria-label="Current ${escape(this._temperature(a.current_temperature))}; Target ${escape(target)}">${temperatureMarkup}</div></div>
-          <div class="secondary-primary-line"><span class="status">${statusMarkup}</span><div class="next" title="${escape(a.schedule_name || "")}">${escape(next)}</div></div></div></div>`;
+          <div class="secondary-primary-line"><span class="status">${statusMarkup}</span><div class="next schedule-next" title="${escape(next)}" aria-label="${escape(next)}">${nextMarkup}</div></div></div></div>`;
         return `<section data-key="${id}" data-entity="${id}" class="room ${heating ? "heating" : cooling ? "cooling" : ""} ${this._previewClasses(room, preview, highlightedPreviewRoom)}" style="--room-native-state-color:${stateColor};--room-state-color:${this._contentColor(room, stateColor)};${featureOrder(options)}"><div class="room-content">
           ${headerMarkup}
           ${this._nativeReady || options.features !== undefined ? this._nativeMarkup(room) : fallbackFeatures(options).length ? `<div class="controls">${fallbackFeatures(options).includes("modes") ? `<div class="modes" role="group" aria-label="${escape(this._name(room))} mode">${["auto", "heat", "cool", "off"].filter(mode => a.hvac_modes?.includes(mode)).map(mode => {

@@ -221,6 +221,38 @@ test('passive range opens full controls instead of writing a single setpoint', (
   assert.match(card.shadowRoot.innerHTML, /Adjust temperature range/);
   assert.doesNotMatch(card.shadowRoot.innerHTML, /data-field="temperature"/);
 });
+test('enabled passive mode gives current, range and next schedule separate header rows', () => {
+  const {card,states} = setup();
+  const room = states['climate.bedroom'];
+  Object.assign(room.attributes, {
+    is_passive:true,
+    current_temperature:18.9,
+    target_temp_low:18.5,
+    target_temp_high:22,
+    schedule_id:1,
+    next_schedule_change:'Sat 12:15',
+    next_schedule_temp:19.5,
+  });
+  card.setConfig({entities:['climate.bedroom']});
+  const html = card.shadowRoot.innerHTML;
+  assert.match(html, /class="top aligned-header passive-header/);
+  assert.match(html, /class="secondary-heading-line"[^]*class="temps"[^>]*>18\.9°C<\/div>/);
+  assert.match(html, /class="secondary-primary-line"[^]*class="passive-range"[^>]*>18\.5°C – 22°C<\/div>/);
+  assert.match(html, /class="passive-schedule-line"[^]*class="next schedule-next"[^>]*aria-label="Next Sat 12:15 · 19\.5°C"[^]*<ha-icon icon="mdi:calendar-clock"><\/ha-icon><span>Sat 12:15 · 19\.5°C<\/span>/);
+  const compact = fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8').replace(/\s+/g, '');
+  assert.match(compact, /\.passive-schedule-line\.next\{flex:00auto;[^}]*white-space:nowrap/);
+});
+test('passive temperature focus emphasizes the selected current or target reading', () => {
+  const {card,states} = setup();
+  Object.assign(states['climate.bedroom'].attributes, {is_passive:true,target_temp_low:18.5,target_temp_high:22});
+  card.setConfig({entities:['climate.bedroom'],device_options:{'climate.bedroom':{temperature_focus:'target'}}});
+  assert.match(card.shadowRoot.innerHTML, /class="top aligned-header passive-header target-focus/);
+  card.setConfig({entities:['climate.bedroom'],device_options:{'climate.bedroom':{temperature_focus:'current'}}});
+  assert.doesNotMatch(card.shadowRoot.innerHTML, /passive-header target-focus/);
+  const compact = fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8').replace(/\s+/g, '');
+  assert.match(compact, /\.passive-header\.target-focus\.temps\{[^}]*font-size:18px/);
+  assert.match(compact, /\.passive-header\.target-focus\.passive-range\{[^}]*font-size:22px/);
+});
 test('resuming schedule enables auto then cancels an active override', async () => {
   const {card,calls,states} = setup();
   const room = states['climate.bedroom'];
@@ -1711,6 +1743,7 @@ test('Next schedule is an icon feature that advances the schedule', () => {
   card.setConfig({entities:['climate.bedroom'],device_options:{'climate.bedroom':{features:[{type:'custom:wiser-next-schedule-feature'}]}}});
   assert.match(card.shadowRoot.innerHTML, /<hui-card-features /);
   assert.match(card.shadowRoot.innerHTML, /Next Sat 21:30 · 17.5°C/);
+  assert.match(card.shadowRoot.innerHTML, /class="next schedule-next"[^]*<ha-icon icon="mdi:calendar-clock"><\/ha-icon><span>Sat 21:30 · 17\.5°C<\/span>/);
   states['climate.bedroom'].state = 'heat';
   card.setConfig({entities:['climate.bedroom'],device_options:{'climate.bedroom':{features:[{type:'custom:wiser-next-schedule-feature'}]}}});
   assert.doesNotMatch(card.shadowRoot.innerHTML, /Next Sat 21:30 · 17.5°C/);
@@ -1764,7 +1797,8 @@ test('Secondary status renders under identity only when configured and not as bo
   card.setConfig({entities:['climate.bedroom'], device_options:{'climate.bedroom':{secondary_status:{state_content:['state']}}}});
   let html = card.shadowRoot.innerHTML;
   assert.match(html, /class="top has-secondary[^"]*"/);
-  assert.match(html, /class="secondary-primary-line"><span class="status"><span class="status-item"[^>]*><state-display[^>]*><\/state-display><\/span><\/span><div class="next"[^>]*>[^<]*<\/div><\/div><button[^>]*class="secondary-status/);
+  assert.match(html, /class="secondary-primary-line"><span class="status"><span class="status-item"[^>]*><state-display[^>]*><\/state-display><\/span><\/span>[^]*class="next schedule-next"/);
+  assert.match(html, /class="secondary-status/);
   assert.doesNotMatch(html, /<hui-card-features /);
   const display = {dataset:{secondaryStatus:'climate.bedroom',secondaryContent:'state'}};
   card.shadowRoot.querySelectorAll = selector => selector === 'state-display[data-secondary-status]' ? [display] : [];
@@ -1775,7 +1809,7 @@ test('Secondary status renders under identity only when configured and not as bo
   card.setConfig({entities:['climate.bedroom'],features:[]});
   html = card.shadowRoot.innerHTML;
   assert.doesNotMatch(html, /class="top has-secondary"|class="secondary-status/);
-  assert.match(html, /class="top aligned-header[^]*?class="secondary-heading-line"[^]*?class="temps"[^]*?class="secondary-primary-line"[^]*?class="next"/);
+  assert.match(html, /class="top aligned-header[^]*?class="secondary-heading-line"[^]*?class="temps"[^]*?class="secondary-primary-line"[^]*?class="next schedule-next"/);
   const compact = fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8').replace(/\s+/g, '');
   assert.match(compact, /\.top\.has-secondary,\.top\.aligned-header\{grid-template-columns:38pxminmax\(0,1fr\);align-items:start;min-height:61px\}/);
 });
