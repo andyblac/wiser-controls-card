@@ -253,6 +253,47 @@ test('passive temperature focus emphasizes the selected current or target readin
   assert.match(compact, /\.passive-header\.target-focus\.temps\{[^}]*font-size:18px/);
   assert.match(compact, /\.passive-header\.target-focus\.passive-range\{[^}]*font-size:22px/);
 });
+test('target controls use the manual colour and keep passive overrides independent', async () => {
+  const {card,states} = setup();
+  const room = states['climate.bedroom'];
+  const makeControl = target => {
+    const values = new Map();
+    let layerStyle;
+    return {target,values,style:{
+      setProperty(name,value) { values.set(name,value); },
+      removeProperty(name) { values.delete(name); },
+    },shadowRoot:{
+      querySelector() { return layerStyle; },
+      append(node) { layerStyle = node; node.remove = () => { layerStyle = undefined; }; },
+    },addEventListener(name,listener) { this.listener = listener; },get layerStyle() { return layerStyle; }};
+  };
+  const low = makeControl('low');
+  const high = makeControl('high');
+  let controls = [low];
+  const feature = {updateComplete:Promise.resolve(),shadowRoot:{querySelectorAll:() => controls}};
+  const wrapper = {updateComplete:Promise.resolve(),shadowRoot:{querySelector:() => feature}};
+  const host = {updateComplete:Promise.resolve(),shadowRoot:{querySelectorAll:() => [wrapper]}};
+  Object.assign(room.attributes,{is_passive:false,is_override:true});
+  await card._styleTargetOverride(host,room);
+  assert.equal(low.values.get('--control-number-buttons-background-color'),'var(--state-climate-heat-color, var(--primary-color))');
+  assert.equal(low.values.get('--control-number-buttons-background-opacity'),'1');
+  assert.equal(low.values.get('color'),'var(--text-primary-color, #fff)');
+  assert.match(low.layerStyle.textContent,/\.value::before\{display:none\}/);
+  room.attributes.is_override = false;
+  await card._styleTargetOverride(host,room);
+  assert.equal(low.values.size,0);
+  assert.equal(low.layerStyle,undefined);
+  controls = [low,high];
+  Object.assign(room.attributes,{is_passive:true,is_override:true,target_temp_low:18.5,target_temp_high:22,is_passive_lower_override:true,is_passive_upper_override:false});
+  await card._styleTargetOverride(host,room);
+  assert.equal(low.values.get('--control-number-buttons-background-opacity'),'1');
+  assert.equal(high.values.size,0);
+  high.listener();
+  assert.equal(high.values.get('--control-number-buttons-background-opacity'),'1');
+  room.attributes.is_override = false;
+  await card._styleTargetOverride(host,room);
+  assert.equal(high.values.get('--control-number-buttons-background-opacity'),'1');
+});
 test('resuming schedule enables auto then cancels an active override', async () => {
   const {card,calls,states} = setup();
   const room = states['climate.bedroom'];

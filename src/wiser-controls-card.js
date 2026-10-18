@@ -39,6 +39,7 @@
   const WISER_NAME_LABEL = "Wiser name";
   const WISER_NAME_PICKER_VALUE = "___wiser_name___";
   const WISER_NAME_PICKER_PATCHED = Symbol("wiser-name-picker-patched");
+  const TARGET_OVERRIDE_PENDING_MS = 5000;
   const entityRegistryRequests = new WeakMap();
   const wiserConfigEntryRequests = new WeakMap();
   const entityRegistryEntries = hass => {
@@ -883,6 +884,93 @@
       if (!preview) return "";
       return `${previewRoom === room.entity_id ? "preview-selected" : ""} ${this._config.excluded_entities?.includes(room.entity_id) ? "preview-hidden" : ""}`.trim();
     }
+    _setTargetOverrideControlStyle(control, active) {
+      const controlRoot = control.shadowRoot;
+      let layerStyle = controlRoot?.querySelector?.("style.wiser-target-override");
+      if (active) {
+        control.style.setProperty("--control-number-buttons-background-color", "var(--state-climate-heat-color, var(--primary-color))");
+        control.style.setProperty("--control-number-buttons-background-opacity", "1");
+        control.style.setProperty("color", "var(--text-primary-color, #fff)");
+        if (controlRoot && !layerStyle) {
+          layerStyle = document.createElement("style");
+          layerStyle.className = "wiser-target-override";
+          layerStyle.textContent = ".value::before{display:none}.value{background-color:var(--control-number-buttons-background-color)}";
+          controlRoot.append(layerStyle);
+        }
+      } else {
+        control.style.removeProperty("--control-number-buttons-background-color");
+        control.style.removeProperty("--control-number-buttons-background-opacity");
+        control.style.removeProperty("color");
+        layerStyle?.remove?.();
+      }
+    }
+    async _styleTargetOverride(element, state) {
+      element._wiserTargetOverrideState = state;
+      await element.updateComplete;
+      const currentState = element._wiserTargetOverrideState;
+      const attributes = currentState?.attributes || {};
+      const passive = attributes.is_passive === true && typeof attributes.target_temp_low === "number" && typeof attributes.target_temp_high === "number";
+      this._passiveOverrideTargets ||= new Map();
+      this._passiveOverridePending ||= new Map();
+      let activeTargets;
+      if (passive) {
+        const id = currentState.entity_id;
+        if (!attributes.is_override) {
+          const pending = this._passiveOverridePending.get(id);
+          activeTargets = pending > Date.now() ? this._passiveOverrideTargets.get(id) || new Set() : new Set();
+          if (!activeTargets.size) {
+            this._passiveOverrideTargets.delete(id);
+            this._passiveOverridePending.delete(id);
+          }
+        } else if (Object.hasOwn(attributes, "is_passive_lower_override") || Object.hasOwn(attributes, "is_passive_upper_override")) {
+          activeTargets = new Set([
+            ...(attributes.is_passive_lower_override ? ["low"] : []),
+            ...(attributes.is_passive_upper_override ? ["high"] : []),
+          ]);
+          this._passiveOverrideTargets.set(id, activeTargets);
+          this._passiveOverridePending.delete(id);
+        } else {
+          activeTargets = this._passiveOverrideTargets.get(id);
+          if (!activeTargets?.size) {
+            activeTargets = new Set([/override/i.test(attributes.target_temperature_origin || "") ? "low" : "high"]);
+            this._passiveOverrideTargets.set(id, activeTargets);
+          }
+          this._passiveOverridePending.delete(id);
+        }
+      }
+      for (const wrapper of element.shadowRoot?.querySelectorAll?.("hui-card-feature") || []) {
+        await wrapper.updateComplete;
+        const feature = wrapper.shadowRoot?.querySelector?.("hui-target-temperature-card-feature");
+        if (!feature) continue;
+        await feature.updateComplete;
+        for (const control of feature.shadowRoot?.querySelectorAll?.("ha-control-number-buttons") || []) {
+          const active = passive ? activeTargets.has(control.target) : Boolean(attributes.is_override);
+          this._setTargetOverrideControlStyle(control, active);
+          if (passive && !control._wiserOverrideListener) {
+            control._wiserOverrideListener = () => {
+              const latest = element._wiserTargetOverrideState;
+              if (!latest) return;
+              const targets = this._passiveOverrideTargets.get(latest.entity_id) || new Set();
+              targets.add(control.target);
+              this._passiveOverrideTargets.set(latest.entity_id, targets);
+              const pendingUntil = Date.now() + TARGET_OVERRIDE_PENDING_MS;
+              this._passiveOverridePending.set(latest.entity_id, pendingUntil);
+              const pendingTimer = setTimeout(() => {
+                if (this._passiveOverridePending.get(latest.entity_id) !== pendingUntil) return;
+                this._passiveOverridePending.delete(latest.entity_id);
+                if (!this._hass.states[latest.entity_id]?.attributes.is_override) {
+                  this._passiveOverrideTargets.delete(latest.entity_id);
+                  this._syncNativeFeatures();
+                }
+              }, TARGET_OVERRIDE_PENDING_MS + 100);
+              pendingTimer?.unref?.();
+              this._setTargetOverrideControlStyle(control, true);
+            };
+            control.addEventListener("value-changed", control._wiserOverrideListener);
+          }
+        }
+      }
+    }
     _syncNativeFeatures() {
       for (const icon of this.shadowRoot.querySelectorAll?.("ha-state-icon[data-room-icon]") || []) {
         const id = icon.dataset.roomIcon;
@@ -917,6 +1005,7 @@
           element.features = config;
           element._wiserConfig = JSON.stringify(config);
         }
+        void this._styleTargetOverride(element, config.some(feature => feature.type === "target-temperature") ? this._hass.states[id] : undefined);
       }
     }
     _renderShutter(room, preview, previewRoom) {
