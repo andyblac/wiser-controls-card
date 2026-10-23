@@ -495,6 +495,7 @@
       this._hubs = null;
       this._headerObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => this._layoutHeaders());
       this._observedHeaders = new Set();
+      this._observedBulkHeaders = new Set();
       this._busy = false;
       this._temperatureQueue = new Map();
       this._targets = new Map();
@@ -510,7 +511,7 @@
       this.shadowRoot.addEventListener("focusout", () => setTimeout(() => this._render(), 0));
     }
     connectedCallback() { this._layoutHeaders(); }
-    disconnectedCallback() { this._headerObserver?.disconnect(); this._observedHeaders.clear(); }
+    disconnectedCallback() { this._headerObserver?.disconnect(); this._observedHeaders.clear(); this._observedBulkHeaders.clear(); }
     _layoutHeaders() {
       const headers = new Set(this.shadowRoot.querySelectorAll?.(".top") || []);
       for (const header of this._observedHeaders) if (!headers.has(header)) this._headerObserver?.unobserve(header.closest(".room"));
@@ -528,6 +529,35 @@
         header.classList.toggle("inline-readings", needed <= header.clientWidth);
       }
       this._observedHeaders = headers;
+      const bulkHeaders = new Set(this.shadowRoot.querySelectorAll?.('header[data-key="header"]') || []);
+      for (const header of this._observedBulkHeaders) if (!bulkHeaders.has(header)) this._headerObserver?.unobserve(header);
+      for (const header of bulkHeaders) {
+        if (!this._observedBulkHeaders.has(header)) this._headerObserver?.observe(header);
+        const summary = header.firstElementChild;
+        const actions = header.querySelector(".bulk-actions");
+        if (!summary || !actions) continue;
+        const measureText = node => {
+          if (!node?.textContent) return 0;
+          const probe = document.createElement("span");
+          const style = getComputedStyle(node);
+          probe.textContent = node.textContent;
+          probe.style.cssText = `position:absolute;visibility:hidden;white-space:nowrap;font:${style.font}`;
+          header.append(probe);
+          const width = probe.getBoundingClientRect().width;
+          probe.remove();
+          return width;
+        };
+        const summaryWidth = Math.max(0, ...Array.from(summary.children).map(measureText));
+        const actionItems = Array.from(actions.children);
+        const actionGap = parseFloat(getComputedStyle(actions).columnGap) || 0;
+        const actionsWidth = actionItems.reduce((width, item) => width + item.getBoundingClientRect().width, 0)
+          + Math.max(0, actionItems.length - 1) * actionGap;
+        const headerStyle = getComputedStyle(header);
+        const available = header.clientWidth - (parseFloat(headerStyle.paddingLeft) || 0) - (parseFloat(headerStyle.paddingRight) || 0);
+        const headerGap = parseFloat(headerStyle.columnGap) || 0;
+        header.classList.toggle("stacked-summary", summaryWidth + actionsWidth + headerGap > available);
+      }
+      this._observedBulkHeaders = bulkHeaders;
     }
     _combinedHubConfig(config) {
       const {hub_configs:hubConfigs = [], ...combined} = config;
@@ -1926,32 +1956,51 @@
         .error {
           color:var(--error-color)
         }
+        header.stacked-summary {
+          display:grid;
+          grid-template-columns:minmax(0,1fr) auto;
+          align-items:start;
+          gap:8px
+        }
+        header.stacked-summary>div:first-child {
+          display:contents
+        }
+        header.stacked-summary h2 {
+          grid-column:1;
+          grid-row:1;
+          align-self:center;
+          white-space:nowrap
+        }
+        header.stacked-summary p {
+          grid-column:1 / -1;
+          grid-row:2;
+          min-width:0;
+          text-align:right
+        }
+        header.stacked-summary .bulk-actions {
+          width:auto;
+          flex-wrap:nowrap;
+          justify-content:flex-end;
+          grid-column:2;
+          grid-row:1
+        }
         @container (max-width: 480px) {
-          header {
-            display:grid;
-            grid-template-columns:minmax(0,1fr) auto;
-            align-items:start;
-            gap:10px
-          }
-          header h2 {
-            white-space:nowrap
-          }
-          header .bulk-actions {
+          header .bulk-actions,.section-title .bulk-actions {
             width:auto;
             flex-wrap:nowrap;
             justify-content:flex-end
           }
-          header .bulk-actions .off {
+          .bulk-actions .action-label {
+            display:none
+          }
+          header .bulk-actions .off,.section-title .bulk-actions .off {
             --ha-button-height:40px;
             flex:0 0 44px;
             width:44px;
             min-width:44px;
             position:relative
           }
-          .bulk-actions .action-label {
-            display:none
-          }
-          header .bulk-actions .off ha-icon {
+          header .bulk-actions .off ha-icon,.section-title .bulk-actions .off ha-icon {
             position:absolute;
             inset:50% auto auto 50%;
             margin:0;
@@ -1978,23 +2027,7 @@
           }
           .section-title .bulk-actions {
             grid-column:2;
-            grid-row:1;
-            width:auto;
-            flex-wrap:nowrap;
-            justify-content:flex-end
-          }
-          .section-title .bulk-actions .off {
-            --ha-button-height:40px;
-            flex:0 0 44px;
-            width:44px;
-            min-width:44px;
-            position:relative
-          }
-          .section-title .bulk-actions .off ha-icon {
-            position:absolute;
-            inset:50% auto auto 50%;
-            margin:0;
-            transform:translate(-50%,-50%)
+            grid-row:1
           }
         }
         @container (max-width: 340px) {

@@ -2113,16 +2113,23 @@ test('card uses native Home Assistant entity icons and action buttons', () => {
 
 test('mobile headers use compact icon-only native bulk actions', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8');
-  assert.match(source, /@container \(max-width: 480px\)[\s\S]*?header \{[\s\S]*?display:grid;[\s\S]*?grid-template-columns:minmax\(0,1fr\) auto/);
-  assert.match(source, /header \.bulk-actions \{[\s\S]*?width:auto;[\s\S]*?justify-content:flex-end/);
-  assert.match(source, /header \.bulk-actions \.off \{[\s\S]*?--ha-button-height:40px;[\s\S]*?flex:0 0 44px;[\s\S]*?position:relative/);
+  assert.match(source, /header\.stacked-summary \{[\s\S]*?display:grid;[\s\S]*?grid-template-columns:minmax\(0,1fr\) auto/);
+  assert.match(source, /header\.stacked-summary>div:first-child \{[\s\S]*?display:contents[\s\S]*?header\.stacked-summary p \{[\s\S]*?grid-column:1 \/ -1;[\s\S]*?grid-row:2;[\s\S]*?text-align:right/);
+  assert.match(source, /@container \(max-width: 480px\)[\s\S]*?header \.bulk-actions,\.section-title \.bulk-actions \{[\s\S]*?width:auto;[\s\S]*?justify-content:flex-end/);
+  assert.match(source, /header \.bulk-actions \.off,\.section-title \.bulk-actions \.off \{[\s\S]*?--ha-button-height:40px;[\s\S]*?flex:0 0 44px;[\s\S]*?position:relative/);
   assert.match(source, /\.bulk-actions \.action-label \{[\s\S]*?display:none/);
   assert.match(source, /data-action="follow-schedule"[\s\S]*?aria-label="\$\{followScheduleTitle\}"[\s\S]*?<span class="action-label">/);
-  assert.match(source, /header \.bulk-actions \.off ha-icon \{[\s\S]*?position:absolute;[\s\S]*?inset:50% auto auto 50%;[\s\S]*?transform:translate\(-50%,-50%\)/);
+  assert.match(source, /header \.bulk-actions \.off ha-icon,\.section-title \.bulk-actions \.off ha-icon \{[\s\S]*?position:absolute;[\s\S]*?inset:50% auto auto 50%;[\s\S]*?transform:translate\(-50%,-50%\)/);
   assert.match(source, /\.section-title \{[\s\S]*?display:grid;[\s\S]*?grid-template-columns:minmax\(0,1fr\) auto;[\s\S]*?align-items:flex-start/);
   assert.match(source, /\.section-title-copy \{[\s\S]*?display:contents/);
   assert.match(source, /\.section-title p \{[\s\S]*?grid-column:1 \/ -1;[\s\S]*?grid-row:2/);
-  assert.match(source, /\.section-title \.bulk-actions \{[\s\S]*?width:auto;[\s\S]*?justify-content:flex-end/);
+  assert.match(source, /\.section-title \.bulk-actions \{[\s\S]*?grid-column:2;[\s\S]*?grid-row:1/);
+});
+
+test('heating summaries stack only when their rendered content does not fit', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8');
+  assert.match(source, /summaryWidth \+ actionsWidth \+ headerGap > available/);
+  assert.match(source, /classList\.toggle\("stacked-summary"/);
 });
 
 test('localization follows the other Wiser cards and prefers Home Assistant text', () => {
