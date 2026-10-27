@@ -1585,11 +1585,12 @@ test('preset feature exposes supported Wiser actions and preserves explicit sele
 
 test('controls card scopes a responsive boost countdown to its native preset feature', () => {
   const source = fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8');
-  assert.match(source, /__wiserControlsCardFeature/);
+  assert.match(source, /isControlsCardPresetFeature/);
+  assert.match(source, /\["wiser-controls-card","wiser-rooms-card"\]\.includes\(host\.localName\)/);
   assert.match(source, /hui-climate-preset-modes-card-feature/);
   assert.match(source, /mode === "full" \? `\$\{name\} · \$\{remaining\}` : remaining/);
   assert.match(source, /width >= 180 \? "full" : width >= 105 \? "compact" : "icon"/);
-  assert.match(source, /_enableBoostPresetCountdown/);
+  assert.doesNotMatch(source, /_enableBoostPresetCountdown/);
   assert.match(source, /__wiserControlsBoostTimer/);
 });
 

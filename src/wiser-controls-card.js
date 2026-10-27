@@ -444,11 +444,21 @@
   };
   const boostPresetWidthMode = width => width >= 180 ? "full" : width >= 105 ? "compact" : "icon";
   const boostPresetState = feature => feature?._stateObj || feature?.stateObj;
+  const isControlsCardPresetFeature = feature => {
+    let element = feature;
+    while (element) {
+      const host = element.getRootNode?.()?.host;
+      if (!host) return false;
+      if (["wiser-controls-card","wiser-rooms-card"].includes(host.localName)) return true;
+      element = host;
+    }
+    return false;
+  };
   const augmentBoostPresetOptions = (feature, options) => {
     const state = boostPresetState(feature);
     const minutes = boostMinutesRemaining(state);
     const mode = boostPresetWidthMode(feature.__wiserControlsBoostWidth || feature.clientWidth || 0);
-    if (!feature.__wiserControlsCardFeature || !Number.isFinite(minutes) || mode === "icon") return options;
+    if (!isControlsCardPresetFeature(feature) || !Number.isFinite(minutes) || mode === "icon") return options;
     const remaining = minutes > 0 ? `${minutes}m` : "<1m";
     const value = String(state.attributes.preset_mode || "Boost");
     const name = value.replace(/\s+<?\d+m$/i, "").trim() || "Boost";
@@ -473,7 +483,7 @@
     }
     clearTimeout(feature.__wiserControlsBoostTimer);
     const state = boostPresetState(feature);
-    if (!feature.__wiserControlsCardFeature || !state?.attributes?.is_boosted) {
+    if (!isControlsCardPresetFeature(feature) || !state?.attributes?.is_boosted) {
       feature.__wiserControlsBoostTimer = undefined;
       return;
     }
@@ -1078,18 +1088,6 @@
         }
       }
     }
-    async _enableBoostPresetCountdown(element, enabled) {
-      if (!enabled) return;
-      await patchBoostPresetFeature();
-      await element.updateComplete;
-      for (const wrapper of element.shadowRoot?.querySelectorAll?.("hui-card-feature") || []) {
-        await wrapper.updateComplete;
-        const feature = wrapper.shadowRoot?.querySelector?.("hui-climate-preset-modes-card-feature");
-        if (!feature) continue;
-        feature.__wiserControlsCardFeature = true;
-        feature.requestUpdate?.();
-      }
-    }
     _syncNativeFeatures() {
       for (const icon of this.shadowRoot.querySelectorAll?.("ha-state-icon[data-room-icon]") || []) {
         const id = icon.dataset.roomIcon;
@@ -1125,7 +1123,6 @@
           element._wiserConfig = JSON.stringify(config);
         }
         void this._styleTargetOverride(element, config.some(feature => feature.type === "target-temperature") ? this._hass.states[id] : undefined);
-        void this._enableBoostPresetCountdown(element, config.some(feature => feature.type === "climate-preset-modes"));
       }
     }
     _renderShutter(room, preview, previewRoom) {
