@@ -140,6 +140,22 @@ test('boost duration menu dispatches the selected preset', () => {
   card._click({target:{closest:() => item}});
   assert.equal(selected, 'Boost 2h');
 });
+
+test('bulk preset actions accept translatable integration keys', async () => {
+  const {card,calls,states} = setup();
+  const presetModes = ['advance_schedule','cancel_overrides','boost_30m','boost_1h','boost_2h','boost_3h'];
+  Object.assign(states['climate.bedroom'].attributes, {preset_modes:presetModes});
+  Object.assign(states['climate.lounge'].attributes, {preset_modes:presetModes});
+  card.setConfig({device_types:['heating']});
+  assert.doesNotMatch(card.shadowRoot.innerHTML, /class="off boost-all[^>]*disabled/);
+  await card._boostAll('Boost 2h');
+  assert.equal(calls.length, 2);
+  assert.equal(calls.every(call => call[2].preset_mode === 'boost_2h'), true);
+  calls.length = 0;
+  Object.assign(states['climate.bedroom'].attributes, {is_boosted:true});
+  await card._cancelAllBoosts();
+  assert.equal(calls[0][2].preset_mode, 'cancel_overrides');
+});
 test('explicit room selection limits master control and rejects unrelated climates', async () => {
   const {card,calls} = setup();
   card.setConfig({entities:['climate.lounge','climate.other','climate.hot_water']});

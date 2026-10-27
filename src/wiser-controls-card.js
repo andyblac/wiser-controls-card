@@ -28,7 +28,25 @@
   const SHARED_CARD_CONFIG_KEYS = new Set([
     "type", "title", "device_columns", "mobile_device_columns", "split_hubs", "hub_configs", "grid_options",
   ]);
-  const WISER_PRESET_MODES = ["Advance Schedule", "Cancel Overrides", "Boost 30m", "Boost 1h", "Boost 2h", "Boost 3h"];
+  const WISER_PRESET_ALIASES = {
+    advance_schedule: ["advance_schedule", "Advance Schedule"],
+    cancel_overrides: ["cancel_overrides", "Cancel Overrides"],
+    boost_30m: ["boost_30m", "Boost 30m"],
+    boost_1h: ["boost_1h", "Boost 1h"],
+    boost_2h: ["boost_2h", "Boost 2h"],
+    boost_3h: ["boost_3h", "Boost 3h"],
+  };
+  const WISER_PRESET_MODES = Object.keys(WISER_PRESET_ALIASES);
+  const BOOST_PRESET_MODES = ["boost_30m", "boost_1h", "boost_2h", "boost_3h"];
+  const presetKey = value => WISER_PRESET_MODES.find(key => key === value || WISER_PRESET_ALIASES[key].includes(value));
+  const presetMode = (state, value) => {
+    const key = presetKey(value);
+    const supported = state?.attributes?.preset_modes;
+    return key && Array.isArray(supported)
+      ? WISER_PRESET_ALIASES[key].find(mode => supported.includes(mode))
+      : undefined;
+  };
+  const supportsPreset = (state, value) => Boolean(presetMode(state, value));
   const LEGACY_SECONDARY_STATUS_FEATURE = "wiser-secondary-status-feature";
   const LEGACY_OVERRIDE_STATUS_FEATURE = "wiser-override-status-feature";
   const NEXT_SCHEDULE_FEATURE = "wiser-next-schedule-feature";
@@ -153,7 +171,7 @@
   const featureOrder = () => FEATURES.map((value, index) => `--feature-${value}:${index}`).join(";");
   const nativeFeatures = (config, id, state) => {
     const supported = Array.isArray(state?.attributes?.preset_modes) ? state.attributes.preset_modes : [];
-    const presetModes = WISER_PRESET_MODES.filter(mode => supported.includes(mode));
+    const presetModes = WISER_PRESET_MODES.map(mode => presetMode(state, mode)).filter(Boolean);
     if (!presetModes.length) presetModes.push("Advance Schedule");
     const list = config.features ?? (id.startsWith("water_heater.") ? [
       {type:`custom:${HOT_WATER_MODES_FEATURE}`},
@@ -946,8 +964,9 @@
       this._busy = true; this._error = ""; this._render();
       try {
         await this._hass.callService("climate", service, {entity_id: room.entity_id, ...values});
-        if (resume && (room.attributes.is_override || room.attributes.is_boosted) && room.attributes.preset_modes?.includes("Cancel Overrides")) {
-          await this._hass.callService("climate", "set_preset_mode", {entity_id: room.entity_id, preset_mode: "Cancel Overrides"});
+        const cancelPreset = presetMode(room, "cancel_overrides");
+        if (resume && (room.attributes.is_override || room.attributes.is_boosted) && cancelPreset) {
+          await this._hass.callService("climate", "set_preset_mode", {entity_id: room.entity_id, preset_mode: cancelPreset});
         }
       }
       catch (error) {
@@ -1278,10 +1297,10 @@
     async _cancelAllOverrides() {
       if (this._busy) return;
       const rooms = this._rooms().filter(room => isHeatingOverride(room)
-        && room.attributes.preset_modes?.includes("Cancel Overrides"));
+        && supportsPreset(room, "cancel_overrides"));
       if (!rooms.length) return;
       this._busy = true; this._error = ""; this._render();
-      const results = await Promise.allSettled(rooms.map(room => this._hass.callService("climate", "set_preset_mode", {entity_id:room.entity_id, preset_mode:"Cancel Overrides"})));
+      const results = await Promise.allSettled(rooms.map(room => this._hass.callService("climate", "set_preset_mode", {entity_id:room.entity_id, preset_mode:presetMode(room, "cancel_overrides")})));
       const failed = rooms.filter((_, index) => results[index].status === "rejected");
       if (failed.length) this._error = `Could not cancel overrides: ${failed.map(room => this._name(room)).join(", ")}. Please retry.`;
       this._busy = false; this._render();
@@ -1301,14 +1320,15 @@
       if (failed.length) this._error = `Could not follow schedules: ${failed.map(room => this._name(room)).join(", ")}. Please retry.`;
       this._busy = false; this._render();
     }
-    async _boostAll(presetMode) {
-      if (this._busy || !["Boost 30m", "Boost 1h", "Boost 2h", "Boost 3h"].includes(presetMode)
+    async _boostAll(requestedPreset) {
+      const key = presetKey(requestedPreset);
+      if (this._busy || !BOOST_PRESET_MODES.includes(key)
         || !selectedTypes(this._config).includes("heating")) return;
       const rooms = this._rooms().filter(room => deviceType(room) === "heating" && available(room)
-        && room.attributes.preset_modes?.includes(presetMode));
+        && supportsPreset(room, key));
       if (!rooms.length) return;
       this._busy = true; this._error = ""; this._render();
-      const results = await Promise.allSettled(rooms.map(room => this._hass.callService("climate", "set_preset_mode", {entity_id:room.entity_id, preset_mode:presetMode})));
+      const results = await Promise.allSettled(rooms.map(room => this._hass.callService("climate", "set_preset_mode", {entity_id:room.entity_id, preset_mode:presetMode(room, key)})));
       const failed = rooms.filter((_, index) => results[index].status === "rejected");
       if (failed.length) this._error = `Could not boost: ${failed.map(room => this._name(room)).join(", ")}. Please retry.`;
       this._busy = false; this._render();
@@ -1316,10 +1336,10 @@
     async _cancelAllBoosts() {
       if (this._busy || !selectedTypes(this._config).includes("heating")) return;
       const rooms = this._rooms().filter(room => deviceType(room) === "heating" && available(room)
-        && room.attributes.is_boosted && room.attributes.preset_modes?.includes("Cancel Overrides"));
+        && room.attributes.is_boosted && supportsPreset(room, "cancel_overrides"));
       if (!rooms.length) return;
       this._busy = true; this._error = ""; this._render();
-      const results = await Promise.allSettled(rooms.map(room => this._hass.callService("climate", "set_preset_mode", {entity_id:room.entity_id, preset_mode:"Cancel Overrides"})));
+      const results = await Promise.allSettled(rooms.map(room => this._hass.callService("climate", "set_preset_mode", {entity_id:room.entity_id, preset_mode:presetMode(room, "cancel_overrides")})));
       const failed = rooms.filter((_, index) => results[index].status === "rejected");
       if (failed.length) this._error = `Could not cancel boosts: ${failed.map(room => this._name(room)).join(", ")}. Please retry.`;
       this._busy = false; this._render();
@@ -1367,7 +1387,7 @@
           ? [{device,domain:"water_heater",service:"set_operation_mode",data:{operation_mode:"Auto"}}] : [];
         if (isStoredHotWaterClimate(device)) return device.attributes.hvac_modes?.includes("auto")
           && (device.state !== "auto" || device.attributes.is_override || device.attributes.is_boosted)
-          ? [{device,domain:"climate",service:"set_hvac_mode",data:{hvac_mode:"auto"},cancelOverride:Boolean((device.attributes.is_override || device.attributes.is_boosted) && device.attributes.preset_modes?.includes("Cancel Overrides"))}] : [];
+          ? [{device,domain:"climate",service:"set_hvac_mode",data:{hvac_mode:"auto"},cancelOverride:Boolean((device.attributes.is_override || device.attributes.is_boosted) && supportsPreset(device, "cancel_overrides"))}] : [];
         const target = this._scheduleModeTarget(device);
         return target ? [{...target,domain:"select",service:"select_option",data:{entity_id:target.select.entity_id,option:target.option}}] : [];
       });
@@ -1383,7 +1403,7 @@
       const results = await Promise.allSettled(targets.map(async target => {
         if (!target.domain) return this._hass.callService("select", "select_option", {entity_id:target.select.entity_id, option:target.option});
         await this._hass.callService(target.domain, target.service, {entity_id:target.device.entity_id,...target.data});
-        if (target.cancelOverride) await this._hass.callService("climate", "set_preset_mode", {entity_id:target.device.entity_id,preset_mode:"Cancel Overrides"});
+        if (target.cancelOverride) await this._hass.callService("climate", "set_preset_mode", {entity_id:target.device.entity_id,preset_mode:presetMode(target.device, "cancel_overrides")});
       }));
       const failed = targets.filter((_, index) => results[index].status === "rejected");
       if (failed.length) this._error = `Could not resume schedules: ${failed.map(target => this._name(target.device)).join(", ")}. Please retry.`;
@@ -1436,7 +1456,8 @@
         return;
       }
       if (room && button.dataset.action === "advance") {
-        if (room.state === "auto" && room.attributes.schedule_id && room.attributes.preset_modes?.includes("Advance Schedule")) this._service(room, "set_preset_mode", {preset_mode: "Advance Schedule"});
+        const advancePreset = presetMode(room, "advance_schedule");
+        if (room.state === "auto" && room.attributes.schedule_id && advancePreset) this._service(room, "set_preset_mode", {preset_mode:advancePreset});
         return;
       }
       if (room) this._tap(event, room, this._config._panel_card_click ? "card" : button.dataset.interaction === "icon" ? "icon" : "card");
@@ -1577,10 +1598,10 @@
       const overriddenRooms = rooms.filter(isHeatingOverride);
       const boostedRooms = rooms.filter(room => deviceType(room) === "heating" && available(room) && room.attributes.is_boosted);
       const canCancelOverrides = overriddenRooms.some(room =>
-        room.attributes.preset_modes?.includes("Cancel Overrides"));
+        supportsPreset(room, "cancel_overrides"));
       const boostModes = [["Boost 30m","30_minutes"], ["Boost 1h","1_hour"], ["Boost 2h","2_hours"], ["Boost 3h","3_hours"]];
-      const canBoostMode = mode => rooms.some(room => deviceType(room) === "heating" && available(room) && room.attributes.preset_modes?.includes(mode));
-      const canCancelBoosts = boostedRooms.some(room => room.attributes.preset_modes?.includes("Cancel Overrides"));
+      const canBoostMode = mode => rooms.some(room => deviceType(room) === "heating" && available(room) && supportsPreset(room, mode));
+      const canCancelBoosts = boostedRooms.some(room => supportsPreset(room, "cancel_overrides"));
       const boostRemaining = boostedRooms.map(overrideMinutes).filter(Number.isFinite);
       const boostCountdown = boostRemaining.length ? text(this._hass,"minutes_short",{count:Math.min(...boostRemaining)}) : "";
       const canFollowSchedule = this._heatingScheduleTargets().length > 0;
@@ -2462,7 +2483,7 @@
             return `<button class="mode ${mode === room.state ? "active" : ""}" data-action="mode" data-entity="${id}" data-mode="${mode}" aria-pressed="${mode === room.state}" aria-label="${label}" title="${label}" ${disabled || mode === "auto" && !scheduled ? "disabled" : ""}><ha-icon icon="${modeIcon}"></ha-icon></button>`;
           }).join("")}</div>` : ""}
           ${fallbackFeatures(options).includes("temperature") ? (ranged ? `<button data-entity="${id}" title="${escape(text(this._hass,"adjust_temperature_range"))}" aria-label="${escape(text(this._hass,"adjust_temperature_range"))}"><ha-icon icon="mdi:thermostat"></ha-icon></button>` : `<input type="number" data-entity="${id}" data-field="temperature" aria-label="${escape(this._name(room))} ${escape(text(this._hass,"target").toLowerCase())}" title="${escape(text(this._hass,"target"))} ${escape(unit)}" value="${typeof targetTemperature === "number" ? targetTemperature : ""}" min="${a.min_temp ?? 5}" max="${a.max_temp ?? 30}" step="${a.target_temp_step || .5}" ${disabled || room.state === "off" ? "disabled" : ""}>`) : ""}
-          ${fallbackFeatures(options).includes("advance") ? `<button data-action="advance" data-entity="${id}" aria-label="${escape(text(this._hass,"advance_schedule_for",{name:this._name(room)}))}" title="${escape(text(this._hass,"advance_schedule"))}" ${disabled || !scheduled || room.state !== "auto" || !a.preset_modes?.includes("Advance Schedule") ? "disabled" : ""}><ha-icon icon="mdi:calendar-arrow-right"></ha-icon></button>` : ""}</div>` : ""}</div></section>`;
+          ${fallbackFeatures(options).includes("advance") ? `<button data-action="advance" data-entity="${id}" aria-label="${escape(text(this._hass,"advance_schedule_for",{name:this._name(room)}))}" title="${escape(text(this._hass,"advance_schedule"))}" ${disabled || !scheduled || room.state !== "auto" || !supportsPreset(room, "advance_schedule") ? "disabled" : ""}><ha-icon icon="mdi:calendar-arrow-right"></ha-icon></button>` : ""}</div>` : ""}</div></section>`;
       }).join("")}</div>${grouped ? "</section>" : ""}${group.endsHub ? "</section>" : ""}`).join("")}</ha-card>`;
       this._updateDOM(markup);
       this._syncNativeFeatures();
@@ -2483,7 +2504,7 @@
         event.stopPropagation();
         const id = this._config?.entity || this._context?.entity_id || this._stateObj?.entity_id;
         const state = this._hass?.states[id];
-        if (state && !this._button.disabled) this._hass.callService("climate", "set_preset_mode", {entity_id:id, preset_mode:"Advance Schedule"});
+        if (state && !this._button.disabled) this._hass.callService("climate", "set_preset_mode", {entity_id:id, preset_mode:presetMode(state, "advance_schedule")});
       });
       this.shadowRoot.append(style, this._button);
     }
@@ -2497,7 +2518,7 @@
       const id = this._config.entity || this._context?.entity_id || this._stateObj?.entity_id;
       const state = this._hass.states[id];
       const attributes = state?.attributes || {};
-      const enabled = Boolean(state && state.state === "auto" && attributes.schedule_id && attributes.preset_modes?.includes("Advance Schedule"));
+      const enabled = Boolean(state && state.state === "auto" && attributes.schedule_id && supportsPreset(state, "advance_schedule"));
       this._button.disabled = !enabled;
       this._button.title = text(this._hass, enabled ? "advance_schedule" : "advance_unavailable");
       this._button.ariaLabel = this._button.title;
