@@ -435,6 +435,83 @@
     const hours = Math.floor(minutes / 60), remainder = minutes % 60;
     return `${hours}h${remainder ? ` ${remainder}m` : ""}`;
   };
+  const boostMinutesRemaining = state => {
+    if (!state?.attributes?.is_boosted) return null;
+    const end = new Date(state.attributes.boost_end).getTime();
+    if (Number.isFinite(end)) return Math.max(0, Math.ceil((end - Date.now()) / 60000));
+    const reported = Number(state.attributes.boost_time_remaining);
+    return Number.isFinite(reported) ? Math.max(0, Math.ceil(reported)) : null;
+  };
+  const boostPresetWidthMode = width => width >= 180 ? "full" : width >= 105 ? "compact" : "icon";
+  const boostPresetState = feature => feature?._stateObj || feature?.stateObj;
+  const augmentBoostPresetOptions = (feature, options) => {
+    const state = boostPresetState(feature);
+    const minutes = boostMinutesRemaining(state);
+    const mode = boostPresetWidthMode(feature.__wiserControlsBoostWidth || feature.clientWidth || 0);
+    if (!feature.__wiserControlsCardFeature || !Number.isFinite(minutes) || mode === "icon") return options;
+    const remaining = minutes > 0 ? `${minutes}m` : "<1m";
+    const value = String(state.attributes.preset_mode || "Boost");
+    const name = value.replace(/\s+<?\d+m$/i, "").trim() || "Boost";
+    return [
+      {value,label:mode === "full" ? `${name} · ${remaining}` : remaining},
+      ...options.filter(option => option.value !== value),
+    ];
+  };
+  const syncBoostPresetFeature = feature => {
+    const width = feature.getBoundingClientRect?.().width || feature.clientWidth || 0;
+    const previousMode = boostPresetWidthMode(feature.__wiserControlsBoostWidth || 0);
+    feature.__wiserControlsBoostWidth = width;
+    if (boostPresetWidthMode(width) !== previousMode) feature.requestUpdate?.();
+    if (!feature.__wiserControlsBoostObserver && typeof ResizeObserver !== "undefined") {
+      feature.__wiserControlsBoostObserver = new ResizeObserver(entries => {
+        const nextWidth = entries[0]?.contentRect?.width || feature.clientWidth || 0;
+        const oldMode = boostPresetWidthMode(feature.__wiserControlsBoostWidth || 0);
+        feature.__wiserControlsBoostWidth = nextWidth;
+        if (boostPresetWidthMode(nextWidth) !== oldMode) feature.requestUpdate?.();
+      });
+      feature.__wiserControlsBoostObserver.observe(feature);
+    }
+    clearTimeout(feature.__wiserControlsBoostTimer);
+    const state = boostPresetState(feature);
+    if (!feature.__wiserControlsCardFeature || !state?.attributes?.is_boosted) {
+      feature.__wiserControlsBoostTimer = undefined;
+      return;
+    }
+    const end = overrideEnd(state)?.getTime();
+    const untilNextMinute = Number.isFinite(end) ? ((end - Date.now()) % 60000 + 60000) % 60000 : 60000;
+    feature.__wiserControlsBoostTimer = setTimeout(() => {
+      feature.__wiserControlsBoostTimer = undefined;
+      if (feature.isConnected !== false) feature.requestUpdate?.();
+    }, Math.max(untilNextMinute + 50, 1000));
+  };
+  let boostPresetPatchPromise;
+  const patchBoostPresetFeature = () => boostPresetPatchPromise ||= (async () => {
+    if (typeof customElements.whenDefined !== "function") return;
+    await customElements.whenDefined("hui-climate-preset-modes-card-feature");
+    const Feature = customElements.get("hui-climate-preset-modes-card-feature");
+    if (!Feature || Feature.prototype.__wiserControlsBoostPatched) return;
+    const prototype = Feature.prototype;
+    const originalGetOptions = prototype._getOptions;
+    prototype._getOptions = function (...args) {
+      const options = originalGetOptions.apply(this,args);
+      return augmentBoostPresetOptions(this,options);
+    };
+    const originalUpdated = prototype.updated;
+    prototype.updated = function (...args) {
+      const result = originalUpdated?.apply(this,args);
+      syncBoostPresetFeature(this);
+      return result;
+    };
+    const originalDisconnected = prototype.disconnectedCallback;
+    prototype.disconnectedCallback = function (...args) {
+      clearTimeout(this.__wiserControlsBoostTimer);
+      this.__wiserControlsBoostTimer = undefined;
+      this.__wiserControlsBoostObserver?.disconnect();
+      this.__wiserControlsBoostObserver = undefined;
+      return originalDisconnected?.apply(this,args);
+    };
+    prototype.__wiserControlsBoostPatched = true;
+  })();
   const overrideEndValue = (room, hass) => {
     if (!room || !isHeatingOverride(room)) return text(hass, "no_override");
     const end = overrideEnd(room);
@@ -1001,6 +1078,18 @@
         }
       }
     }
+    async _enableBoostPresetCountdown(element, enabled) {
+      if (!enabled) return;
+      await patchBoostPresetFeature();
+      await element.updateComplete;
+      for (const wrapper of element.shadowRoot?.querySelectorAll?.("hui-card-feature") || []) {
+        await wrapper.updateComplete;
+        const feature = wrapper.shadowRoot?.querySelector?.("hui-climate-preset-modes-card-feature");
+        if (!feature) continue;
+        feature.__wiserControlsCardFeature = true;
+        feature.requestUpdate?.();
+      }
+    }
     _syncNativeFeatures() {
       for (const icon of this.shadowRoot.querySelectorAll?.("ha-state-icon[data-room-icon]") || []) {
         const id = icon.dataset.roomIcon;
@@ -1036,6 +1125,7 @@
           element._wiserConfig = JSON.stringify(config);
         }
         void this._styleTargetOverride(element, config.some(feature => feature.type === "target-temperature") ? this._hass.states[id] : undefined);
+        void this._enableBoostPresetCountdown(element, config.some(feature => feature.type === "climate-preset-modes"));
       }
     }
     _renderShutter(room, preview, previewRoom) {
@@ -3603,4 +3693,5 @@
         : null,
     });
   }
+  void patchBoostPresetFeature();
 })();
