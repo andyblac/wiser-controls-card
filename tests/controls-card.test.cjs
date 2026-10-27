@@ -1590,6 +1590,8 @@ test('controls card scopes a responsive boost countdown to its native preset fea
   assert.match(source, /hui-climate-preset-modes-card-feature/);
   assert.match(source, /mode === "full" \? `\$\{name\} · \$\{remaining\}` : remaining/);
   assert.match(source, /width >= 180 \? "full" : width >= 105 \? "compact" : "icon"/);
+  assert.match(source, /boostPresetLayoutTarget/);
+  assert.match(source, /requestAnimationFrame/);
   assert.doesNotMatch(source, /_enableBoostPresetCountdown/);
   assert.match(source, /__wiserControlsBoostTimer/);
 });

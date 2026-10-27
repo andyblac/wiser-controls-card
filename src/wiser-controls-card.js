@@ -454,6 +454,13 @@
     }
     return false;
   };
+  const boostPresetLayoutTarget = feature => feature.getRootNode?.()?.host || feature;
+  const updateBoostPresetWidth = feature => {
+    const width = boostPresetLayoutTarget(feature).getBoundingClientRect?.().width || 0;
+    const previousMode = boostPresetWidthMode(feature.__wiserControlsBoostWidth || 0);
+    feature.__wiserControlsBoostWidth = width;
+    if (boostPresetWidthMode(width) !== previousMode) feature.requestUpdate?.();
+  };
   const augmentBoostPresetOptions = (feature, options) => {
     const state = boostPresetState(feature);
     const minutes = boostMinutesRemaining(state);
@@ -468,18 +475,22 @@
     ];
   };
   const syncBoostPresetFeature = feature => {
-    const width = feature.getBoundingClientRect?.().width || feature.clientWidth || 0;
-    const previousMode = boostPresetWidthMode(feature.__wiserControlsBoostWidth || 0);
-    feature.__wiserControlsBoostWidth = width;
-    if (boostPresetWidthMode(width) !== previousMode) feature.requestUpdate?.();
+    updateBoostPresetWidth(feature);
+    if (!feature.__wiserControlsBoostLayoutFrame) {
+      const schedule = typeof requestAnimationFrame === "function" ? requestAnimationFrame : callback => setTimeout(callback,0);
+      feature.__wiserControlsBoostLayoutFrame = schedule(() => {
+        feature.__wiserControlsBoostLayoutFrame = undefined;
+        if (feature.isConnected !== false) updateBoostPresetWidth(feature);
+      });
+    }
     if (!feature.__wiserControlsBoostObserver && typeof ResizeObserver !== "undefined") {
       feature.__wiserControlsBoostObserver = new ResizeObserver(entries => {
-        const nextWidth = entries[0]?.contentRect?.width || feature.clientWidth || 0;
+        const nextWidth = entries[0]?.contentRect?.width || 0;
         const oldMode = boostPresetWidthMode(feature.__wiserControlsBoostWidth || 0);
         feature.__wiserControlsBoostWidth = nextWidth;
         if (boostPresetWidthMode(nextWidth) !== oldMode) feature.requestUpdate?.();
       });
-      feature.__wiserControlsBoostObserver.observe(feature);
+      feature.__wiserControlsBoostObserver.observe(boostPresetLayoutTarget(feature));
     }
     clearTimeout(feature.__wiserControlsBoostTimer);
     const state = boostPresetState(feature);
@@ -516,6 +527,11 @@
     prototype.disconnectedCallback = function (...args) {
       clearTimeout(this.__wiserControlsBoostTimer);
       this.__wiserControlsBoostTimer = undefined;
+      if (this.__wiserControlsBoostLayoutFrame) {
+        if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(this.__wiserControlsBoostLayoutFrame);
+        else clearTimeout(this.__wiserControlsBoostLayoutFrame);
+        this.__wiserControlsBoostLayoutFrame = undefined;
+      }
       this.__wiserControlsBoostObserver?.disconnect();
       this.__wiserControlsBoostObserver = undefined;
       return originalDisconnected?.apply(this,args);
