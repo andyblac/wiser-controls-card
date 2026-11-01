@@ -129,6 +129,8 @@ class WiserRoomsPanel extends HTMLElement {
         #hub-tabs[hidden],
         #device-tabs[hidden],
         #detail-tabs[hidden],
+        #view-navigation[hidden],
+        #device-detail[hidden],
         wiser-controls-card[hidden] {
           display: none;
         }
@@ -1075,8 +1077,7 @@ class WiserRoomsPanel extends HTMLElement {
 
   _selectView(view) {
     if (view !== "overview" && view !== "devices") return;
-    this._detailEntity = undefined;
-    this._detailCards = [];
+    if (this._detailEntity) this._closeDeviceDetail();
     this._activeView = view;
     activePanelViews.set(this._panelId, {view, deviceType: this._activeDeviceType});
     this._syncView();
@@ -1086,8 +1087,7 @@ class WiserRoomsPanel extends HTMLElement {
 
   _selectDeviceType(type, focus = false) {
     if (!PANEL_DEVICE_TYPES.includes(type)) return;
-    this._detailEntity = undefined;
-    this._detailCards = [];
+    if (this._detailEntity) this._closeDeviceDetail();
     this._activeDeviceType = type;
     activePanelViews.set(this._panelId, {view: this._activeView, deviceType: type});
     this._deviceCards?.forEach((card, index) => {

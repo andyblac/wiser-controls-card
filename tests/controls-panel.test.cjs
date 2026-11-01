@@ -306,11 +306,15 @@ test("clicking a device opens registry-backed control, states, settings, identif
   assert.equal(panel.shadowRoot.getElementById("devices-view").hidden,false);
   assert.equal(panel.shadowRoot.getElementById("device-detail").hidden,true);
 
+  await panel._openDeviceDetail("switch.socket");
+  assert.ok(panel.shadowRoot.getElementById("device-detail").children.length);
   panel._selectView("overview");
   assert.equal(panel.shadowRoot.getElementById("overview-view").listeners["hass-more-info"],undefined);
   assert.equal(panel._activeView,"overview");
   assert.equal(panel.shadowRoot.getElementById("device-detail").hidden,true);
+  assert.equal(panel.shadowRoot.getElementById("device-detail").children.length,0);
   assert.equal(panel.shadowRoot.getElementById("overview-view").hidden,false);
+  assert.match(readFileSync(resolve(__dirname,"../src/wiser-controls-panel.js"),"utf8"),/#view-navigation\[hidden\],[\s\S]*?#device-detail\[hidden\][\s\S]*?display:\s*none/);
 });
 
 test("late startup registry data refreshes open states and settings tabs without a state change",async()=>{
