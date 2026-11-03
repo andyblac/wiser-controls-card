@@ -1049,6 +1049,13 @@ test('OpenTherm hot water is discovered, rendered, configured and controlled', a
   assert.deepEqual(Array.from(card._rooms(), state => state.entity_id), [hotWater.entity_id]);
   assert.match(card.shadowRoot.innerHTML, /device-hot-water powered/);
   assert.match(card.shadowRoot.innerHTML, /48°C<small> 50°C<\/small>/);
+  assert.match(card.shadowRoot.innerHTML, /class="next schedule-next"[^]*?<ha-icon icon="mdi:calendar-clock"><\/ha-icon><span>[^<]+<\/span>/);
+  let nextSchedule = card.shadowRoot.innerHTML.match(/class="next schedule-next"[^]*?<span>([^<]*)<\/span>/)?.[1];
+  assert.doesNotMatch(nextSchedule, /50°C/);
+  hotWater.attributes.next_schedule_temp = 47;
+  card._render();
+  nextSchedule = card.shadowRoot.innerHTML.match(/class="next schedule-next"[^]*?<span>([^<]*)<\/span>/)?.[1];
+  assert.match(nextSchedule, / · 47°C$/);
   assert.match(card.shadowRoot.innerHTML, /data-action="resume-hot_water"[^>]*disabled/);
   assert.match(card.shadowRoot.innerHTML, /data-action="all-hot_water-off"/);
   assert.equal(window.customCards[0].getEntitySuggestion(card._hass, hotWater.entity_id).config.entities[0], hotWater.entity_id);

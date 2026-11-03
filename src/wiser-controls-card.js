@@ -1262,17 +1262,20 @@
       const nextDate = a.next_schedule_event ? new Date(a.next_schedule_event) : null;
       const nextTime = nextDate && Number.isFinite(nextDate.getTime())
         ? nextDate.toLocaleString(this._hass.locale?.language || this._hass.language, {weekday:"short",hour:"2-digit",minute:"2-digit"}) : "";
-      const next = options.show_next_schedule === false ? "" : state.state === "Auto" && nextTime
-        ? `${text(this._hass,"next")} ${nextTime}` : a.schedule_name || text(this._hass,"no_schedule");
+      const nextDetail = options.show_next_schedule !== false && state.state === "Auto" && nextTime
+        ? `${nextTime}${Number.isFinite(a.next_schedule_temp) ? ` · ${this._temperature(a.next_schedule_temp)}` : ""}` : "";
+      const next = options.show_next_schedule === false ? "" : nextDetail
+        ? `${text(this._hass,"next")} ${nextDetail}` : a.schedule_name || text(this._hass,"no_schedule");
+      const nextMarkup = nextDetail ? `<ha-icon icon="mdi:calendar-clock"></ha-icon><span>${escape(nextDetail)}</span>` : escape(next);
       const secondary = this._secondaryMarkup(state);
       const icon = !available(state) ? "mdi:alert-circle-outline" : active ? "mdi:water-boiler" : "mdi:water-boiler-off";
       const color = this._nativeStateColor(state);
       const header = secondary ? `<div class="top has-secondary ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" aria-label="Open hot-water details">${this._contentIcon(state, icon)}</button>
         <div class="secondary-layout"><div class="secondary-heading-line"><button class="name" data-entity="${id}" data-interaction="card"><strong>${escape(this._name(state))}</strong></button><div class="temps">${reading}</div></div>
-        <div class="secondary-primary-line"><span class="status">${this._contentStatus(state, status)}</span>${options.hide_state ? secondary : ""}<div class="next">${escape(next)}</div></div>${options.hide_state ? "" : secondary}</div></div>`
+        <div class="secondary-primary-line"><span class="status">${this._contentStatus(state, status)}</span>${options.hide_state ? secondary : ""}<div class="next schedule-next" title="${escape(next)}" aria-label="${escape(next)}">${nextMarkup}</div></div>${options.hide_state ? "" : secondary}</div></div>`
         : `<div class="top aligned-header ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" aria-label="Open hot-water details">${this._contentIcon(state, icon)}</button>
         <div class="secondary-layout"><div class="secondary-heading-line"><button class="name" data-entity="${id}" data-interaction="card"><strong>${escape(this._name(state))}</strong></button><div class="temps">${reading}</div></div>
-        <div class="secondary-primary-line"><span class="status">${this._contentStatus(state, status)}</span><div class="next">${escape(next)}</div></div></div></div>`;
+        <div class="secondary-primary-line"><span class="status">${this._contentStatus(state, status)}</span><div class="next schedule-next" title="${escape(next)}" aria-label="${escape(next)}">${nextMarkup}</div></div></div></div>`;
       return `<section data-key="${id}" data-entity="${id}" class="room device-hot-water ${active ? "powered" : ""} ${this._previewClasses(state, preview, previewRoom)}" style="--room-native-state-color:${color};--room-state-color:${this._contentColor(state, color)};${featureOrder(options)}"><div class="room-content">
         ${header}${this._nativeMarkup(state)}</div></section>`;
     }
