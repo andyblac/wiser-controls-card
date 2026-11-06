@@ -162,7 +162,7 @@ class WiserRoomsPanel extends HTMLElement {
           display: flex;
           flex-shrink: 0;
           min-width: 0;
-          margin: 12px 28px 0;
+          margin: 12px clamp(12px, 3vw, 32px) 0;
           overflow-x: auto;
           border-bottom: 1px solid var(--divider-color);
         }
@@ -493,7 +493,7 @@ class WiserRoomsPanel extends HTMLElement {
           box-sizing: border-box;
           width: 100%;
           min-width: 0;
-          padding: 16px;
+          padding: 16px clamp(12px, 3vw, 32px) 40px;
         }
 
         main[hidden],
@@ -504,15 +504,27 @@ class WiserRoomsPanel extends HTMLElement {
         #view-header {
           display: flex;
           flex-shrink: 0;
-          align-items: center;
+          align-items: flex-start;
           gap: 16px;
-          padding: 24px 28px 0;
+          padding: 24px clamp(12px, 3vw, 32px) 0;
         }
 
         #view-title {
+          margin: 0 0 6px;
+          font-family: inherit;
+          font-size: 28px;
+          font-weight: 700;
+          line-height: 1.2;
+          letter-spacing: 0;
+        }
+
+        #view-subtitle {
           margin: 0;
-          font-size: 24px;
-          font-weight: 500;
+          color: var(--secondary-text-color);
+          font-family: inherit;
+          font-size: 14px;
+          font-weight: 400;
+          line-height: normal;
         }
 
         #view-navigation {
@@ -737,11 +749,11 @@ class WiserRoomsPanel extends HTMLElement {
           }
 
           #view-header {
-            padding: 16px 16px 0;
+            padding: 20px 16px 0;
           }
 
           #view-title {
-            font-size: 20px;
+            font-size: 24px;
           }
 
           #device-tabs {
@@ -809,7 +821,10 @@ class WiserRoomsPanel extends HTMLElement {
         <button id="detail-back" type="button" hidden aria-label="Back to devices">
           <ha-icon icon="mdi:arrow-left"></ha-icon>
         </button>
-        <h2 id="view-title">Overview</h2>
+        <div id="view-heading">
+          <h2 id="view-title">Overview</h2>
+          <p id="view-subtitle"></p>
+        </div>
         <nav id="view-navigation" aria-label="Controls view">
           <button class="view-button" type="button" data-view="overview" aria-pressed="true">
             <ha-icon icon="mdi:view-dashboard-outline"></ha-icon>
@@ -1138,9 +1153,16 @@ class WiserRoomsPanel extends HTMLElement {
     if (!this.shadowRoot) return;
     const view = this._activeView === "devices" ? "devices" : "overview";
     const title = this.shadowRoot.getElementById("view-title");
+    const subtitle = this.shadowRoot.getElementById("view-subtitle");
     if (title) title.textContent = this._detailEntity
       ? this._detailRoomTitle || this._roomName(this._detailEntity)
       : this._t(`panel_${view}`);
+    if (subtitle) {
+      subtitle.textContent = this._detailEntity
+        ? ""
+        : this._t(`panel_${view}_subtitle`);
+      subtitle.hidden = Boolean(this._detailEntity);
+    }
     const overview = this.shadowRoot.getElementById("overview-view");
     const devices = this.shadowRoot.getElementById("devices-view");
     const detail = this.shadowRoot.getElementById("device-detail");

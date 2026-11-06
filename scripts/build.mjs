@@ -25,7 +25,9 @@ const deviceImages = {
   BoilerInterface:"src/images/devices/boiler.png",
 };
 const localizeSource = readFileSync(new URL("src/localize/localize.js", root), "utf8");
-const translations = Object.fromEntries(["en-US", "en-GB", "de", "fr", "hu"].map(language => [
+const translations = Object.fromEntries([
+  "da", "de", "en-GB", "en-US", "es", "fi", "fr", "hu", "nb", "nl", "pt", "sv",
+].map(language => [
   language,
   JSON.parse(readFileSync(new URL(`src/localize/languages/${language}.json`, root), "utf8")),
 ]));

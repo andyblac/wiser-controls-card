@@ -80,6 +80,8 @@
   "panel_back_to_devices": "Vissza az eszközökhöz",
   "panel_overview": "Áttekintés",
   "panel_devices": "Eszközök",
+  "panel_overview_subtitle": "Tekintse át és vezérelje Wiser rendszerét.",
+  "panel_devices_subtitle": "Vezérelje és tekintse át Wiser eszközeit.",
   "panel_detail_control": "Vezérlés",
   "panel_detail_heating": "Fűtés",
   "panel_detail_hot_water": "Meleg víz",

@@ -67,9 +67,12 @@
       (typeof document !== "undefined" ? document.documentElement?.lang : "") || "en-US")
       .replace(/_/g,"-").toLowerCase();
     if (language === "en-gb") return "en-GB";
-    if (language === "de" || language.startsWith("de-")) return "de";
-    if (language === "fr" || language.startsWith("fr-")) return "fr";
-    if (language === "hu" || language.startsWith("hu-")) return "hu";
+    const supported = {
+      da:"da", de:"de", es:"es", fi:"fi", fr:"fr", hu:"hu",
+      nb:"nb", no:"nb", nl:"nl", pt:"pt", sv:"sv",
+    };
+    const matched = supported[language.split("-")[0]];
+    if (matched) return matched;
     return "en-US";
   };
 

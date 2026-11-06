@@ -80,6 +80,8 @@
   "panel_back_to_devices": "Back to devices",
   "panel_overview": "Overview",
   "panel_devices": "Devices",
+  "panel_overview_subtitle": "Control your Wiser system at a glance.",
+  "panel_devices_subtitle": "Control and inspect your Wiser devices.",
   "panel_detail_control": "Control",
   "panel_detail_heating": "Heating",
   "panel_detail_hot_water": "Hot water",
