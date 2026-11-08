@@ -2238,3 +2238,53 @@ test('British English contains overrides only', () => {
   const gb = JSON.parse(fs.readFileSync(path.join(__dirname, '../src/localize/languages/en-GB.json'), 'utf8'));
   assert.deepEqual(Object.keys(gb).filter(key => gb[key] === us[key]), []);
 });
+
+
+test('OpenTherm current action uses native HA translations in every language', () => {
+  for (const language of ['da','de','en','en-GB','es','fi','fr','hu','nb','nl','pt','sv']) {
+    const {card, Editor} = setup();
+    const hotWater = addHotWater(card, {current_action:'heating'});
+    const nativePrefix = 'component.climate.entity_component._.state_attributes.hvac_action';
+    const nativeText = {
+      [`${nativePrefix}.name`]:`${language}:native action`,
+      [`${nativePrefix}.state.idle`]:`${language}:native idle`,
+      [`${nativePrefix}.state.heating`]:`${language}:native heating`,
+      'state.default.unknown':`${language}:native unknown`,
+    };
+    const original = card._hass;
+    original.language = language;
+    original.localize = key => nativeText[key] || '';
+    original.formatEntityAttributeName = () => 'other attribute';
+    original.formatEntityAttributeValue = () => 'other value';
+    original.formatEntityAttributeValueToParts = () => [{type:'value',value:'other parts'}];
+    card.setConfig({entities:[hotWater.entity_id],device_options:{[hotWater.entity_id]:{state_content:['current_action']}}});
+    assert.match(card.shadowRoot.innerHTML, new RegExp(`${language}:native action`));
+    for (const action of ['idle','heating',null]) {
+      hotWater.attributes.current_action = action;
+      card._render();
+      assert.match(card.shadowRoot.innerHTML, new RegExp(`data-current-action="${hotWater.entity_id}">${language}:native ${action || 'unknown'}<`));
+      assert.doesNotMatch(card.shadowRoot.innerHTML, /data-status-content="current_action"/);
+    }
+    hotWater.state = 'unavailable';
+    original.localize = key => key === 'state.default.unavailable' ? `${language}:native unavailable` : nativeText[key] || '';
+    card._render();
+    assert.match(card.shadowRoot.innerHTML, new RegExp(`${language}:native unavailable`));
+    hotWater.state = 'Auto';
+    hotWater.attributes.current_action = 'heating';
+    card.setConfig({entities:[hotWater.entity_id],device_options:{[hotWater.entity_id]:{
+      secondary_status:{state_content:['current_action'],show_labels:true},
+    }}});
+    assert.match(card._secondaryMarkup(hotWater), new RegExp(`${language}:native action`));
+    assert.match(card._secondaryMarkup(hotWater), new RegExp(`${language}:native heating`));
+    assert.equal(original.formatEntityAttributeValue(hotWater,'current_action'),'other value');
+    const editor = new Editor();
+    editor._hass = original;
+    editor._entries = card._entries;
+    editor.setConfig({});
+    editor._selectRoom(hotWater.entity_id);
+    for (const prefix of ['component.water_heater.entity_component._','component.wiser.entity.water_heater.opentherm_hot_water']) {
+      assert.equal(editor._roomForm.hass.localize(`${prefix}.state_attributes.current_action.name`),`${language}:native action`);
+    }
+    assert.equal(editor._roomForm.hass.formatEntityAttributeName(hotWater,'current_action'),`${language}:native action`);
+  }
+});

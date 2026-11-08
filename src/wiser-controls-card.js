@@ -569,7 +569,29 @@
     ...state,
     attributes:{...state.attributes, override_end_time:overrideEndValue(state, hass)},
   } : state;
+  const NATIVE_CURRENT_ACTION = "component.climate.entity_component._.state_attributes.hvac_action";
+  const currentActionContexts = new WeakMap();
+  // Keep the water-heater attribute raw and reuse HA's climate translations.
+  // Scope the aliases to this card's displays and editor; never modify global hass.
+  const withNativeCurrentAction = hass => {
+    if (currentActionContexts.has(hass)) return currentActionContexts.get(hass);
+    const isCurrentAction = (state, attribute) =>
+      isOpenThermHotWater(state) && attribute === "current_action";
+    const scoped = {
+      ...hass,
+      localize: (key, ...args) => {
+        const prefix = /^(?:component\.water_heater\.entity_component\._|component\.wiser\.entity\.water_heater\.opentherm_hot_water)\.state_attributes\.current_action(?=\.)/;
+        return hass.localize?.(key.replace(prefix, NATIVE_CURRENT_ACTION), ...args);
+      },
+      formatEntityAttributeName: (state, attribute) => isCurrentAction(state, attribute)
+        ? hass.localize?.(`${NATIVE_CURRENT_ACTION}.name`)
+        : hass.formatEntityAttributeName?.(state, attribute),
+    };
+    currentActionContexts.set(hass, scoped);
+    return scoped;
+  };
   const stateContentLabel = (hass, state, content) => {
+    if (isOpenThermHotWater(state) && content === "current_action") return hass?.localize?.(`${NATIVE_CURRENT_ACTION}.name`) || content;
     if (content === "state") return hass?.localize?.("ui.common.state") || "State";
     const domain = state?.entity_id?.split(".")[0];
     const key = domain ? `component.${domain}.entity_component._.state_attributes.${content}.name` : "";
@@ -906,12 +928,20 @@
       const options = roomConfig(this._config, room.entity_id);
       return `<ha-state-icon data-room-icon="${escape(room.entity_id)}" icon="${escape(options.icon || fallback)}"></ha-state-icon>`;
     }
+    _currentActionMarkup(state, content) {
+      if (!isOpenThermHotWater(state) || content !== "current_action") return undefined;
+      const action = available(state) ? state.attributes.current_action : null;
+      const key = !available(state) && state.state === "unavailable"
+        ? "state.default.unavailable"
+        : action == null ? "state.default.unknown" : `${NATIVE_CURRENT_ACTION}.state.${action}`;
+      return `<span data-current-action="${escape(state.entity_id)}">${escape(this._hass.localize?.(key) || action || "—")}</span>`;
+    }
     _contentStatus(room) {
       const configured = roomConfig(this._config, room.entity_id).state_content;
       const content = configured === undefined
         ? this._defaultStateContent(room.entity_id)
         : Array.isArray(configured) ? configured : [configured];
-      return content.map(item => `<span class="status-item" title="${escape(stateContentLabel(this._hass, room, item))}"><state-display data-room-status="${escape(room.entity_id)}" data-status-content="${escape(item)}"></state-display></span>`)
+      return content.map(item => `<span class="status-item" title="${escape(stateContentLabel(this._hass, room, item))}">${this._currentActionMarkup(room, item) ?? `<state-display data-room-status="${escape(room.entity_id)}" data-status-content="${escape(item)}"></state-display>`}</span>`)
         .join('<span class="status-separator"> · </span>');
     }
     _defaultStateContent(id) {
@@ -1012,7 +1042,7 @@
           const label = item === "override_end_time"
             ? text(this._hass, "override_end_time")
             : stateContentLabel(this._hass, source, item);
-          return `<span class="secondary-status-item" title="${escape(label)}">${showLabels ? `<span class="secondary-status-label">${escape(label)}</span>` : ""}<state-display data-secondary-status="${escape(sourceId)}" data-secondary-content="${escape(item)}"></state-display></span>`;
+          return `<span class="secondary-status-item" title="${escape(label)}">${showLabels ? `<span class="secondary-status-label">${escape(label)}</span>` : ""}${this._currentActionMarkup(source, item) ?? `<state-display data-secondary-status="${escape(sourceId)}" data-secondary-content="${escape(item)}"></state-display>`}</span>`;
         }).join("");
         return `<button type="button" class="secondary-status ${showLabels ? "labelled" : ""}" data-key="secondary-${index}" data-action="secondary-more-info" data-entity="${escape(id)}" title="${escape(state ? entityDisplayName(this._hass,state) : id)}" ${state ? "" : "disabled"}>${items}</button>`;
       }).join("");
@@ -3287,6 +3317,7 @@
         };
         this._roomForm.hass = {...this._hass,states};
       } else this._roomForm.hass = this._hass;
+      this._roomForm.hass = withNativeCurrentAction(this._roomForm.hass);
       const metricLabel = text(this._hass,shutter ? "show_position" : selectedType === "lights" ? "show_brightness" : selectedType === "plugs" || isStoredHotWaterSwitch(selectedState) ? "show_status" : "show_temperatures");
       const identitySchema = [
         {name:"name", label:text(this._hass,"name"), selector:{entity_name:{}}, context:{entity:"entity"}},
