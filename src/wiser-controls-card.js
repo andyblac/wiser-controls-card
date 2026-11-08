@@ -2231,10 +2231,10 @@
           line-height:18px
         }
         .secondary-primary-line .next {
-          flex:1 1 auto;
+          flex:0 1 auto;
           min-width:0;
           max-width:none;
-          margin:0;
+          margin:0 0 0 auto;
           line-height:18px;
           white-space:normal;
           overflow:visible;
@@ -2246,6 +2246,7 @@
         }
         .passive-range {
           flex:0 0 auto;
+          margin-left:auto;
           color:var(--secondary-text-color);
           font-size:18px;
           line-height:18px;
@@ -2388,6 +2389,10 @@
         }
         .top.hide-status .status,.top.hide-temps .temps,.top.hide-temps .passive-range,.top.hide-next .next {
           display:none
+        }
+        .passive-header.hide-status .secondary-primary-line>.status {
+          display:block;
+          visibility:hidden
         }
         .state-icon img {
           width:100%;

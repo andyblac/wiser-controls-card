@@ -257,6 +257,14 @@ test('enabled passive mode gives current, range and next schedule separate heade
   assert.match(html, /class="passive-schedule-line"[^]*class="next schedule-next"[^>]*aria-label="Next Sat 12:15 · 19\.5°C"[^]*<ha-icon icon="mdi:calendar-clock"><\/ha-icon><span>Sat 12:15 · 19\.5°C<\/span>/);
   const compact = fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8').replace(/\s+/g, '');
   assert.match(compact, /\.passive-schedule-line\.next\{flex:00auto;[^}]*white-space:nowrap/);
+  assert.match(compact, /\.passive-range\{flex:00auto;margin-left:auto;/);
+  assert.match(compact, /\.passive-header\.hide-status\.secondary-primary-line>\.status\{display:block;visibility:hidden\}/);
+  card.setConfig({entities:['climate.bedroom'],device_options:{'climate.bedroom':{
+    hide_state:true,
+    secondary_status:{state_content:['current_temperature','temperature']},
+  }}});
+  assert.match(card.shadowRoot.innerHTML, /class="top aligned-header passive-header[^"]*has-secondary[^"]*hide-status[^]*class="secondary-primary-line"[^]*class="passive-range"[^>]*>18\.5°C – 22°C<\/div>/);
+  assert.match(card.shadowRoot.innerHTML, /class="passive-schedule-line"[^]*class="secondary-status/);
 });
 test('passive temperature focus emphasizes the selected current or target reading', () => {
   const {card,states} = setup();
@@ -1056,6 +1064,10 @@ test('OpenTherm hot water is discovered, rendered, configured and controlled', a
   card._render();
   nextSchedule = card.shadowRoot.innerHTML.match(/class="next schedule-next"[^]*?<span>([^<]*)<\/span>/)?.[1];
   assert.match(nextSchedule, / · 47°C$/);
+  card.setConfig({device_types:['hot_water'],device_options:{[hotWater.entity_id]:{hide_state:true}}});
+  assert.match(card.shadowRoot.innerHTML, /class="top aligned-header hide-status[^]*?class="secondary-primary-line"[^]*?class="next schedule-next"/);
+  const compactSource = fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8').replace(/\s+/g, '');
+  assert.match(compactSource, /\.secondary-primary-line\.next\{flex:01auto;min-width:0;max-width:none;margin:000auto;/);
   assert.match(card.shadowRoot.innerHTML, /data-action="resume-hot_water"[^>]*disabled/);
   assert.match(card.shadowRoot.innerHTML, /data-action="all-hot_water-off"/);
   assert.equal(window.customCards[0].getEntitySuggestion(card._hass, hotWater.entity_id).config.entities[0], hotWater.entity_id);
@@ -1896,7 +1908,7 @@ test('Secondary status keeps next schedule beside the primary status', () => {
   const compact = source.replace(/\s+/g, '');
   assert.match(source, /class="secondary-primary-line"><span class="status">.*<div class="next"/);
   assert.match(compact, /\.secondary-heading-line,\.secondary-primary-line\{display:flex;align-items:baseline;justify-content:space-between;gap:10px;min-width:0\}/);
-  assert.match(compact, /\.secondary-primary-line\.next\{flex:11auto;min-width:0;max-width:none;margin:0;line-height:18px;white-space:normal;overflow:visible;text-overflow:clip;text-align:right\}/);
+  assert.match(compact, /\.secondary-primary-line\.next\{flex:01auto;min-width:0;max-width:none;margin:000auto;line-height:18px;white-space:normal;overflow:visible;text-overflow:clip;text-align:right\}/);
   assert.match(compact, /\.secondary-layout\.secondary-status\{min-width:0;line-height:16px\}/);
 });
 
