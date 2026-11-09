@@ -2288,3 +2288,57 @@ test('OpenTherm current action uses native HA translations in every language', (
     assert.equal(editor._roomForm.hass.formatEntityAttributeName(hotWater,'current_action'),`${language}:native action`);
   }
 });
+
+test('Hot Water boost menu routes a duration to the selected stored hot-water hub', async () => {
+  const {card, calls} = setup();
+  const stored = addStoredHotWaterSwitch(card);
+  const another = addStoredHotWaterSwitch(card, {}, 'switch.another_hot_water');
+  card._entries.find(entry => entry.entity_id === another.entity_id).config_entry_id = 'hub-b';
+  card.setConfig({device_types:['hot_water']});
+  const click = dataset => card._click({target:{closest:()=>({
+    dataset,
+    closest:()=>true,
+  })}});
+  click({action:'hot-water-boost-menu'});
+  for (const duration of [30,60,120,180]) {
+    assert.match(card.shadowRoot.innerHTML, new RegExp(`data-boost-option="${duration}"`));
+  }
+  await click({action:'hot-water-boost-option', entity:another.entity_id, boostOption:'30'});
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
+    ['wiser','boost_hotwater',{hub:'hub-b',time_period:30}],
+  ]);
+  assert.doesNotMatch(card.shadowRoot.innerHTML, /data-boost-option="30"/);
+  stored.state = 'unavailable';
+  await click({action:'hot-water-boost-option', entity:stored.entity_id, boostOption:'30'});
+  assert.equal(calls.length, 1);
+});
+
+test('Hot Water boost menu uses timed OpenTherm presets and labels standard fallback durations', async () => {
+  const {card, calls} = setup();
+  const configured = addHotWater(card, {
+    operation_list:['off','Manual','Auto','Guests','Comfort'],
+    opentherm_presets:[
+      {name:'Guests',temperature:53,duration_minutes:23},
+      {name:'Comfort',temperature:50,duration_minutes:0},
+    ],
+  });
+  const fallback = addHotWater(card, {
+    operation_list:['off','Manual','Auto','Boost 30 Mins'],
+    opentherm_presets:[
+      {name:'Boost 30 Mins',temperature:45,duration_minutes:30,standard_boost:true},
+    ],
+  }, 'water_heater.fallback');
+  card.setConfig({device_types:['hot_water']});
+  card._hotWaterBoostMenuOpen = true;
+  card._render();
+  assert.match(card.shadowRoot.innerHTML, /Guests · 23 min · 53°C/);
+  assert.doesNotMatch(card.shadowRoot.innerHTML, /data-boost-option="Comfort"/);
+  assert.match(card.shadowRoot.innerHTML, /data-boost-option="Boost 30 Mins">30 minutes</);
+  await card._boostHotWater(configured.entity_id, 'Comfort');
+  await card._boostHotWater(configured.entity_id, 'Guests');
+  await card._boostHotWater(fallback.entity_id, 'Boost 30 Mins');
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [
+    ['water_heater','set_operation_mode',{entity_id:configured.entity_id,operation_mode:'Guests'}],
+    ['water_heater','set_operation_mode',{entity_id:fallback.entity_id,operation_mode:'Boost 30 Mins'}],
+  ]);
+});

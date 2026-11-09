@@ -38,6 +38,9 @@
   };
   const WISER_PRESET_MODES = Object.keys(WISER_PRESET_ALIASES);
   const BOOST_PRESET_MODES = ["boost_30m", "boost_1h", "boost_2h", "boost_3h"];
+  const BOOST_DURATIONS = [
+    [30, "30_minutes"], [60, "1_hour"], [120, "2_hours"], [180, "3_hours"],
+  ];
   const presetKey = value => WISER_PRESET_MODES.find(key => key === value || WISER_PRESET_ALIASES[key].includes(value));
   const presetMode = (state, value) => {
     const key = presetKey(value);
@@ -643,6 +646,7 @@
       this._temperatureQueue = new Map();
       this._targets = new Map();
       this._boostMenuOpen = false;
+      this._hotWaterBoostMenuOpen = false;
       this._error = "";
       this.shadowRoot.addEventListener("click", event => this._click(event));
       this.shadowRoot.addEventListener("dblclick", event => this._doubleClick(event));
@@ -1366,6 +1370,51 @@
       if (failed.length) this._error = `Could not boost: ${failed.map(room => this._name(room)).join(", ")}. Please retry.`;
       this._busy = false; this._render();
     }
+    _hotWaterBoostOptions(room) {
+      if (!available(room)) return [];
+      const durationLabel = minutes => {
+        const label = BOOST_DURATIONS.find(([duration]) => duration === minutes)?.[1];
+        return label ? text(this._hass, label) : text(this._hass, "minutes_short", {count:minutes});
+      };
+      if (isStoredHotWaterSwitch(room)) {
+        const hub = this._entries?.find(entry => entry.entity_id === room.entity_id)?.config_entry_id;
+        if (!hub) return [];
+        return BOOST_DURATIONS.map(([minutes]) => ({
+          key:String(minutes),
+          label:durationLabel(minutes),
+          domain:"wiser",
+          service:"boost_hotwater",
+          data:{hub,time_period:minutes},
+        }));
+      }
+      if (!isOpenThermHotWater(room)) return [];
+      const {opentherm_presets: presets, operation_list: operations} = room.attributes;
+      if (!Array.isArray(presets) || !Array.isArray(operations)) return [];
+      return presets.filter(preset => Number.isInteger(preset?.duration_minutes)
+        && preset.duration_minutes > 0 && operations.includes(preset.name)).map(preset => {
+        const duration = durationLabel(preset.duration_minutes);
+        const temperature = Number.isFinite(preset.temperature)
+          ? ` · ${this._temperature(this._hass.config?.unit_system?.temperature === "°F" ? preset.temperature * 1.8 + 32 : preset.temperature)}`
+          : "";
+        return {
+          key:preset.name,
+          label:preset.standard_boost ? duration : `${preset.name} · ${duration}${temperature}`,
+          domain:"water_heater",
+          service:"set_operation_mode",
+          data:{entity_id:room.entity_id,operation_mode:preset.name},
+        };
+      });
+    }
+    async _boostHotWater(entityId, key) {
+      if (this._busy || !selectedTypes(this._config).includes("hot_water")) return;
+      const room = this._rooms().find(room => room.entity_id === entityId);
+      const option = room && this._hotWaterBoostOptions(room).find(option => option.key === key);
+      if (!option) { this._render(); return; }
+      this._busy = true; this._error = ""; this._render();
+      try { await this._hass.callService(option.domain, option.service, option.data); }
+      catch (error) { this._error = `Could not boost ${this._name(room)}: ${error.message || error}`; }
+      finally { this._busy = false; this._render(); }
+    }
     async _cancelAllBoosts() {
       if (this._busy || !selectedTypes(this._config).includes("heating")) return;
       const rooms = this._rooms().filter(room => deviceType(room) === "heating" && available(room)
@@ -1444,6 +1493,10 @@
     }
     _click(event) {
       const button = event.target.closest("button,ha-button");
+      if (this._hotWaterBoostMenuOpen && !button?.closest?.(".hot-water-boost-menu")) {
+        this._hotWaterBoostMenuOpen = false;
+        this._render();
+      }
       if (!button || button.disabled) {
         if (!button) {
           const target = this._interactionTarget(event);
@@ -1454,6 +1507,16 @@
         }
         if (this._boostMenuOpen) { this._boostMenuOpen = false; this._render(); }
         return;
+      }
+      if (button.dataset.action === "hot-water-boost-menu") {
+        this._boostMenuOpen = false;
+        this._hotWaterBoostMenuOpen = !this._hotWaterBoostMenuOpen;
+        this._render();
+        return;
+      }
+      if (button.dataset.action === "hot-water-boost-option") {
+        this._hotWaterBoostMenuOpen = false;
+        return this._boostHotWater(button.dataset.entity, button.dataset.boostOption);
       }
       if (button.dataset.action === "boost-menu") { this._boostMenuOpen = !this._boostMenuOpen; this._render(); return; }
       if (button.dataset.action === "all-off") { this._allOff(); return; }
@@ -1632,7 +1695,7 @@
       const boostedRooms = rooms.filter(room => deviceType(room) === "heating" && available(room) && room.attributes.is_boosted);
       const canCancelOverrides = overriddenRooms.some(room =>
         supportsPreset(room, "cancel_overrides"));
-      const boostModes = [["Boost 30m","30_minutes"], ["Boost 1h","1_hour"], ["Boost 2h","2_hours"], ["Boost 3h","3_hours"]];
+      const boostModes = BOOST_DURATIONS.map(([, label], index) => [WISER_PRESET_ALIASES[BOOST_PRESET_MODES[index]][1], label]);
       const canBoostMode = mode => rooms.some(room => deviceType(room) === "heating" && available(room) && supportsPreset(room, mode));
       const canCancelBoosts = boostedRooms.some(room => supportsPreset(room, "cancel_overrides"));
       const boostRemaining = boostedRooms.map(overrideMinutes).filter(Number.isFinite);
@@ -1664,7 +1727,23 @@
         const title = escape(text(this._hass,"return_schedules",{devices:text(this._hass,type)}));
         return `<ha-button class="off resume-schedules${section ? " section-action" : ""}" data-action="resume-${type}" size="m" appearance="filled" variant="brand" ${this._busy || !canResume(type) ? "disabled" : ""} title="${title}" aria-label="${title}"><ha-icon slot="start" icon="mdi:calendar-sync"></ha-icon><span class="action-label">${escape(text(this._hass,"resume_schedules"))}</span></ha-button>`;
       };
-      const scheduledDeviceActions = (type, section) => `<div class="bulk-actions">${resumeSchedulesAction(type, section)}${type === "shutters" ? closeAllAction(section) : deviceOffAction(type, section)}</div>`;
+      const hotWaterBoostAction = section => {
+        const targets = rooms.filter(room => isHotWater(room) && available(room))
+          .map(room => ({room, options:this._hotWaterBoostOptions(room)}))
+          .filter(target => target.options.length);
+        if (!targets.length) return "";
+        const title = escape(text(this._hass, "boost_hot_water"));
+        const items = this._hotWaterBoostMenuOpen ? targets.map(({room,options}) => {
+          const entry = this._entries?.find(entry => entry.entity_id === room.entity_id);
+          const hub = this._hubs?.find(hub => hub.entry_id === entry?.config_entry_id);
+          const heading = targets.length > 1
+            ? `<div class="boost-target">${escape([hub?.title,this._name(room)].filter(Boolean).join(" · "))}</div>`
+            : "";
+          return heading + options.map(option => `<button role="menuitem" data-action="hot-water-boost-option" data-entity="${escape(room.entity_id)}" data-boost-option="${escape(option.key)}">${escape(option.label)}</button>`).join("");
+        }).join("") : "";
+        return `<div class="boost-menu hot-water-boost-menu"><ha-button class="off boost-all${section ? " section-action" : ""}" data-action="hot-water-boost-menu" size="m" appearance="filled" variant="danger" ${this._busy ? "disabled" : ""} title="${title}" aria-label="${title}" aria-haspopup="menu" aria-expanded="${this._hotWaterBoostMenuOpen}"><ha-icon slot="start" icon="mdi:fire"></ha-icon><span class="action-label">${title}</span></ha-button>${items ? `<div class="boost-options" role="menu">${items}</div>` : ""}</div>`;
+      };
+      const scheduledDeviceActions = (type, section) => `<div class="bulk-actions">${type === "hot_water" ? hotWaterBoostAction(section) : ""}${resumeSchedulesAction(type, section)}${type === "shutters" ? closeAllAction(section) : deviceOffAction(type, section)}</div>`;
       const headerAction = grouped ? "" : singleType === "heating" ? heatingActions(false) : scheduledDeviceActions(singleType, false);
       const unit = this._hass.config?.unit_system?.temperature || "°C";
       const scopes = splitHubs ? hubGroups : [{key:"all",title:"",rooms}];
@@ -1743,6 +1822,9 @@
         }
         ha-card {
           overflow:hidden
+        }
+        ha-card:has(.hot-water-boost-menu .boost-options) {
+          overflow:visible
         }
         .hub-section {
           border-top:1px solid var(--divider-color)
@@ -1897,6 +1979,20 @@
           border-radius:10px;
           background:var(--card-background-color,var(--ha-card-background,var(--primary-background-color)));
           box-shadow:var(--ha-card-box-shadow,0 2px 8px rgba(0,0,0,.3))
+        }
+        .hot-water-boost-menu .boost-options {
+          inset-inline: auto 0;
+          max-width: min(360px, calc(100vw - 40px));
+          max-height: 320px;
+          overflow-y: auto;
+        }
+        .hot-water-boost-menu .boost-options button {
+          white-space: normal;
+        }
+        .boost-target {
+          padding: 8px 16px 4px;
+          color: var(--secondary-text-color);
+          font-size: 12px;
         }
         .boost-options button {
           display:block;
