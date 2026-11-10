@@ -1048,6 +1048,30 @@ test('card suggestions are offered only for supported Wiser entities', () => {
   assert.equal(registration.getEntitySuggestion(card._hass, 'climate.generic'), null);
   assert.equal(registration.getEntitySuggestion(card._hass, 'climate.missing'), null);
 });
+test('OpenTherm shows the next schedule time and temperature during a timed boost', () => {
+  const {card} = setup();
+  const hotWater = addHotWater(card, {
+    is_boosted:true,
+    schedule_name:'OpenTherm Hot Water',
+    next_schedule_temp:47,
+  });
+  hotWater.state = 'Boost 15 Mins';
+  card.setConfig({device_types:['hot_water']});
+  const schedule = /class="next schedule-next"[^>]*><ha-icon icon="mdi:calendar-clock"><\/ha-icon><span>([^<]+)<\/span>/;
+  const boostSchedule = card.shadowRoot.innerHTML.match(schedule)?.[1];
+  assert.match(boostSchedule, / · 47°C$/);
+  assert.doesNotMatch(card.shadowRoot.innerHTML, /class="next schedule-next"[^>]*>OpenTherm Hot Water<\/div>/);
+
+  hotWater.state = 'Auto';
+  hotWater.attributes.is_boosted = false;
+  card._render();
+  assert.equal(card.shadowRoot.innerHTML.match(schedule)?.[1], boostSchedule);
+
+  hotWater.state = 'Boost 15 Mins';
+  hotWater.attributes.is_boosted = true;
+  card.setConfig({device_types:['hot_water'],device_options:{[hotWater.entity_id]:{show_next_schedule:false}}});
+  assert.doesNotMatch(card.shadowRoot.innerHTML, schedule);
+});
 test('OpenTherm hot water is discovered, rendered, configured and controlled', async () => {
   const {card,calls,Editor,window} = setup();
   const hotWater = addHotWater(card);

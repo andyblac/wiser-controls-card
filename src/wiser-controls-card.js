@@ -1317,8 +1317,8 @@
       const nextDate = a.next_schedule_event ? new Date(a.next_schedule_event) : null;
       const nextTime = nextDate && Number.isFinite(nextDate.getTime())
         ? nextDate.toLocaleString(this._hass.locale?.language || this._hass.language, {weekday:"short",hour:"2-digit",minute:"2-digit"}) : "";
-      const showSchedule = options.show_next_schedule !== false && !a.is_boosted;
-      const nextDetail = showSchedule && state.state === "Auto" && nextTime
+      const showSchedule = options.show_next_schedule !== false;
+      const nextDetail = showSchedule && (state.state === "Auto" || a.is_boosted) && nextTime
         ? `${nextTime}${Number.isFinite(a.next_schedule_temp) ? ` · ${this._temperature(a.next_schedule_temp)}` : ""}` : "";
       const next = !showSchedule ? "" : nextDetail
         ? `${text(this._hass,"next")} ${nextDetail}` : a.schedule_name || text(this._hass,"no_schedule");
