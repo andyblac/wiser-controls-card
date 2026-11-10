@@ -463,6 +463,8 @@
     const reported = Number(state.attributes.boost_time_remaining);
     return Number.isFinite(reported) ? Math.max(0, Math.ceil(reported)) : null;
   };
+  const storedHotWaterBoostRemaining = state => isStoredHotWaterSwitch(state) && available(state) && state.attributes.is_boosted
+    ? Date.parse(state.attributes.boost_end) - Date.now() : NaN;
   const boostPresetWidthMode = width => width >= 180 ? "full" : width >= 105 ? "compact" : "icon";
   const boostPresetState = feature => feature?._stateObj || feature?.stateObj;
   const isControlsCardPresetFeature = feature => {
@@ -657,8 +659,23 @@
       this.shadowRoot.addEventListener("change", event => this._change(event));
       this.shadowRoot.addEventListener("focusout", () => setTimeout(() => this._render(), 0));
     }
-    connectedCallback() { this._layoutHeaders(); }
-    disconnectedCallback() { this._headerObserver?.disconnect(); this._observedHeaders.clear(); this._observedBulkHeaders.clear(); }
+    connectedCallback() {
+      this._layoutHeaders();
+      if (this._config && this._hass && !this._hubCardsMode) this._scheduleStoredHotWaterBoostUpdate(this._rooms());
+    }
+    disconnectedCallback() {
+      clearTimeout(this._storedHotWaterBoostTimer);
+      this._headerObserver?.disconnect();
+      this._observedHeaders.clear();
+      this._observedBulkHeaders.clear();
+    }
+    _scheduleStoredHotWaterBoostUpdate(rooms) {
+      clearTimeout(this._storedHotWaterBoostTimer);
+      if (!this.isConnected) return;
+      const delays = rooms.map(storedHotWaterBoostRemaining).filter(remaining => remaining > 0)
+        .map(remaining => remaining % 60_000 || 60_000);
+      if (delays.length) this._storedHotWaterBoostTimer = setTimeout(() => this._render(), Math.min(...delays));
+    }
     _layoutHeaders() {
       const headers = new Set(this.shadowRoot.querySelectorAll?.(".top") || []);
       for (const header of this._observedHeaders) if (!headers.has(header)) this._headerObserver?.unobserve(header.closest(".room"));
@@ -1271,13 +1288,17 @@
       const brightnessControl = light ? `<input type="number" data-entity="${id}" data-field="brightness" aria-label="${escape(this._name(state))} brightness percent" title="Brightness" value="${brightness ?? ""}" min="1" max="100" step="1" ${disabled}>` : "";
       const fallbackControls = useNative ? "" : `<div class="controls">${brightnessControl}<button data-action="device" data-entity="${id}" data-service="turn_${on ? "off" : "on"}" aria-label="Turn ${escape(this._name(state))} ${on ? "off" : "on"}" title="Turn ${on ? "off" : "on"}" ${disabled}><ha-icon icon="mdi:power"></ha-icon></button></div>`;
       const secondary = this._secondaryMarkup(state);
-      const next = options.show_next_schedule === false ? "" : escape(this._deviceSchedule(state));
+      const remaining = storedHotWaterBoostRemaining(state);
+      const countdown = remaining > 0 ? text(this._hass, "minutes_short", {count:Math.ceil(remaining / 60_000)}) : "";
+      const boostStatus = countdown ? `<span class="status-separator"> · </span><span class="status-item">${escape(text(this._hass, "boost"))} · ${escape(countdown)}</span>` : "";
+      const statusMarkup = this._contentStatus(state) + boostStatus;
+      const next = options.show_next_schedule === false || countdown ? "" : escape(this._deviceSchedule(state));
       const readingMarkup = options.show_temperatures === false ? "" : escape(reading);
       const header = secondary ? `<div class="top has-secondary ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" aria-label="Open device details">${this._contentIcon(state, icon)}</button>
         <div class="secondary-layout"><div class="secondary-heading-line"><button class="name" data-entity="${id}" data-interaction="card"><strong>${escape(this._name(state))}</strong></button><div class="temps">${readingMarkup}</div></div>
-        <div class="secondary-primary-line"><span class="status">${this._contentStatus(state, status)}</span>${options.hide_state ? secondary : ""}<div class="next">${next}</div></div>${options.hide_state ? "" : secondary}</div></div>`
+        <div class="secondary-primary-line"><span class="status">${statusMarkup}</span>${options.hide_state ? secondary : ""}<div class="next">${next}</div></div>${options.hide_state ? "" : secondary}</div></div>`
         : `<div class="top ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" aria-label="Open device details">${this._contentIcon(state, icon)}</button>
-        <div class="room-heading"><div class="identity"><button class="name" data-entity="${id}" data-interaction="card"><strong>${escape(this._name(state))}</strong></button><span class="status">${this._contentStatus(state, status)}</span></div>
+        <div class="room-heading"><div class="identity"><button class="name" data-entity="${id}" data-interaction="card"><strong>${escape(this._name(state))}</strong></button><span class="status">${statusMarkup}</span></div>
         <div class="readings"><div class="temps">${readingMarkup}</div><div class="next">${next}</div></div></div></div>`;
       return `<section data-key="${id}" data-entity="${id}" class="room device-${light ? "light" : hotWater ? "hot-water" : "plug"} ${on ? "powered" : ""} ${this._previewClasses(state, preview, previewRoom)}" style="--room-native-state-color:${color};--room-state-color:${this._contentColor(state, color)};${featureOrder(options)}"><div class="room-content">
         ${header}
@@ -1296,9 +1317,10 @@
       const nextDate = a.next_schedule_event ? new Date(a.next_schedule_event) : null;
       const nextTime = nextDate && Number.isFinite(nextDate.getTime())
         ? nextDate.toLocaleString(this._hass.locale?.language || this._hass.language, {weekday:"short",hour:"2-digit",minute:"2-digit"}) : "";
-      const nextDetail = options.show_next_schedule !== false && state.state === "Auto" && nextTime
+      const showSchedule = options.show_next_schedule !== false && !a.is_boosted;
+      const nextDetail = showSchedule && state.state === "Auto" && nextTime
         ? `${nextTime}${Number.isFinite(a.next_schedule_temp) ? ` · ${this._temperature(a.next_schedule_temp)}` : ""}` : "";
-      const next = options.show_next_schedule === false ? "" : nextDetail
+      const next = !showSchedule ? "" : nextDetail
         ? `${text(this._hass,"next")} ${nextDetail}` : a.schedule_name || text(this._hass,"no_schedule");
       const nextMarkup = nextDetail ? `<ha-icon icon="mdi:calendar-clock"></ha-icon><span>${escape(nextDetail)}</span>` : escape(next);
       const secondary = this._secondaryMarkup(state);
@@ -1374,7 +1396,10 @@
       if (!available(room)) return [];
       const durationLabel = minutes => {
         const label = BOOST_DURATIONS.find(([duration]) => duration === minutes)?.[1];
-        return label ? text(this._hass, label) : text(this._hass, "minutes_short", {count:minutes});
+        if (label) return text(this._hass, label);
+        return new Intl.NumberFormat(languageFor(this._hass), {
+          style:"unit", unit:"minute", unitDisplay:"long",
+        }).format(minutes);
       };
       if (isStoredHotWaterSwitch(room)) {
         const hub = this._entries?.find(entry => entry.entity_id === room.entity_id)?.config_entry_id;
@@ -1393,12 +1418,13 @@
       return presets.filter(preset => Number.isInteger(preset?.duration_minutes)
         && preset.duration_minutes > 0 && operations.includes(preset.name)).map(preset => {
         const duration = durationLabel(preset.duration_minutes);
-        const temperature = Number.isFinite(preset.temperature)
-          ? ` · ${this._temperature(this._hass.config?.unit_system?.temperature === "°F" ? preset.temperature * 1.8 + 32 : preset.temperature)}`
-          : "";
+        const value = this._hass.config?.unit_system?.temperature === "°F"
+          ? preset.temperature * 1.8 + 32
+          : preset.temperature;
+        const temperature = Number.isFinite(preset.temperature) ? this._temperature(value) : "";
         return {
           key:preset.name,
-          label:preset.standard_boost ? duration : `${preset.name} · ${duration}${temperature}`,
+          label:temperature ? `${temperature} · ${duration}` : duration,
           domain:"water_heater",
           service:"set_operation_mode",
           data:{entity_id:room.entity_id,operation_mode:preset.name},
@@ -1670,6 +1696,7 @@
       sync(this.shadowRoot, template.content);
     }
     _render() {
+      clearTimeout(this._storedHotWaterBoostTimer);
       if (!this._config || !this._hass) return;
       const hubConfigs = this._hubConfigEntries();
       if (hubConfigs.length) {
@@ -1683,6 +1710,7 @@
         this._hubCards = undefined;
       }
       const rooms = this._rooms();
+      this._scheduleStoredHotWaterBoostUpdate(rooms);
       const types = selectedTypes(this._config);
       const channelGroups = heatingChannelGroups(rooms);
       const hubGroups = this._hubGroups(rooms);
@@ -1741,7 +1769,7 @@
             : "";
           return heading + options.map(option => `<button role="menuitem" data-action="hot-water-boost-option" data-entity="${escape(room.entity_id)}" data-boost-option="${escape(option.key)}">${escape(option.label)}</button>`).join("");
         }).join("") : "";
-        return `<div class="boost-menu hot-water-boost-menu"><ha-button class="off boost-all${section ? " section-action" : ""}" data-action="hot-water-boost-menu" size="m" appearance="filled" variant="danger" ${this._busy ? "disabled" : ""} title="${title}" aria-label="${title}" aria-haspopup="menu" aria-expanded="${this._hotWaterBoostMenuOpen}"><ha-icon slot="start" icon="mdi:fire"></ha-icon><span class="action-label">${title}</span></ha-button>${items ? `<div class="boost-options" role="menu">${items}</div>` : ""}</div>`;
+        return `<div class="boost-menu hot-water-boost-menu"><ha-button class="off boost-all${section ? " section-action" : ""}" data-action="hot-water-boost-menu" size="m" appearance="filled" variant="danger" ${this._busy ? "disabled" : ""} title="${title}" aria-label="${title}" aria-haspopup="menu" aria-expanded="${this._hotWaterBoostMenuOpen}"><ha-icon slot="start" icon="mdi:fire"></ha-icon><span class="action-label">${escape(text(this._hass, "boost"))}</span></ha-button>${items ? `<div class="boost-options" role="menu">${items}</div>` : ""}</div>`;
       };
       const scheduledDeviceActions = (type, section) => `<div class="bulk-actions">${type === "hot_water" ? hotWaterBoostAction(section) : ""}${resumeSchedulesAction(type, section)}${type === "shutters" ? closeAllAction(section) : deviceOffAction(type, section)}</div>`;
       const headerAction = grouped ? "" : singleType === "heating" ? heatingActions(false) : scheduledDeviceActions(singleType, false);
@@ -1982,6 +2010,7 @@
         }
         .hot-water-boost-menu .boost-options {
           inset-inline: auto 0;
+          width: max-content;
           max-width: min(360px, calc(100vw - 40px));
           max-height: 320px;
           overflow-y: auto;

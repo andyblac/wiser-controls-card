@@ -2289,6 +2289,21 @@ test('OpenTherm current action uses native HA translations in every language', (
   }
 });
 
+test('Stored hot water shows the hub boost countdown beside the switch state', () => {
+  const {card} = setup();
+  const stored = addStoredHotWaterSwitch(card, {
+    is_boosted:true,
+    boost_end:new Date(Date.now() + 11.5 * 60_000).toISOString(),
+  });
+  card.setConfig({device_types:['hot_water']});
+  assert.match(card.shadowRoot.innerHTML, /class="status-item">Boost · 12 min<\/span>/);
+  assert.doesNotMatch(card.shadowRoot.innerHTML, /class="next">No schedule/);
+
+  stored.attributes.boost_end = new Date(Date.now() - 60_000).toISOString();
+  card._render();
+  assert.doesNotMatch(card.shadowRoot.innerHTML, /class="status-item">Boost/);
+});
+
 test('Hot Water boost menu routes a duration to the selected stored hot-water hub', async () => {
   const {card, calls} = setup();
   const stored = addStoredHotWaterSwitch(card);
@@ -2313,7 +2328,7 @@ test('Hot Water boost menu routes a duration to the selected stored hot-water hu
   assert.equal(calls.length, 1);
 });
 
-test('Hot Water boost menu uses timed OpenTherm presets and labels standard fallback durations', async () => {
+test('Hot Water boost menu labels timed OpenTherm options with temperature and duration', async () => {
   const {card, calls} = setup();
   const configured = addHotWater(card, {
     operation_list:['off','Manual','Auto','Guests','Comfort'],
@@ -2331,9 +2346,9 @@ test('Hot Water boost menu uses timed OpenTherm presets and labels standard fall
   card.setConfig({device_types:['hot_water']});
   card._hotWaterBoostMenuOpen = true;
   card._render();
-  assert.match(card.shadowRoot.innerHTML, /Guests · 23 min · 53°C/);
+  assert.match(card.shadowRoot.innerHTML, /data-boost-option="Guests">53°C · 23 minutes</);
   assert.doesNotMatch(card.shadowRoot.innerHTML, /data-boost-option="Comfort"/);
-  assert.match(card.shadowRoot.innerHTML, /data-boost-option="Boost 30 Mins">30 minutes</);
+  assert.match(card.shadowRoot.innerHTML, /data-boost-option="Boost 30 Mins">45°C · 30 minutes</);
   await card._boostHotWater(configured.entity_id, 'Comfort');
   await card._boostHotWater(configured.entity_id, 'Guests');
   await card._boostHotWater(fallback.entity_id, 'Boost 30 Mins');
