@@ -50,7 +50,7 @@ const localize = localizeSource.replace(translationsToken, JSON.stringify(transl
 const embeddedPanelSource = Object.entries(deviceImages).reduce((embedded,[model,path]) => {
   const image = readFileSync(new URL(path, root)).toString("base64");
   return embedded.replaceAll(deviceImageToken(model),`data:image/png;base64,${image}`);
-},panelSource);
+},panelSource.replaceAll(versionToken, build.version));
 const body = `${localize}\n${source.replaceAll(versionToken, build.version)}\n${embeddedPanelSource}`;
 const bundle = `/*! WISER-CARD-VERSION wiser-controls-card ${build.version} */\n${body}`;
 const legacyBundle = `/*! WISER-CARD-VERSION wiser-rooms-card ${build.version} */\n${body}`;

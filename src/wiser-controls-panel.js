@@ -1,4 +1,5 @@
 /** Sidebar host for the Wiser controls card. */
+const CONTROLS_PANEL_VERSION = "__WISER_CARD_VERSION__";
 const ACTIVE_HUB_STORAGE_PREFIX = "wiser-controls-panel:active-hub:";
 const PANEL_DEVICE_TYPES = ["heating", "hot_water", "plugs", "lights", "shutters"];
 const DEVICE_DETAIL_TABS = ["control", "states", "settings", "identification", "activity"];
@@ -576,12 +577,20 @@ class WiserRoomsPanel extends HTMLElement {
 
         .dialog-actions {
           display: flex;
+          align-items: center;
           justify-content: flex-end;
           gap: 8px;
+          width: 100%;
         }
 
-        #editor-mode {
-          margin-inline-end: auto;
+        .editor-version {
+          margin-right: auto;
+          color: var(--secondary-text-color);
+          font-size: 12px;
+        }
+
+        @media (max-width: 720px) {
+          .editor-version { max-width: 42%; }
         }
 
         .yaml-editor[hidden],
@@ -810,6 +819,7 @@ class WiserRoomsPanel extends HTMLElement {
         <div id="editors"></div>
         <p id="editor-error" role="alert"></p>
         <div class="dialog-actions" id="editor-actions" slot="footer">
+          <span class="editor-version">Wiser Controls Card · ${CONTROLS_PANEL_VERSION}</span>
           <ha-button id="editor-mode" appearance="plain" disabled>
             Show code editor
           </ha-button>
@@ -2692,6 +2702,7 @@ class WiserRoomsPanel extends HTMLElement {
         );
         this._drafts[hub] = config;
         editor.hideHubSelector = true;
+        editor.hideVersion = true;
         editor.hideTitle = true;
         editor.hideRoomColumns = true;
         editor.hideDeviceTypes = true;

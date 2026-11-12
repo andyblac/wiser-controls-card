@@ -299,31 +299,22 @@
   };
   const extendWiserNamePicker = picker => {
     // Home Assistant does not expose a public extension API for composed-name sources.
-    if (!picker || typeof picker._getItems !== "function" || typeof picker._setValue !== "function") return false;
+    if (!picker || typeof picker._getFilteredItems !== "function" || typeof picker._setValue !== "function") return false;
     if (picker[WISER_NAME_PICKER_PATCHED]) return true;
     picker[WISER_NAME_PICKER_PATCHED] = true;
-    const originalGetItems = picker._getItems.bind(picker);
     const originalValidTypes = picker._validTypes?.bind(picker);
     const originalFormatItem = picker._formatItem?.bind(picker);
     const originalPickerValueChanged = picker._pickerValueChanged?.bind(picker);
     const originalGetPickerValue = picker._getPickerValue?.bind(picker);
-    const originalGetFilteredItems = picker._getFilteredItems?.bind(picker);
-    picker._getItems = entityId => {
-      const items = originalGetItems(entityId);
-      const secondary = wiserName(picker.hass?.states?.[entityId]);
-      if (!secondary) return items;
-      const primary = WISER_NAME_LABEL;
-      return [...items, {
-        id:WISER_NAME_PICKER_VALUE,
-        primary,
-        secondary,
-        search_labels:{primary,secondary,id:WISER_NAME_PICKER_VALUE},
-        sorting_label:primary,
-      }];
+    const originalGetFilteredItems = picker._getFilteredItems.bind(picker);
+    const pickerState = state => {
+      if (state?.entity_id) return state;
+      const entityId = typeof state === "string" ? state : picker.entityId;
+      return picker._stateObj || picker.hass?.states?.[entityId];
     };
-    if (originalValidTypes) picker._validTypes = entityId => {
-      const types = originalValidTypes(entityId);
-      if (wiserName(picker.hass?.states?.[entityId])) types.add(WISER_NAME_TYPE);
+    if (originalValidTypes) picker._validTypes = (...args) => {
+      const types = new Set(originalValidTypes(...args));
+      if (wiserName(pickerState(args[0]))) types.add(WISER_NAME_TYPE);
       return types;
     };
     if (originalFormatItem) picker._formatItem = item => item?.type === WISER_NAME_TYPE
@@ -332,13 +323,21 @@
       const item = picker._editIndex != null ? picker._items?.[picker._editIndex] : undefined;
       return item?.type === WISER_NAME_TYPE ? WISER_NAME_PICKER_VALUE : originalGetPickerValue();
     };
-    if (originalGetFilteredItems) picker._getFilteredItems = () => {
+    picker._getFilteredItems = () => {
       const items = originalGetFilteredItems();
+      const secondary = wiserName(pickerState());
+      if (!secondary) return items;
       const current = picker._editIndex != null ? picker._items?.[picker._editIndex] : undefined;
       const selected = picker._items?.some(item => item?.type === WISER_NAME_TYPE);
-      return selected && current?.type !== WISER_NAME_TYPE
-        ? items.filter(item => item.id !== WISER_NAME_PICKER_VALUE)
-        : items;
+      if (selected && current?.type !== WISER_NAME_TYPE) return items;
+      const primary = WISER_NAME_LABEL;
+      return [...items, {
+        id:WISER_NAME_PICKER_VALUE,
+        primary,
+        secondary,
+        search_labels:{primary,secondary,id:WISER_NAME_PICKER_VALUE},
+        sorting_label:primary,
+      }];
     };
     if (originalPickerValueChanged) picker._pickerValueChanged = event => {
       if (event?.detail?.value !== WISER_NAME_PICKER_VALUE) return originalPickerValueChanged(event);
@@ -3270,6 +3269,7 @@
         editor.hideHubSelector = true;
         editor.hideTitle = true;
         editor.hideRoomColumns = true;
+        editor.hideVersion = true;
         editor._version.hidden = true;
         editor.addEventListener?.("config-changed", event => {
           event.stopPropagation();
@@ -3347,6 +3347,7 @@
     }
     _render() {
       if (!this._config || !this._hass) return;
+      this._version.hidden = Boolean(this.hideVersion);
       const hubs = this._detectedHubs();
       this._hubForm.hass = this._hass;
       const hubSchema = [{name:"hubs",label:text(this._hass,"hubs"),selector:{select:{multiple:true,mode:"dropdown",options:hubs}}}];

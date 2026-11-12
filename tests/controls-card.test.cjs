@@ -2079,6 +2079,54 @@ test('Content supports native composed names and omits the entity-picture option
   assert.match(fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8'), /ha-form\.room-options\{[^}]*--ha-space-6:var\(--ha-space-1,4px\)/);
 });
 
+test('composed name Add preserves current Home Assistant picker contexts', async () => {
+  const {card, Editor, states} = setup();
+  const editor = new Editor();
+  editor._hass = card._hass;
+  const calls = {};
+  const registries = {entities:{},devices:{},areas:{},floors:{}};
+  const localize = key => key;
+  const formatEntityName = () => 'Bedroom';
+  const picker = {
+    entityId:'climate.bedroom',
+    _stateObj:states['climate.bedroom'],
+    _items:[],
+    _getItems(...args) {
+      calls.items = args;
+      return [{id:'___area___',primary:'Area'}];
+    },
+    _validTypes(...args) {
+      calls.types = args;
+      return new Set(['area']);
+    },
+    _setValue() {},
+    _formatItem(item) { return item.type; },
+    _pickerValueChanged() {},
+    _getPickerValue() {},
+    _getFilteredItems() {
+      return this._getItems(this._stateObj, registries, localize, formatEntityName);
+    },
+    requestUpdate() {},
+  };
+  const nativeGetItems = picker._getItems;
+  editor._roomForm = {
+    updateComplete:Promise.resolve(),
+    shadowRoot:{querySelector:selector => selector === 'ha-entity-name-picker' ? picker : undefined},
+  };
+  await editor._extendNamePicker();
+  assert.equal(picker._getItems, nativeGetItems);
+  const items = picker._getFilteredItems();
+  assert.equal(calls.items.length, 4);
+  assert.equal(calls.items[1], registries);
+  assert.equal(calls.items[2], localize);
+  assert.equal(calls.items[3], formatEntityName);
+  assert.equal(items.at(-1).id, '___wiser_name___');
+  const types = picker._validTypes(states['climate.bedroom'], registries);
+  assert.equal(calls.types.length, 2);
+  assert.equal(calls.types[1], registries);
+  assert.equal(types.has('wiser_name'), true);
+});
+
 test('default entity names use the native Home Assistant formatter', () => {
   const {card, Editor, states} = setup();
   card._hass.formatEntityName = (state, name) => name === undefined
