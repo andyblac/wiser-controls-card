@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
+const {loadCardSource} = require('../scripts/card-source.cjs');
 function setup() {
   let Card, Editor;
   const elements = {};
@@ -17,7 +18,7 @@ function setup() {
     JSON.parse(fs.readFileSync(path.join(__dirname, `../src/localize/languages/${language}.json`), 'utf8'))]));
   const localize = fs.readFileSync(path.join(__dirname, '../src/localize/localize.js'), 'utf8')
     .replace('__WISER_ROOMS_TRANSLATIONS__', JSON.stringify(languages));
-  const cardSource = fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8');
+  const cardSource = loadCardSource();
   vm.runInNewContext(`${localize}\n${cardSource}`, context);
   const calls = [];
   const state = (id, extra = {}, mode = 'auto') => ({entity_id: id, state: mode, attributes: {name:id, heating_type:'Radiator', current_temperature:20, temperature:21, hvac_modes:['auto','heat','off'], ...extra}});
@@ -156,6 +157,35 @@ test('bulk preset actions accept translatable integration keys', async () => {
   await card._cancelAllBoosts();
   assert.equal(calls[0][2].preset_mode, 'cancel_overrides');
 });
+
+test('admin-only header controls are hidden and guarded for non-admin users', () => {
+  const {card} = setup();
+  card._hass.user = {is_admin:false};
+  card.setConfig({device_types:['heating'],admin_only_header_controls:true});
+  assert.doesNotMatch(card.shadowRoot.innerHTML, /class="bulk-actions"|data-action="(?:boost-menu|follow-schedule|all-off)"/);
+  let operated = false;
+  card._allOff = () => { operated = true; };
+  const button = {dataset:{action:'all-off'},disabled:false};
+  card._click({target:{closest:() => button}});
+  assert.equal(operated,false);
+
+  card._hass.user.is_admin = true;
+  card._render();
+  assert.match(card.shadowRoot.innerHTML, /class="bulk-actions"[^]*data-action="boost-menu"[^]*data-action="all-off"/);
+  card._click({target:{closest:() => button}});
+  assert.equal(operated,true);
+  assert.throws(() => card.setConfig({admin_only_header_controls:'yes'}), /must be true or false/);
+});
+test('header controls can be displayed as icon-only buttons', () => {
+  const {card} = setup();
+  card.setConfig({device_types:['heating'],header_button_style:'icon_only'});
+  assert.match(card.shadowRoot.innerHTML, /<ha-card[^>]*class="header-controls-icon-only"/);
+  assert.match(card.shadowRoot.innerHTML, /ha-card\.header-controls-icon-only \.bulk-actions \.action-label/);
+
+  card.setConfig({device_types:['heating'],header_button_style:'icon_text'});
+  assert.doesNotMatch(card.shadowRoot.innerHTML, /<ha-card[^>]*class="[^"]*header-controls-icon-only/);
+  assert.throws(() => card.setConfig({header_button_style:'text_only'}), /must be icon_only or icon_text/);
+});
 test('explicit room selection limits master control and rejects unrelated climates', async () => {
   const {card,calls} = setup();
   card.setConfig({entities:['climate.lounge','climate.other','climate.hot_water']});
@@ -199,6 +229,7 @@ test('panel device-type editor hides controls that belong to the overview', () =
   editor.hideRoomColumns = true;
   editor.hideDeviceTypes = true;
   editor.hideVisibilityControl = true;
+  editor.hideHeaderControlSettings = true;
   editor.hideHubSelector = true;
   editor._hass = card._hass;
   editor._entries = card._entries;
@@ -255,7 +286,7 @@ test('enabled passive mode gives current, range and next schedule separate heade
   assert.match(html, /class="secondary-heading-line"[^]*class="temps"[^>]*>18\.9°C<\/div>/);
   assert.match(html, /class="secondary-primary-line"[^]*class="passive-range"[^>]*>18\.5°C – 22°C<\/div>/);
   assert.match(html, /class="passive-schedule-line"[^]*class="next schedule-next"[^>]*aria-label="Next Sat 12:15 · 19\.5°C"[^]*<ha-icon icon="mdi:calendar-clock"><\/ha-icon><span>Sat 12:15 · 19\.5°C<\/span>/);
-  const compact = fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8').replace(/\s+/g, '');
+  const compact = loadCardSource().replace(/\s+/g, '');
   assert.match(compact, /\.passive-schedule-line\.next\{flex:00auto;[^}]*white-space:nowrap/);
   assert.match(compact, /\.passive-range\{flex:00auto;margin-left:auto;/);
   assert.match(compact, /\.passive-header\.hide-status\.secondary-primary-line>\.status\{display:block;visibility:hidden\}/);
@@ -273,7 +304,7 @@ test('passive temperature focus emphasizes the selected current or target readin
   assert.match(card.shadowRoot.innerHTML, /class="top aligned-header passive-header target-focus/);
   card.setConfig({entities:['climate.bedroom'],device_options:{'climate.bedroom':{temperature_focus:'current'}}});
   assert.doesNotMatch(card.shadowRoot.innerHTML, /passive-header target-focus/);
-  const compact = fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8').replace(/\s+/g, '');
+  const compact = loadCardSource().replace(/\s+/g, '');
   assert.match(compact, /\.passive-header\.target-focus\.temps\{[^}]*font-size:18px/);
   assert.match(compact, /\.passive-header\.target-focus\.passive-range\{[^}]*font-size:22px/);
 });
@@ -459,6 +490,25 @@ test('heating room icons distinguish active heating from idle', () => {
   assert.match(html, /data-room-icon="climate\.lounge" icon="mdi:radiator-disabled"/);
 });
 
+test('optional heating glow appears only while a configured room is actively heating', () => {
+  const {card,states} = setup();
+  card.setConfig({device_types:['heating'],device_options:{
+    'climate.bedroom':{show_heating_glow:true},
+    'climate.lounge':{show_heating_glow:true},
+  }});
+  const classes = html => new Map([...html.matchAll(/data-entity="([^"]+)" class="room ([^"]*)"/g)]
+    .map(match => [match[1],match[2]]));
+  let rendered = classes(card.shadowRoot.innerHTML);
+  assert.match(rendered.get('climate.bedroom'),/heating-glow/);
+  assert.doesNotMatch(rendered.get('climate.lounge'),/heating-glow/);
+  assert.match(card.shadowRoot.innerHTML,/\.room\.heating-glow \{[^]*radial-gradient/);
+
+  states['climate.bedroom'].attributes.hvac_action = 'idle';
+  card._render();
+  rendered = classes(card.shadowRoot.innerHTML);
+  assert.doesNotMatch(rendered.get('climate.bedroom'),/heating-glow/);
+});
+
 test('card editors share entity discovery and hidden hub selectors skip config entry discovery', async () => {
   const {card, Editor} = setup();
   let entityRegistryCalls = 0;
@@ -487,6 +537,89 @@ test('card editors share entity discovery and hidden hub selectors skip config e
   assert.equal(entityRegistryCalls, 1);
   assert.equal(configEntryCalls, 0);
   assert.equal(editors.every(editor => editor._entries === card._entries), true);
+});
+
+test('closing the editor cancels stale layout retries', async () => {
+  const {Editor} = setup();
+  const editor = new Editor();
+  editor.isConnected = true;
+  let finishLayout;
+  const pending = new Promise(resolve => { finishLayout = resolve; });
+  await new Promise(started => {
+    editor._styleTemperatureFocus = () => { started(); return pending; };
+    editor._scheduleContentLayout();
+  });
+  editor.disconnectedCallback();
+  finishLayout(false);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(editor._contentLayoutTimer, undefined);
+});
+
+test('temperature alignment uses visible native control centres without accumulating offsets', async () => {
+  const {Editor} = setup();
+  const editor = new Editor();
+  const toggle = {getBoundingClientRect:() => ({top:20,height:48})};
+  const pill = {getBoundingClientRect:() => ({top:50,height:32})};
+  const grid = {shadowRoot:{querySelector:() => toggle}};
+  const field = {style:{},shadowRoot:{querySelector:() => pill}};
+  assert.equal(await editor._alignTemperatureControls(grid,field),true);
+  assert.equal(field.style.transform,'translateY(-22px)');
+  await editor._alignTemperatureControls(grid,field);
+  assert.equal(field.style.transform,'translateY(-22px)');
+  pill.getBoundingClientRect = () => ({top:28,height:32});
+  await editor._alignTemperatureControls(grid,field);
+  assert.equal(field.style.transform,'');
+  pill.getBoundingClientRect = () => ({top:0,height:0});
+  assert.equal(await editor._alignTemperatureControls(grid,field),false);
+});
+
+test('small native pills support both Home Assistant size APIs', async () => {
+  const {Editor} = setup();
+  const editor = new Editor();
+  for (const [initial,expected] of [['medium','small'],['small','small'],['m','s'],['s','s']]) {
+    const group = {size:initial,setAttribute(name,value){ this[name] = value; }};
+    const root = {querySelector:selector => selector === 'ha-button-toggle-group' ? group : undefined};
+    await editor._useSmallNativePill({shadowRoot:root});
+    assert.equal(group.size,expected);
+  }
+});
+
+test('header spacing centres the visible switch rather than its padded native wrapper', async () => {
+  const {Editor} = setup();
+  const editor = new Editor();
+  const toggle = {style:{}};
+  const field = {style:{},shadowRoot:{querySelector:q => q === 'ha-switch' ? toggle : undefined}};
+  const root = {style:{},children:[field]};
+  editor._modeForm.shadowRoot = {querySelector:() => root};
+  await editor._compactHeaderSettings();
+  assert.equal(root.style.gridAutoRows,'48px');
+  assert.equal(toggle.style.minHeight,'0');
+  assert.equal(toggle.style.height,'auto');
+});
+
+test('editor persists the admin-only header control option as a shared card setting', () => {
+  const {card, Editor} = setup();
+  const editor = new Editor();
+  editor._hass = card._hass;
+  editor._entries = card._entries;
+  editor.setConfig({});
+  const field = editor._modeForm.schema.find(item => item.name === 'admin_only_header_controls');
+  const styleField = editor._modeForm.schema.find(item => item.name === 'header_button_style');
+  assert.equal(field.label,'Header controls for administrators only');
+  assert.equal(styleField.label,'Header control buttons');
+  assert.equal(Object.keys(styleField.selector)[0],'button_toggle');
+  assert.equal(styleField.selector.button_toggle.options.map(option => option.label).join('|'),'Icon only|Icon & text');
+  assert.equal(editor._modeForm.data.admin_only_header_controls,false);
+  assert.equal(editor._modeForm.data.header_button_style,'icon_text');
+  assert.match(loadCardSource(), /ha-form\.configuration-mode\{[^}]*--ha-space-6:var\(--ha-space-1,4px\)/);
+  editor._modeForm.listeners['value-changed']({stopPropagation(){},detail:{value:{...editor._modeForm.data,admin_only_header_controls:true,header_button_style:'icon_only'}}});
+  assert.equal(editor.lastEvent.detail.config.admin_only_header_controls,true);
+  assert.equal(editor.lastEvent.detail.config.header_button_style,'icon_only');
+  const ordered = card.constructor.orderConfig({device_types:['heating'],admin_only_header_controls:true,header_button_style:'icon_only'});
+  assert.equal(ordered.admin_only_header_controls,true);
+  assert.equal(ordered.header_button_style,'icon_only');
+  assert.ok(Object.keys(ordered).indexOf('admin_only_header_controls') < Object.keys(ordered).indexOf('device_types'));
+  assert.ok(Object.keys(ordered).indexOf('header_button_style') < Object.keys(ordered).indexOf('device_types'));
 });
 
 test('card editor waits for hub titles before exposing discovered hubs', async () => {
@@ -713,7 +846,7 @@ test('master editor mode uses one shared room configuration and one preview card
   editor._hass = card._hass;
   editor._render();
   assert.equal(editor._modeForm.hidden, false);
-  assert.equal(editor._modeForm.schema[0].selector.button_toggle.size, 'small');
+  assert.equal(editor._modeForm.schema.find(item => item.name === 'device_configuration').selector.button_toggle.size, 'small');
   editor._modeForm.listeners['value-changed']({stopPropagation(){},detail:{value:{device_configuration:'master'}}});
   let config = editor.lastEvent.detail.config;
   assert.equal(config.device_configuration, 'master');
@@ -1090,7 +1223,7 @@ test('OpenTherm hot water is discovered, rendered, configured and controlled', a
   assert.match(nextSchedule, / · 47°C$/);
   card.setConfig({device_types:['hot_water'],device_options:{[hotWater.entity_id]:{hide_state:true}}});
   assert.match(card.shadowRoot.innerHTML, /class="top aligned-header hide-status[^]*?class="secondary-primary-line"[^]*?class="next schedule-next"/);
-  const compactSource = fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8').replace(/\s+/g, '');
+  const compactSource = loadCardSource().replace(/\s+/g, '');
   assert.match(compactSource, /\.secondary-primary-line\.next\{flex:01auto;min-width:0;max-width:none;margin:000auto;/);
   assert.match(card.shadowRoot.innerHTML, /data-action="resume-hot_water"[^>]*disabled/);
   assert.match(card.shadowRoot.innerHTML, /data-action="all-hot_water-off"/);
@@ -1105,7 +1238,7 @@ test('OpenTherm hot water is discovered, rendered, configured and controlled', a
     'target-temperature',
     'custom:opentherm-hot-water-control-presets-feature',
   ].join(','));
-  assert.equal(editor._roomForm.schema[0].schema[2].schema.some(field => field.name === 'temperature_focus'), true);
+  assert.equal(editor._roomForm.schema[0].schema.some(group => group.schema?.some(field => field.name === 'temperature_focus')), true);
 
   const reordered = [
     {type:'custom:opentherm-hot-water-control-presets-feature'},
@@ -1163,7 +1296,7 @@ test('classic Wiser climate and switch hot-water controls share the Hot water se
   assert.equal(editor._nativeEditor.features.map(feature => feature.type).join(','),'climate-hvac-modes,target-temperature,climate-preset-modes');
   editor._selectRoom(hotWaterSwitch.entity_id);
   assert.equal(editor._nativeEditor.features.map(feature => feature.type).join(','),'toggle');
-  assert.equal(editor._roomForm.schema[0].schema[2].schema.some(field => field.name === 'temperature_focus'), false);
+  assert.equal(editor._roomForm.schema[0].schema.some(group => group.schema?.some(field => field.name === 'temperature_focus')), false);
 
   await card._allDevicesOff('hot_water');
   assert.equal(JSON.stringify(calls), JSON.stringify([
@@ -1215,8 +1348,8 @@ test('Show uses compact native buttons and supports multiple device types', () =
   assert.match(editor._typeForm.innerHTML, /data-room-type="all"[^]*data-room-type="plugs"[^]*data-room-type="heating"[^]*data-room-type="lights"[^]*data-room-type="shutters"/);
   assert.match(editor._typeForm.innerHTML, /<ha-button[^>]*data-room-type="all"/);
   assert.match(editor._typeForm.innerHTML, /<ha-button[^>]*variant="brand"[^>]*appearance="filled"[^>]*data-room-type="heating"/);
-  assert.match(fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8'), /\.show-options ha-button\[appearance="filled"\]::part\(base\)[^{]*\{[^}]*border-color:currentColor/);
-  assert.match(fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8'), /\.show-options ha-button\[appearance="outlined"\]::part\(base\)[^{]*\{[^}]*color:var\(--state-inactive-color\);border-color:var\(--state-inactive-color\)/);
+  assert.match(loadCardSource(), /\.show-options ha-button\[appearance="filled"\]::part\(base\)[^{]*\{[^}]*border-color:currentColor/);
+  assert.match(loadCardSource(), /\.show-options ha-button\[appearance="outlined"\]::part\(base\)[^{]*\{[^}]*color:var\(--state-inactive-color\);border-color:var\(--state-inactive-color\)/);
   const choose = roomType => editor._typeForm.listeners.click({target:{closest:()=>({dataset:{roomType}})}});
   choose('heating');
   assert.equal(Array.from(editor.lastEvent.detail.config.device_types).join(','), 'heating');
@@ -1282,7 +1415,7 @@ test('dashboard cards migrate entity settings into one configuration per hub', (
   assert.equal(editor._modeForm.hidden, true);
   assert.equal(editor._roomForm.hidden, true);
   assert.equal(editor._featureList.hidden, true);
-  assert.match(fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8'), /\[hidden\]\{display:none!important\}/);
+  assert.match(loadCardSource(), /\[hidden\]\{display:none!important\}/);
   assert.match(editor._hubTabs.innerHTML, /Downstairs hub/);
   assert.match(editor._hubTabs.innerHTML, /Upstairs hub/);
   assert.deepEqual(Array.from(editor._editorRooms(), room => room.entity_id), ['climate.bedroom','climate.offline','switch.lamp']);
@@ -1643,7 +1776,7 @@ test('preset feature exposes supported Wiser actions and preserves explicit sele
 });
 
 test('controls card scopes a responsive boost countdown to its native preset feature', () => {
-  const source = fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8');
+  const source = loadCardSource();
   assert.match(source, /isControlsCardPresetFeature/);
   assert.match(source, /\["wiser-controls-card","wiser-rooms-card"\]\.includes\(host\.localName\)/);
   assert.match(source, /hui-climate-preset-modes-card-feature/);
@@ -1749,9 +1882,9 @@ test('feature position is configured per room and renders native features inline
   assert.match(card.shadowRoot.innerHTML, /class="room-content"/);
   assert.doesNotMatch(card.shadowRoot.innerHTML, /class="room-content features-inline"/);
   assert.match(card.shadowRoot.innerHTML, /class="features-inline-row"/);
-  const compactSource = fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8').replace(/\s+/g, '');
+  const compactSource = loadCardSource().replace(/\s+/g, '');
   assert.match(compactSource, /\.features-inline-row\{display:flex;flex-wrap:wrap;/);
-  assert.match(compactSource, /@containerroom\(min-width:260px\)\{\.features-inline-row>hui-card-features:not\(\.feature-icon-only\)\{flex-basis:calc\(50%-2px\);width:calc\(50%-2px\)/);
+  assert.match(compactSource, /\.features-inline-row>hui-card-features\{display:block;flex:11calc\(50%-2px\);width:calc\(50%-2px\);min-width:0/);
   assert.match(compactSource, /@containerroom\(min-width:600px\)\{\.features-inline-row>hui-card-features:not\(\.feature-icon-only\)\{flex-basis:calc\(33\.333%-3px\);width:calc\(33\.333%-3px\)/);
   assert.equal((card.shadowRoot.innerHTML.match(/class="features-inline(?: |")/g) || []).length, 3);
   assert.match(card.shadowRoot.innerHTML, /class="features-inline"[^>]*data-room-features="climate.bedroom"/);
@@ -1763,6 +1896,21 @@ test('feature position is configured per room and renders native features inline
   assert.equal(host.features.length, 1);
   assert.equal(host.features[0].type, 'climate-hvac-modes');
   assert.throws(() => card.setConfig({device_options:{'climate.bedroom':{features_position:'sideways'}}}));
+});
+
+test('inline passive range temperatures retain enough width for both target controls', () => {
+  const {card,states} = setup();
+  Object.assign(states['climate.bedroom'].attributes, {is_passive:true,target_temp_low:18,target_temp_high:22});
+  const options = {features_position:'inline',features:[
+    {type:'target-temperature'}, {type:'custom:wiser-boost-feature'},
+  ]};
+  card.setConfig({entities:['climate.bedroom'],device_options:{'climate.bedroom':options}});
+  assert.match(card.shadowRoot.innerHTML,/class="features-inline feature-range"[^>]*data-feature-index="0"/);
+  assert.match(card.shadowRoot.innerHTML,/class="features-inline"[^>]*data-feature-index="1"/);
+  delete states['climate.bedroom'].attributes.target_temp_low;
+  delete states['climate.bedroom'].attributes.target_temp_high;
+  card.setConfig({entities:['climate.bedroom'],device_options:{'climate.bedroom':options}});
+  assert.doesNotMatch(card.shadowRoot.innerHTML,/<hui-card-features[^>]*feature-range/);
 });
 
 test('bottom feature position attaches Next schedule to its previous feature row', () => {
@@ -1835,6 +1983,159 @@ test('Override end time migrates from Features into Secondary status', () => {
   assert.equal(displays[0].stateObj.entity_id, 'climate.lounge');
   assert.equal(displays[1].stateObj.entity_id, 'climate.bedroom');
   assert.notEqual(displays[1].stateObj.attributes.override_end_time, 'No override');
+});
+
+test('Boost opens supported duration options and cancels an active boost', async () => {
+  const {card, calls, elements, states, window} = setup();
+  Object.assign(states['climate.bedroom'].attributes, {
+    is_boosted:true, boost_end:new Date(Date.now() + 25 * 60000).toISOString(),
+    preset_modes:['Boost 30m','Boost 1h','Cancel Overrides'],
+  });
+  const Feature = elements['wiser-boost-feature'];
+  const feature = new Feature();
+  feature.setConfig(Feature.getStubConfig());
+  feature.context = {entity_id:'climate.bedroom'};
+  feature.hass = card._hass;
+  assert.equal(feature._icon.icon,'mdi:timer-outline');
+  assert.equal(feature._label.textContent,'25 min');
+  assert.equal(feature._button.disabled,false);
+  feature._button.listeners.click({stopPropagation(){}});
+  assert.equal(feature._menu.hidden,false);
+  assert.match(feature._menu.innerHTML,/30 minutes/);
+  assert.match(feature._menu.innerHTML,/Cancel boost/);
+  await feature._selectBoost('boost_1h');
+  assert.equal(calls[0][1],'set_preset_mode');
+  assert.equal(calls[0][2].preset_mode,'Boost 1h');
+  await feature._selectBoost('cancel');
+  assert.equal(calls[1][2].preset_mode,'Cancel Overrides');
+  const entry = window.customCardFeatures.find(item => item.type === 'wiser-boost-feature');
+  assert.equal(entry.name,'Boost');
+  assert.equal(entry.isSupported(card._hass,{entity_id:'climate.bedroom'}),true);
+  assert.equal(entry.isSupported(card._hass,{entity_id:'climate.other'}),false);
+  card.setConfig({entities:['climate.bedroom'],device_options:{'climate.bedroom':{
+    features:[{type:'custom:wiser-boost-feature'}],
+  }}});
+  assert.match(card.shadowRoot.innerHTML,/data-room-features="climate.bedroom"/);
+  assert.doesNotMatch(card.shadowRoot.innerHTML,/<hui-card-features class="[^"]*feature-icon-only/);
+  states['climate.bedroom'].attributes.is_boosted = false;
+  feature.hass = card._hass;
+  assert.equal(feature._label.textContent,'0 min');
+  assert.equal(feature._button.disabled,false);
+  feature._button.listeners.click({stopPropagation(){}});
+  assert.doesNotMatch(feature._menu.innerHTML,/Cancel boost/);
+  assert.equal(window.customCardFeatures.some(item => item.type === 'wiser-boost-remaining-feature'),false);
+});
+
+test('Boost and the header agree when reported minutes differ from the end time', () => {
+  const {card, elements, states} = setup();
+  Object.assign(states['climate.bedroom'].attributes, {
+    is_boosted:true, boost_time_remaining:28,
+    boost_end:new Date(Date.now() + 28.5 * 60000).toISOString(),
+    preset_modes:['Boost 30m','Cancel Overrides'],
+  });
+  card.setConfig({entities:['climate.bedroom']});
+  const feature = new elements['wiser-boost-feature']();
+  feature.setConfig({type:'custom:wiser-boost-feature',entity:'climate.bedroom'});
+  feature.hass = card._hass;
+  assert.equal(feature._label.textContent,'28 min');
+  assert.match(card.shadowRoot.innerHTML,/next ends in 28m/);
+  assert.match(card.shadowRoot.innerHTML,/<small>28 min<\/small>/);
+  assert.doesNotMatch(card.shadowRoot.innerHTML,/29 min|29m/);
+});
+
+test('Boost counts down the end time and releases its timer on disconnect', () => {
+  const {card, elements, states} = setup();
+  Object.assign(states['climate.bedroom'].attributes, {is_boosted:true,boost_end:new Date(Date.now() + 30 * 60000).toISOString()});
+  const feature = new elements['wiser-boost-feature']();
+  feature.setConfig({type:'custom:wiser-boost-feature',entity:'climate.bedroom'});
+  feature.hass = card._hass;
+  feature._menu.hidePopover = () => { throw new Error('Popover is disconnected'); };
+  feature.isConnected = true;
+  try {
+    feature.connectedCallback();
+    assert.equal(feature._label.textContent,'30 min');
+    assert.ok(feature._countdownTimer);
+    states['climate.bedroom'].attributes.boost_end = new Date(Date.now() + 2 * 60000).toISOString();
+    feature._render();
+    assert.equal(feature._label.textContent,'2 min');
+    states['climate.bedroom'].attributes.boost_end = new Date(Date.now() - 1).toISOString();
+    feature._render();
+    assert.equal(feature._label.textContent,'0 min');
+    assert.equal(feature._countdownTimer,undefined);
+    states['climate.bedroom'].attributes.boost_time_remaining = 15;
+    feature.hass = card._hass;
+    assert.equal(feature._label.textContent,'15 min');
+    assert.equal(feature._countdownTimer,undefined);
+  } finally {
+    feature.disconnectedCallback();
+  }
+  assert.equal(feature._countdownTimer,undefined);
+  assert.equal(feature._menu.hidden,true);
+  states['climate.bedroom'].state = 'unavailable';
+  feature.hass = card._hass;
+  assert.equal(feature._button.disabled,true);
+});
+
+test('OpenTherm boost always uses the stopwatch icon', () => {
+  const {card, elements, window} = setup();
+  const hotWater = addHotWater(card, {is_boosted:true,boost_time_remaining:20});
+  const feature = new elements['wiser-boost-feature']();
+  feature.setConfig({type:'custom:wiser-boost-feature',entity:hotWater.entity_id});
+  feature.hass = card._hass;
+  assert.equal(feature._icon.icon,'mdi:timer-outline');
+  assert.equal(feature._label.textContent,'20 min');
+  const entry = window.customCardFeatures.find(item => item.type === 'wiser-boost-feature');
+  assert.equal(entry.isSupported(card._hass,{entity_id:hotWater.entity_id}),true);
+  hotWater.attributes.icon = 'mdi:water-boiler';
+  feature.hass = card._hass;
+  assert.equal(feature._icon.icon,'mdi:timer-outline');
+  card._hass.entities = {[hotWater.entity_id]:{icon:'mdi:water-boiler'}};
+  feature.hass = card._hass;
+  assert.equal(feature._icon.icon,'mdi:timer-outline');
+  feature.setConfig({type:'custom:wiser-boost-feature',entity:hotWater.entity_id,icon:'mdi:fire'});
+  assert.equal(feature._icon.icon,'mdi:timer-outline');
+});
+
+test('OpenTherm Boost offers timed presets and returns to Auto when cancelled', async () => {
+  const {card,calls,elements} = setup();
+  const state = addHotWater(card, {is_boosted:true,opentherm_presets:[
+    {name:'Shower',duration_minutes:30,temperature:50},
+    {name:'Normal',duration_minutes:0,temperature:45},
+  ],operation_list:['off','Auto','Shower','Normal','Boost 30 Mins']});
+  const feature = new elements['wiser-boost-feature']();
+  feature.setConfig({type:'custom:wiser-boost-feature',entity:state.entity_id});
+  feature.hass = card._hass;
+  feature._button.listeners.click({stopPropagation(){}});
+  assert.match(feature._menu.innerHTML,/Shower/);
+  assert.match(feature._menu.innerHTML,/Cancel boost/);
+  assert.doesNotMatch(feature._menu.innerHTML,/>Normal</);
+  await feature._selectBoost('Shower');
+  assert.equal(calls[0][0],'water_heater');
+  assert.equal(calls[0][2].operation_mode,'Shower');
+  await feature._selectBoost('cancel');
+  assert.equal(calls[1][2].operation_mode,'Auto');
+  state.attributes.operation_list.push('Cancel Boost');
+  await feature._selectBoost('cancel');
+  assert.equal(calls[2][2].operation_mode,'Cancel Boost');
+});
+
+test('Boost rejects stale selections and exposes service failures without getting stuck', async () => {
+  const {card,elements,states} = setup();
+  states['climate.bedroom'].attributes.preset_modes = ['Boost 30m'];
+  const feature = new elements['wiser-boost-feature']();
+  feature.setConfig({type:'custom:wiser-boost-feature',entity:'climate.bedroom'});
+  feature.hass = card._hass;
+  card._hass.callService = async () => { throw new Error('Hub unavailable'); };
+  feature._openBoostMenu();
+  await feature._selectBoost('boost_30m');
+  assert.equal(feature._busy,false);
+  assert.equal(feature._button.disabled,false);
+  assert.match(feature._menu.innerHTML,/role="alert">Hub unavailable/);
+  states['climate.bedroom'].state = 'unavailable';
+  let called = false;
+  card._hass.callService = async () => { called = true; };
+  await feature._selectBoost('boost_30m');
+  assert.equal(called,false);
 });
 
 test('Next schedule is an icon feature that advances the schedule', () => {
@@ -1923,12 +2224,12 @@ test('Secondary status renders under identity only when configured and not as bo
   html = card.shadowRoot.innerHTML;
   assert.doesNotMatch(html, /class="top has-secondary"|class="secondary-status/);
   assert.match(html, /class="top aligned-header[^]*?class="secondary-heading-line"[^]*?class="temps"[^]*?class="secondary-primary-line"[^]*?class="next schedule-next"/);
-  const compact = fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8').replace(/\s+/g, '');
+  const compact = loadCardSource().replace(/\s+/g, '');
   assert.match(compact, /\.top\.has-secondary,\.top\.aligned-header\{grid-template-columns:38pxminmax\(0,1fr\);align-items:start;min-height:61px\}/);
 });
 
 test('Secondary status keeps next schedule beside the primary status', () => {
-  const source = fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8');
+  const source = loadCardSource();
   const compact = source.replace(/\s+/g, '');
   assert.match(source, /class="secondary-primary-line"><span class="status">.*<div class="next"/);
   assert.match(compact, /\.secondary-heading-line,\.secondary-primary-line\{display:flex;align-items:baseline;justify-content:space-between;gap:10px;min-width:0\}/);
@@ -1963,12 +2264,13 @@ test('Content options persist per room and change header rendering', () => {
   const {card, Editor} = setup();
   const editor = new Editor(); editor._hass = card._hass; editor._entries = card._entries;
   editor.setConfig({}); editor._selectRoom('climate.bedroom');
-  editor._roomForm.listeners['value-changed']({stopPropagation(){}, detail:{value:{...editor._roomForm.data,name:'Bedroom custom',icon:'mdi:bed',color:'blue',hide_state:true,show_temperatures:false,show_next_schedule:false,state_content:['current_temperature']}}});
+  editor._roomForm.listeners['value-changed']({stopPropagation(){}, detail:{value:{...editor._roomForm.data,name:'Bedroom custom',icon:'mdi:bed',color:'blue',hide_state:true,show_temperatures:false,show_next_schedule:false,show_heating_glow:true,state_content:['current_temperature']}}});
   const config = editor.lastEvent.detail.config;
   card.setConfig(config);
   assert.match(card.shadowRoot.innerHTML, /Bedroom custom/);
   assert.match(card.shadowRoot.innerHTML, /icon="mdi:bed"/);
   assert.match(card.shadowRoot.innerHTML, /hide-status hide-temps hide-next/);
+  assert.match(card.shadowRoot.innerHTML, /class="room heating heating-glow/);
   assert.match(card.shadowRoot.innerHTML, /--room-native-state-color:var\(--state-climate-auto-color/);
   assert.match(card.shadowRoot.innerHTML, /--room-state-color:var\(--blue-color\)/);
   editor._selectRoom('climate.lounge');
@@ -1978,6 +2280,7 @@ test('Content options persist per room and change header rendering', () => {
   editor._selectRoom('climate.bedroom');
   assert.equal(editor._roomForm.data.name, 'Bedroom custom');
   assert.equal(editor._roomForm.data.show_next_schedule, false);
+  assert.equal(editor._roomForm.data.show_heating_glow, true);
   const display = {dataset:{roomStatus:'climate.bedroom',statusContent:'current_temperature'}};
   card.shadowRoot.querySelectorAll = selector => selector === 'state-display[data-room-status]' ? [display] : [];
   card._syncNativeFeatures();
@@ -2067,16 +2370,17 @@ test('Content supports native composed names and omits the entity-picture option
   const contentSchema = editor._roomForm.schema[0].schema;
   const iconColorIndex = contentSchema.findIndex(item => item.type === 'grid' && item.schema?.some(field => field.name === 'icon'));
   const displayGroupIndex = contentSchema.findIndex(item => item.column_min_width === '180px');
-  const displayGroup = contentSchema[displayGroupIndex];
+  const displayGroups = contentSchema.slice(displayGroupIndex,-1);
   assert.equal(displayGroupIndex, iconColorIndex + 1);
-  assert.equal(displayGroup.schema.map(item => item.name).join(','), 'show_temperatures,temperature_focus,show_next_schedule,hide_state');
-  const temperatureFocus = displayGroup.schema[1];
+  assert.equal(displayGroups.map(group => group.schema.map(item => item.name).join(',')).join('|'), 'show_temperatures,temperature_focus|show_next_schedule,hide_state|show_heating_glow');
+  assert.equal(displayGroups[2].schema[0].label,'Show heating background glow');
+  const temperatureFocus = displayGroups[0].schema[1];
   assert.equal(Object.keys(temperatureFocus.selector)[0], 'button_toggle');
   assert.equal(temperatureFocus.label, '');
   assert.equal(temperatureFocus.visible, undefined);
   assert.equal(temperatureFocus.selector.button_toggle.options.map(option => option.label).join(','), 'Current,Target');
-  assert.equal(contentSchema[displayGroupIndex + 1].name, 'state_content');
-  assert.match(fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8'), /ha-form\.room-options\{[^}]*--ha-space-6:var\(--ha-space-1,4px\)/);
+  assert.equal(contentSchema.at(-1).name, 'state_content');
+  assert.match(loadCardSource(), /ha-form\.room-options\{[^}]*--ha-space-6:var\(--ha-space-1,4px\)/);
 });
 
 test('composed name Add preserves current Home Assistant picker contexts', async () => {
@@ -2215,7 +2519,7 @@ test('status renders exactly the configured state content with useful defaults',
   assert.equal(display.content.join(','), 'hvac_action');
   assert.match(card.shadowRoot.innerHTML, /title="Current action"[^]*title="State"/);
   assert.equal(display.stateObj.attributes.override_end_time, 'No override');
-  const source = fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8');
+  const source = loadCardSource();
   assert.match(source, /current\.localName !== "state-display"/);
 });
 
@@ -2232,7 +2536,7 @@ test('card uses native Home Assistant entity icons and action buttons', () => {
 });
 
 test('mobile headers use compact icon-only native bulk actions', () => {
-  const source = fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8');
+  const source = loadCardSource();
   assert.match(source, /header\.stacked-summary \{[\s\S]*?display:grid;[\s\S]*?grid-template-columns:minmax\(0,1fr\) auto/);
   assert.match(source, /header\.stacked-summary>div:first-child \{[\s\S]*?display:contents[\s\S]*?header\.stacked-summary p \{[\s\S]*?grid-column:1 \/ -1;[\s\S]*?grid-row:2;[\s\S]*?text-align:right/);
   assert.match(source, /@container \(max-width: 480px\)[\s\S]*?header \.bulk-actions,\.section-title \.bulk-actions \{[\s\S]*?width:auto;[\s\S]*?justify-content:flex-end/);
@@ -2247,7 +2551,7 @@ test('mobile headers use compact icon-only native bulk actions', () => {
 });
 
 test('heating summaries stack only when their rendered content does not fit', () => {
-  const source = fs.readFileSync(path.join(__dirname, '../src/wiser-controls-card.js'), 'utf8');
+  const source = loadCardSource();
   assert.match(source, /summaryWidth \+ actionsWidth \+ headerGap > available/);
   assert.match(source, /classList\.toggle\("stacked-summary"/);
 });

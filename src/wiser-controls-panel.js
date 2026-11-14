@@ -2087,9 +2087,12 @@ class WiserRoomsPanel extends HTMLElement {
 
   _storedDeviceCardConfig(hub, type) {
     const stored = this._config.card_configs?.[hub]?.device_view_configs?.[type];
-    const base = stored && typeof stored === "object"
-      ? stored
-      : this._storedCardConfig(hub);
+    const overview = this._storedCardConfig(hub);
+    const base = {...(stored && typeof stored === "object" ? stored : overview)};
+    if (overview.admin_only_header_controls === true) base.admin_only_header_controls = true;
+    else delete base.admin_only_header_controls;
+    if (overview.header_button_style === "icon_only") base.header_button_style = "icon_only";
+    else delete base.header_button_style;
     const Card = customElements.get("wiser-controls-card");
     const normalized = this._sanitiseStoredCardConfig(
       Card?.orderConfig?.({...base, device_types:[type]}) || {...base, device_types:[type]},
@@ -2707,6 +2710,7 @@ class WiserRoomsPanel extends HTMLElement {
         editor.hideRoomColumns = true;
         editor.hideDeviceTypes = true;
         editor.hideVisibilityControl = this._editingView === "devices";
+        editor.hideHeaderControlSettings = this._editingView === "devices";
         editor.hass = this._hass;
         let preview;
         editor.addEventListener("config-changed", (event) => {

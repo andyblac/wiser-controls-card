@@ -55,6 +55,8 @@ For YAML-managed resources, register the following URL as a JavaScript module:
 
 ## Documentation
 
+For the source-file layout and local build workflow, see [DEVELOPMENT.md](DEVELOPMENT.md).
+
 Full installation, configuration and feature documentation is available in the
 [Wiser Controls Card wiki](https://github.com/andyblac/wiser-controls-card/wiki).
 

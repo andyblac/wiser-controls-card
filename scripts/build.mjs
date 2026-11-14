@@ -1,8 +1,9 @@
 import {readFileSync, mkdirSync, writeFileSync} from "node:fs";
 import {fileURLToPath} from "node:url";
 import buildVersion from "./build-version.mjs";
+import cardSource from "./card-source.cjs";
 const root = new URL("../", import.meta.url);
-const source = readFileSync(new URL("src/wiser-controls-card.js", root), "utf8");
+const source = cardSource.loadCardSource(fileURLToPath(root));
 const panelSource = readFileSync(new URL("src/wiser-controls-panel.js", root), "utf8");
 const deviceImages = {
   Controller:"src/images/devices/controller.png",

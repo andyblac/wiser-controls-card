@@ -13,20 +13,20 @@
     room_options:"device_options",
   };
   const CARD_CONFIG_ORDER = [
-    "type", "title", "device_columns", "mobile_device_columns", "hubs", "hub_configs", "split_hubs", "device_types", "split_heating_channels", "entities", "excluded_entities", "device_order",
+    "type", "title", "device_columns", "mobile_device_columns", "admin_only_header_controls", "header_button_style", "hubs", "hub_configs", "split_hubs", "device_types", "split_heating_channels", "entities", "excluded_entities", "device_order",
     "temperature_focus", "device_configuration", "master_options_by_type", "device_options",
     "secondary_status", "features", "tap_action", "hold_action", "double_tap_action",
     "icon_tap_action", "icon_hold_action", "icon_double_tap_action", "grid_options",
   ];
   const ROOM_CONFIG_ORDER = [
     "name", "icon", "color", "show_entity_picture", "hide_state", "state_content", "temperature_focus",
-    "show_temperatures", "show_next_schedule", "secondary_status", "features_position", "features",
+    "show_temperatures", "show_next_schedule", "show_heating_glow", "secondary_status", "features_position", "features",
     "tap_action", "hold_action", "double_tap_action", "icon_tap_action", "icon_hold_action", "icon_double_tap_action",
   ];
   const NATIVE_FEATURE_ORDER = ["type", "entity", "entities", "state_content", "show_labels", "preset_modes"];
   const SECONDARY_STATUS_ORDER = ["entity", "entities", "state_content", "show_labels"];
   const SHARED_CARD_CONFIG_KEYS = new Set([
-    "type", "title", "device_columns", "mobile_device_columns", "split_hubs", "hub_configs", "grid_options",
+    "type", "title", "device_columns", "mobile_device_columns", "admin_only_header_controls", "header_button_style", "split_hubs", "hub_configs", "grid_options",
   ]);
   const WISER_PRESET_ALIASES = {
     advance_schedule: ["advance_schedule", "Advance Schedule"],
@@ -54,6 +54,7 @@
   const LEGACY_OVERRIDE_STATUS_FEATURE = "wiser-override-status-feature";
   const NEXT_SCHEDULE_FEATURE = "wiser-next-schedule-feature";
   const PASSIVE_MODE_FEATURE = "wiser-passive-mode-feature";
+  const BOOST_FEATURE = "wiser-boost-feature";
   const HOT_WATER_MODES_FEATURE = "opentherm-hot-water-control-modes-feature";
   const HOT_WATER_PRESETS_FEATURE = "opentherm-hot-water-control-presets-feature";
   const WISER_NAME_TYPE = "wiser_name";
@@ -216,6 +217,7 @@
     if (compact.temperature_focus === "current") delete compact.temperature_focus;
     if (compact.show_temperatures === true) delete compact.show_temperatures;
     if (compact.show_next_schedule === true) delete compact.show_next_schedule;
+    if (compact.show_heating_glow === false) delete compact.show_heating_glow;
     if (compact.features_position === "bottom") delete compact.features_position;
     return compact;
   };
@@ -417,6 +419,9 @@
   };
   const supportsNativeFeature = (feature, id) => {
     const type = feature?.type || "";
+    if (type === `custom:${BOOST_FEATURE}`) {
+      return id.startsWith("climate.") || id.startsWith("water_heater.");
+    }
     if ([NEXT_SCHEDULE_FEATURE, PASSIVE_MODE_FEATURE]
       .some(name => type === `custom:${name}`)) return id.startsWith("climate.");
     if (type === "toggle") return id.startsWith("light.") || id.startsWith("switch.");
@@ -445,7 +450,7 @@
     return end && Number.isFinite(end.getTime()) ? end : null;
   };
   const overrideMinutes = room => {
-    if (room.attributes.is_boosted && Number.isFinite(room.attributes.boost_time_remaining)) return Math.max(0, room.attributes.boost_time_remaining);
+    if (room.attributes.is_boosted) return boostMinutesRemaining(room);
     const end = overrideEnd(room);
     return end ? Math.max(0, Math.ceil((end.getTime() - Date.now()) / 60000)) : null;
   };
@@ -457,10 +462,11 @@
   };
   const boostMinutesRemaining = state => {
     if (!state?.attributes?.is_boosted) return null;
+    const reported = state.attributes.boost_time_remaining;
+    if (Number.isFinite(reported)) return Math.max(0, Math.ceil(reported));
     const end = new Date(state.attributes.boost_end).getTime();
     if (Number.isFinite(end)) return Math.max(0, Math.ceil((end - Date.now()) / 60000));
-    const reported = Number(state.attributes.boost_time_remaining);
-    return Number.isFinite(reported) ? Math.max(0, Math.ceil(reported)) : null;
+    return null;
   };
   const storedHotWaterBoostRemaining = state => isStoredHotWaterSwitch(state) && available(state) && state.attributes.is_boosted
     ? Date.parse(state.attributes.boost_end) - Date.now() : NaN;
@@ -794,6 +800,8 @@
         throw new Error("hub_configs must contain one unique configuration per hub");
       }
       if (config.split_hubs !== undefined && typeof config.split_hubs !== "boolean") throw new Error("split_hubs must be true or false");
+      if (config.admin_only_header_controls !== undefined && typeof config.admin_only_header_controls !== "boolean") throw new Error("admin_only_header_controls must be true or false");
+      if (config.header_button_style !== undefined && !["icon_only","icon_text"].includes(config.header_button_style)) throw new Error("header_button_style must be icon_only or icon_text");
       if (config.device_columns !== undefined && (!Number.isInteger(config.device_columns) || config.device_columns < 1 || config.device_columns > 6)) {
         throw new Error("device_columns must be a whole number from 1 to 6");
       }
@@ -875,6 +883,8 @@
         title:entry.name,
         device_columns:this._config.device_columns,
         mobile_device_columns:this._config.mobile_device_columns,
+        admin_only_header_controls:this._config.admin_only_header_controls,
+        header_button_style:this._config.header_button_style,
         hubs:[entry.id],
         _panel_hide_title:this._hubConfigEntries().length === 1,
         [PREVIEW_ALL_TYPES]:isEditorPreview(this),
@@ -1071,7 +1081,13 @@
       const position = roomConfig(this._config, room.entity_id).features_position || "bottom";
       const list = configuredNativeFeatures(this._config, room.entity_id, room);
       if (!list.length) return "";
-      const host = (feature, index) => `<hui-card-features class="features-${position}${isIconFeature(feature) ? " feature-icon-only" : ""}" data-key="features-${escape(room.entity_id)}-${escape(feature.type)}" data-room-features="${escape(room.entity_id)}" data-feature-index="${index}" style="--feature-height:40px"></hui-card-features>`;
+      const isRangeTemperature = feature => {
+        const state = this._hass?.states[feature.entity] || room;
+        return feature.type === "target-temperature"
+          && typeof state.attributes.target_temp_low === "number"
+          && typeof state.attributes.target_temp_high === "number";
+      };
+      const host = (feature, index) => `<hui-card-features class="features-${position}${isIconFeature(feature) ? " feature-icon-only" : ""}${position === "inline" && isRangeTemperature(feature) ? " feature-range" : ""}" data-key="features-${escape(room.entity_id)}-${escape(feature.type)}" data-room-features="${escape(room.entity_id)}" data-feature-index="${index}" style="--feature-height:40px"></hui-card-features>`;
       if (position === "inline") return `<div class="features-inline-row">${list.map(host).join("")}</div>`;
       const rows = [];
       list.forEach((feature, index) => {
@@ -1533,6 +1549,12 @@
         if (this._boostMenuOpen) { this._boostMenuOpen = false; this._render(); }
         return;
       }
+      const headerAction = button.dataset.action;
+      if (!this._headerControlsAllowed() && ([
+        "hot-water-boost-menu", "hot-water-boost-option", "boost-menu", "boost-duration",
+        "all-off", "cancel-overrides", "follow-schedule", "cancel-all-boosts", "all-close",
+        "all-lights-off", "all-plugs-off", "all-hot_water-off",
+      ].includes(headerAction) || headerAction?.startsWith("resume-"))) return;
       if (button.dataset.action === "hot-water-boost-menu") {
         this._boostMenuOpen = false;
         this._hotWaterBoostMenuOpen = !this._hotWaterBoostMenuOpen;
@@ -1591,6 +1613,9 @@
       const card = event.target.closest?.(".room[data-entity]");
       const cardRoom = card && this._rooms().find(item => item.entity_id === card.dataset.entity);
       return cardRoom ? {room:cardRoom,scope:"card"} : null;
+    }
+    _headerControlsAllowed() {
+      return this._config?.admin_only_header_controls !== true || this._hass?.user?.is_admin === true;
     }
     _action(room, key) {
       const configured = roomConfig(this._config, room.entity_id)[key];
@@ -1743,7 +1768,8 @@
       const boostAction = section => boostedRooms.length
         ? `<ha-button class="off cancel-all-boosts${section ? " section-action" : ""}" data-action="cancel-all-boosts" size="m" appearance="filled" variant="brand" ${this._busy || !canCancelBoosts ? "disabled" : ""} title="${cancelBoostsTitle}" aria-label="${cancelBoostsTitle}"><ha-icon slot="start" icon="mdi:fire-off"></ha-icon><span class="action-label"><span>${escape(text(this._hass,"cancel_all"))}</span>${boostCountdown ? `<small>${escape(boostCountdown)}</small>` : ""}</span></ha-button>`
         : `<div class="boost-menu" data-action="boost-all"><ha-button class="off boost-all${section ? " section-action" : ""}" data-action="boost-menu" size="m" appearance="filled" variant="danger" ${this._busy || !boostModes.some(([mode]) => canBoostMode(mode)) ? "disabled" : ""} title="${boostTitle}" aria-label="${boostTitle}" aria-haspopup="menu" aria-expanded="${this._boostMenuOpen}"><ha-icon slot="start" icon="mdi:fire"></ha-icon><span class="action-label">${escape(text(this._hass,"boost_all"))}</span></ha-button>${this._boostMenuOpen ? `<div class="boost-options" role="menu">${boostModes.map(([mode,label]) => `<button role="menuitem" data-action="boost-duration" data-boost-mode="${mode}" ${canBoostMode(mode) ? "" : "disabled"}>${escape(text(this._hass,label))}</button>`).join("")}</div>` : ""}</div>`;
-      const heatingActions = section => `<div class="bulk-actions">${boostAction(section)}${followScheduleAction(section)}${cancelOverridesAction(section)}${allOffAction(section)}</div>`;
+      const heatingActions = section => this._headerControlsAllowed()
+        ? `<div class="bulk-actions">${boostAction(section)}${followScheduleAction(section)}${cancelOverridesAction(section)}${allOffAction(section)}</div>` : "";
       const closeAllTitle = escape(text(this._hass,"close_all_title"));
       const closeAllAction = section => `<ha-button class="off close-all${section ? " section-action" : ""}" data-action="all-close" size="m" appearance="filled" variant="brand" ${this._busy || !canClose ? "disabled" : ""} title="${closeAllTitle}" aria-label="${closeAllTitle}"><ha-icon slot="start" icon="mdi:window-shutter"></ha-icon><span class="action-label">${escape(text(this._hass,"close_all"))}</span></ha-button>`;
       const deviceOffAction = (type, section) => {
@@ -1770,7 +1796,8 @@
         }).join("") : "";
         return `<div class="boost-menu hot-water-boost-menu"><ha-button class="off boost-all${section ? " section-action" : ""}" data-action="hot-water-boost-menu" size="m" appearance="filled" variant="danger" ${this._busy ? "disabled" : ""} title="${title}" aria-label="${title}" aria-haspopup="menu" aria-expanded="${this._hotWaterBoostMenuOpen}"><ha-icon slot="start" icon="mdi:fire"></ha-icon><span class="action-label">${escape(text(this._hass, "boost"))}</span></ha-button>${items ? `<div class="boost-options" role="menu">${items}</div>` : ""}</div>`;
       };
-      const scheduledDeviceActions = (type, section) => `<div class="bulk-actions">${type === "hot_water" ? hotWaterBoostAction(section) : ""}${resumeSchedulesAction(type, section)}${type === "shutters" ? closeAllAction(section) : deviceOffAction(type, section)}</div>`;
+      const scheduledDeviceActions = (type, section) => this._headerControlsAllowed()
+        ? `<div class="bulk-actions">${type === "hot_water" ? hotWaterBoostAction(section) : ""}${resumeSchedulesAction(type, section)}${type === "shutters" ? closeAllAction(section) : deviceOffAction(type, section)}</div>` : "";
       const headerAction = grouped ? "" : singleType === "heating" ? heatingActions(false) : scheduledDeviceActions(singleType, false);
       const unit = this._hass.config?.unit_system?.temperature || "°C";
       const scopes = splitHubs ? hubGroups : [{key:"all",title:"",rooms}];
@@ -1842,6 +1869,10 @@
       const renderGroups = compactPreview && previewRoom
         ? groups.filter(group => group.rooms.some(room => room.entity_id === previewRoom))
         : groups;
+      const cardClasses = [
+        preview ? "editor-preview" : "",
+        this._config.header_button_style === "icon_only" ? "header-controls-icon-only" : "",
+      ].filter(Boolean).join(" ");
       const markup = `<style data-key="style">
         :host {
           display:block;
@@ -2049,6 +2080,9 @@
         .room {
           padding:10px 16px;
           border-top:1px solid var(--divider-color)
+        }
+        .room.heating-glow {
+          background:radial-gradient(ellipse at 50% 42%,color-mix(in srgb,var(--state-climate-heat-color,var(--orange-color,#ff6d00)) 20%,transparent) 0%,color-mix(in srgb,var(--state-climate-heat-color,var(--orange-color,#ff6d00)) 9%,transparent) 48%,transparent 78%)
         }
         .top {
           display:grid;
@@ -2264,6 +2298,24 @@
           justify-content:flex-end;
           grid-column:2;
           grid-row:1
+        }
+        ha-card.header-controls-icon-only .bulk-actions .action-label {
+          display:none
+        }
+        ha-card.header-controls-icon-only header .bulk-actions .off,
+        ha-card.header-controls-icon-only .section-title .bulk-actions .off {
+          --ha-button-height:40px;
+          flex:0 0 44px;
+          width:44px;
+          min-width:44px;
+          position:relative
+        }
+        ha-card.header-controls-icon-only header .bulk-actions .off ha-icon,
+        ha-card.header-controls-icon-only .section-title .bulk-actions .off ha-icon {
+          position:absolute;
+          inset:50% auto auto 50%;
+          margin:0;
+          transform:translate(-50%,-50%)
         }
         @container (max-width: 480px) {
           header .bulk-actions,.section-title .bulk-actions {
@@ -2522,24 +2574,23 @@
         }
         .features-inline-row>hui-card-features {
           display:block;
-          flex:1 1 100%;
-          width:100%;
+          flex:1 1 calc(50% - 2px);
+          width:calc(50% - 2px);
           min-width:0
         }
         .features-inline-row>hui-card-features.feature-icon-only {
           flex:0 0 var(--feature-height,40px)
-        }
-        @container room (min-width:260px) {
-          .features-inline-row>hui-card-features:not(.feature-icon-only) {
-            flex-basis:calc(50% - 2px);
-            width:calc(50% - 2px)
-          }
         }
         @container room (min-width:600px) {
           .features-inline-row>hui-card-features:not(.feature-icon-only) {
             flex-basis:calc(33.333% - 3px);
             width:calc(33.333% - 3px)
           }
+        }
+        .features-inline-row>hui-card-features.feature-range {
+          flex:2 1 320px;
+          width:auto;
+          min-width:min(100%,320px)
         }
         .top.hide-status .status,.top.hide-temps .temps,.top.hide-temps .passive-range,.top.hide-next .next {
           display:none
@@ -2588,7 +2639,7 @@
         .editor-preview .room {
           padding:10px 16px
         }
-      </style><ha-card data-key="card" class="${preview ? "editor-preview" : ""}">${cardHeader}
+      </style><ha-card data-key="card" class="${cardClasses}">${cardHeader}
           ${this._error ? `<div data-key="error" class="message error" role="alert">${escape(this._error)}${this._discoveryFailed ? '<ha-button data-action="retry" size="s" appearance="outlined" variant="danger">Retry</ha-button>' : ""}</div>` : ""}
       ${!rooms.length ? `<p data-key="empty" class="message">${this._loading ? text(this._hass,"finding") : text(this._hass,"no_devices")}</p>` : renderGroups.map(group => `${group.startsHub ? `<section class="hub-section" data-key="hub-${escape(group.hubKey)}"><div class="hub-title"><h2>${escape(group.hubTitle)}</h2></div>` : ""}${grouped ? `<section class="room-section" data-key="section-${group.key}"><div class="section-title" data-key="heading-${group.key}"><div class="section-title-copy"><h3>${escape(group.title)}</h3><p>${groupStatus(group)}</p></div>${group.showSectionActions ? group.type === "heating" ? heatingActions(true) : scheduledDeviceActions(group.type, true) : ""}</div>` : ""}<div class="rooms" data-key="rooms-${group.key}" style="--room-columns:${preview ? 1 : this._config.device_columns}">${group.rooms.map(room => {
         const options = roomConfig(this._config, room.entity_id);
@@ -2637,7 +2688,7 @@
           : `<div class="top aligned-header ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" title="${escape(status)} — open room controls" aria-label="${escape(this._name(room))}: ${status}">${this._contentIcon(room, icon)}</button>
           <div class="secondary-layout"><div class="secondary-heading-line"><button class="name" data-entity="${id}" data-interaction="card" title="Open room controls"><strong>${escape(this._name(room))}</strong></button><div class="temps" title="Current ${escape(unit)} → target ${escape(unit)}" aria-label="Current ${escape(this._temperature(a.current_temperature))}; Target ${escape(target)}">${temperatureMarkup}</div></div>
           <div class="secondary-primary-line"><span class="status">${statusMarkup}</span><div class="next schedule-next" title="${escape(next)}" aria-label="${escape(next)}">${nextMarkup}</div></div></div></div>`;
-        return `<section data-key="${id}" data-entity="${id}" class="room ${heating ? "heating" : cooling ? "cooling" : ""} ${this._previewClasses(room, preview, highlightedPreviewRoom)}" style="--room-native-state-color:${stateColor};--room-state-color:${this._contentColor(room, stateColor)};${featureOrder(options)}"><div class="room-content">
+        return `<section data-key="${id}" data-entity="${id}" class="room ${heating ? "heating" : cooling ? "cooling" : ""}${heating && options.show_heating_glow ? " heating-glow" : ""} ${this._previewClasses(room, preview, highlightedPreviewRoom)}" style="--room-native-state-color:${stateColor};--room-state-color:${this._contentColor(room, stateColor)};${featureOrder(options)}"><div class="room-content">
           ${headerMarkup}
           ${this._nativeReady || options.features !== undefined ? this._nativeMarkup(room) : fallbackFeatures(options).length ? `<div class="controls">${fallbackFeatures(options).includes("modes") ? `<div class="modes" role="group" aria-label="${escape(this._name(room))} mode">${["auto", "heat", "cool", "off"].filter(mode => a.hvac_modes?.includes(mode)).map(mode => {
             const label = text(this._hass,{auto:"schedule",heat:"manual",cool:"cool",off:"off"}[mode]);
@@ -2813,9 +2864,199 @@
       this._button.ariaLabel = this._button.title;
     }
   }
+  class WiserBoostFeature extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({mode: "open"});
+      const style = document.createElement("style");
+      style.textContent = `
+        :host { display:block; height:var(--feature-height,42px); min-width:0; }
+        ha-control-button {
+          display:block; width:100%; height:100%;
+          --control-button-border-radius:var(--feature-border-radius,12px);
+          --control-button-background-color:var(--control-number-buttons-background-color,var(--disabled-color));
+          --control-button-background-opacity:var(--control-number-buttons-background-opacity,.2);
+          --disabled-text-color:var(--secondary-text-color);
+        }
+        .countdown {
+          display:flex; align-items:center; justify-content:center; gap:8px;
+          white-space:nowrap; color:var(--secondary-text-color);
+        }
+        ha-icon { --mdc-icon-size:22px; }
+        .boost-options {
+          position:fixed; margin:0; padding:4px;
+          background:var(--card-background-color,var(--ha-card-background));
+          color:var(--primary-text-color); border:1px solid var(--divider-color);
+          border-radius:12px; box-shadow:0 6px 20px #0005;
+          max-width:calc(100vw - 16px); max-height:60vh; overflow:auto;
+        }
+        .boost-options button {
+          display:block; width:100%; min-height:40px; padding:8px 16px;
+          border:0; border-radius:8px; background:none; color:inherit;
+          text-align:start; font:inherit; cursor:pointer;
+        }
+        .boost-options button:hover,.boost-options button:focus-visible {
+          background:var(--secondary-background-color); outline:2px solid var(--primary-color);
+        }
+        .boost-options button:disabled { opacity:.5; cursor:default; }
+      `;
+      this._button = document.createElement("ha-control-button");
+      const content = document.createElement("span");
+      content.className = "countdown";
+      this._icon = document.createElement("ha-icon");
+      this._icon.icon = "mdi:timer-outline";
+      this._label = document.createElement("span");
+      content.append(this._icon, this._label);
+      this._button.append(content);
+      this._menu = document.createElement("div");
+      this._menu.className = "boost-options";
+      this._menu.popover = "auto";
+      this._menu.hidden = true;
+      this._menu.setAttribute?.("role", "menu");
+      this._menu.addEventListener("click", event => {
+        event.stopPropagation();
+        const item = event.target.closest?.("button[data-option]");
+        if (item) void this._selectBoost(item.dataset.option);
+      });
+      this._button.addEventListener("click", event => {
+        event.stopPropagation();
+        if (this._button.disabled) return;
+        this._openBoostMenu();
+      });
+      this.shadowRoot.append(style, this._button, this._menu);
+    }
+
+    static getStubConfig() { return {type:`custom:${BOOST_FEATURE}`}; }
+    setConfig(config) { this._config = {...config}; this._render(); }
+    set hass(value) { this._hass = value; this._render(); }
+    set context(value) { this._context = value; this._render(); }
+    set stateObj(value) { this._stateObj = value; this._render(); }
+    connectedCallback() { this._render(); }
+    disconnectedCallback() {
+      clearTimeout(this._countdownTimer);
+      this._countdownTimer = undefined;
+      // Disconnecting already removes the popover from the browser's top layer.
+      // Calling hidePopover here can throw because it is no longer connected.
+      this._menu.hidden = true;
+    }
+
+    _entityId() {
+      return this._config?.entity || this._context?.entity_id || this._stateObj?.entity_id;
+    }
+
+    _boostOptions() {
+      const state = this._hass?.states[this._entityId()];
+      if (!state || !available(state)) return [];
+      const id = state.entity_id;
+      if (id.startsWith("climate.")) {
+        const options = BOOST_PRESET_MODES.flatMap((key, index) => {
+          const mode = presetMode(state, key);
+          return mode ? [{
+            key, label:text(this._hass, BOOST_DURATIONS[index][1]),
+            domain:"climate", service:"set_preset_mode", data:{entity_id:id,preset_mode:mode},
+          }] : [];
+        });
+        if (state.attributes.is_boosted && supportsPreset(state,"cancel_overrides")) {
+          options.push({key:"cancel",label:text(this._hass,"cancel_boost"),
+            domain:"climate",service:"set_preset_mode",
+            data:{entity_id:id,preset_mode:presetMode(state,"cancel_overrides")}});
+        }
+        return options;
+      }
+      if (!isOpenThermHotWater(state)) return [];
+      const operations = state.attributes.operation_list || [];
+      const presets = state.attributes.opentherm_presets || [];
+      const options = operations.flatMap(mode => {
+        const preset = presets.find(item => item.name === mode);
+        if (!(preset?.duration_minutes > 0) && !/^boost\b/i.test(mode)) return [];
+        return [{key:mode,label:mode,domain:"water_heater",service:"set_operation_mode",
+          data:{entity_id:id,operation_mode:mode}}];
+      });
+      if (state.attributes.is_boosted) {
+        const mode = operations.find(value => /cancel.*(?:boost|override)/i.test(value))
+          || operations.find(value => value.toLowerCase() === "auto");
+        if (mode) options.push({key:"cancel",label:text(this._hass,"cancel_boost"),
+          domain:"water_heater",service:"set_operation_mode",data:{entity_id:id,operation_mode:mode}});
+      }
+      return options;
+    }
+
+    _openBoostMenu() {
+      const options = this._boostOptions();
+      if (!options.length || this._busy) return;
+      if (this._menu.matches?.(":popover-open")) {
+        this._menu.hidePopover();
+        return;
+      }
+      this._menu.innerHTML = options.map(option =>
+        `<button type="button" role="menuitem" data-option="${escape(option.key)}">${escape(option.label)}</button>`
+      ).join("");
+      this._menu.hidden = false;
+      const bounds = this._button.getBoundingClientRect?.();
+      if (bounds) {
+        this._menu.style.minWidth = `${Math.max(bounds.width,160)}px`;
+        this._menu.style.left = `${Math.max(8,Math.min(bounds.left,(window.innerWidth || bounds.right) - Math.max(bounds.width,160) - 8))}px`;
+        this._menu.style.top = `${bounds.bottom + 4}px`;
+      }
+      this._menu.showPopover?.();
+    }
+
+    async _selectBoost(key) {
+      if (this._busy) return;
+      const option = this._boostOptions().find(item => item.key === key);
+      if (!option) return;
+      this._busy = true;
+      this._button.disabled = true;
+      for (const item of this._menu.querySelectorAll?.("button") || []) item.disabled = true;
+      try {
+        await this._hass.callService(option.domain, option.service, option.data);
+        this._menu.hidePopover?.();
+        this._menu.hidden = true;
+      } catch (error) {
+        this._menu.innerHTML += `<p role="alert">${escape(error?.message || String(error))}</p>`;
+      } finally {
+        this._busy = false;
+        for (const item of this._menu.querySelectorAll?.("button") || []) item.disabled = false;
+        this._render();
+      }
+    }
+
+    _render() {
+      clearTimeout(this._countdownTimer);
+      this._countdownTimer = undefined;
+      if (!this._config || !this._hass) return;
+      const id = this._entityId();
+      const state = this._hass.states[id];
+      const boosted = Boolean(state && available(state) && state.attributes.is_boosted);
+      const minutes = boosted ? boostMinutesRemaining(state) : 0;
+      this._label.textContent = minutes === null ? "—" : text(this._hass, "minutes_short", {count:minutes});
+      this._button.disabled = this._busy || !this._boostOptions().length;
+      this._button.title = `${text(this._hass, "boost")}: ${this._label.textContent}`;
+      this._button.ariaLabel = this._button.title;
+
+      // Reported minutes update with the hub; only the timestamp fallback
+      // needs a local timer. Keep the header and feature on the same source.
+      const end = boosted ? Date.parse(state.attributes.boost_end) : NaN;
+      if (this.isConnected && boosted && minutes > 0 && Number.isFinite(end)
+        && !Number.isFinite(state.attributes.boost_time_remaining)) {
+        const delay = Math.max(50, (end - Date.now()) % 60000 + 50);
+        this._countdownTimer = setTimeout(() => this._render(), delay);
+      }
+    }
+  }
+  if (!customElements.get(BOOST_FEATURE)) customElements.define(BOOST_FEATURE, WiserBoostFeature);
   if (!customElements.get(NEXT_SCHEDULE_FEATURE)) customElements.define(NEXT_SCHEDULE_FEATURE, WiserNextScheduleFeature);
   if (!customElements.get(PASSIVE_MODE_FEATURE)) customElements.define(PASSIVE_MODE_FEATURE, WiserPassiveModeFeature);
   window.customCardFeatures = window.customCardFeatures || [];
+  if (!window.customCardFeatures.some(feature => feature.type === BOOST_FEATURE)) window.customCardFeatures.push({
+    type:BOOST_FEATURE, name:"Boost", configurable:false,
+    isSupported:(hass, context) => {
+      const state = hass.states[context?.entity_id];
+      return Boolean((state?.entity_id?.startsWith("climate.") || isOpenThermHotWater(state)) && (
+        Object.hasOwn(state.attributes, "is_boosted") || Object.hasOwn(state.attributes, "boost_time_remaining")
+      ));
+    },
+  });
   if (!window.customCardFeatures.some(feature => feature.type === NEXT_SCHEDULE_FEATURE)) window.customCardFeatures.push({
     type:NEXT_SCHEDULE_FEATURE, name:"Next schedule", configurable:false,
     isSupported:(hass, context) => Boolean(context?.entity_id?.startsWith("climate.") && hass.states[context.entity_id]),
@@ -2831,1050 +3072,12 @@
     const names = {
       [NEXT_SCHEDULE_FEATURE]:"next_schedule",
       [PASSIVE_MODE_FEATURE]:"passive_mode",
+      [BOOST_FEATURE]:"boost",
     };
     for (const feature of window.customCardFeatures) if (names[feature.type]) feature.name = text(hass,names[feature.type]);
   };
-  class WiserRoomsCardEditor extends HTMLElement {
-    constructor() {
-      super();
-      this.attachShadow({mode: "open"});
-      this._previewRooms = new Map();
-      this._previewRoomsByHub = new Map();
-      this._hubForm = document.createElement("ha-form");
-      this._hubForm.className = "hubs";
-      this._hubForm.computeLabel = schema => schema.label;
-      this._hubForm.addEventListener("value-changed", event => {
-        event.stopPropagation();
-        const hubs = event.detail.value.hubs || [];
-        const detected = this._detectedHubs().map(hub => hub.value);
-        this._config = {...this._config};
-        if (hubs.length && (hubs.length !== detected.length || detected.some(id => !hubs.includes(id)))) this._config.hubs = hubs;
-        else delete this._config.hubs;
-        if (Array.isArray(this._config.hub_configs)) {
-          const selected = hubs.length ? hubs : detected;
-          this._config.hub_configs = selected.map(id => this._config.hub_configs.find(config => config.hub === id) || {hub:id});
-        }
-        if ((hubs.length ? hubs : detected).length < 2) delete this._config.split_hubs;
-        this._render();
-        this._dispatchConfig();
-      });
-      this._form = document.createElement("ha-form");
-      this._form.className = "settings";
-      this._hubTabs = document.createElement("div");
-      this._hubTabs.className = "editor-hub-tabs";
-      this._hubTabs.addEventListener("click", event => {
-        const tab = event.target.closest?.("[data-editor-hub]");
-        if (tab) this._selectEditorHub(tab.dataset.editorHub);
-      });
-      this._hubTabs.addEventListener("keydown", event => {
-        if (!event.target.matches?.('[role="tab"]') || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-        const hubs = this._editorHubIds();
-        if (hubs.length < 2) return;
-        event.preventDefault();
-        let index = hubs.indexOf(this._editingHub);
-        index = event.key === "Home" ? 0 : event.key === "End" ? hubs.length - 1
-          : (index + (event.key === "ArrowLeft" ? -1 : 1) + hubs.length) % hubs.length;
-        this._selectEditorHub(hubs[index], true);
-      });
-      this._hubConfigHost = document.createElement("div");
-      this._hubConfigHost.className = "hub-config-editor";
-      this._typeForm = document.createElement("div");
-      this._typeForm.className = "show-filter";
-      this._typeForm.addEventListener("click", event => {
-        const button = event.target.closest?.("[data-room-type]");
-        if (!button) return;
-        const type = button.dataset.roomType;
-        const current = selectedTypes(this._config);
-        let next;
-        if (type === "all") next = DEVICE_TYPES;
-        else if (current.length === DEVICE_TYPES.length) next = [type];
-        else if (current.includes(type)) next = current.length > 1 ? current.filter(value => value !== type) : current;
-        else next = DEVICE_TYPES.filter(value => current.includes(value) || value === type);
-        const config = {...this._config};
-        if (next.length === DEVICE_TYPES.length) delete config.device_types;
-        else config.device_types = next;
-        if (masterMode(config)) {
-          const existing = config.master_options_by_type || {};
-          const byType = {};
-          for (const roomType of next) {
-            if (current.includes(roomType) && existing[roomType]) byType[roomType] = existing[roomType];
-            else byType[roomType] = {};
-          }
-          config.master_options_by_type = byType;
-        }
-        this._config = config;
-        this._render();
-        this._dispatchConfig();
-      });
-      this._modeForm = document.createElement("ha-form");
-      this._modeForm.className = "configuration-mode";
-      this._modeForm.computeLabel = schema => schema.label;
-      this._modeForm.addEventListener("value-changed", event => {
-        event.stopPropagation();
-        const mode = event.detail.value.device_configuration || "individual";
-        const config = {...this._config};
-        if (mode === "master") {
-          const enteringMaster = !masterMode(config);
-          config.device_configuration = "master";
-          const activeTypes = selectedTypes(config);
-          if (enteringMaster) {
-            config.master_options_by_type = Object.fromEntries(activeTypes.map(roomType => {
-              const room = this._rooms().find(item => deviceType(item) === roomType);
-              const options = {...(room ? config.device_options?.[room.entity_id] : {})};
-              if (room) options.features = nativeFeatures({...config,...options}, room.entity_id, room);
-              if (options.secondary_status) {
-                const secondary = {...options.secondary_status};
-                const entities = {};
-                for (const item of this._rooms().filter(candidate => deviceType(candidate) === roomType)) {
-                  const status = config.device_options?.[item.entity_id]?.secondary_status;
-                  const entity = status?.entities?.[item.entity_id] || status?.entity;
-                  if (typeof entity === "string" && entity) entities[item.entity_id] = entity;
-                }
-                delete secondary.entity;
-                delete secondary.entities;
-                if (Object.keys(entities).length) secondary.entities = entities;
-                options.secondary_status = secondary;
-              }
-              return [roomType, options];
-            }));
-          } else if (!config.master_options_by_type) config.master_options_by_type = {};
-          delete config.device_options;
-        } else {
-          if (masterMode(config)) {
-            const roomOptions = {};
-            for (const room of this._rooms()) {
-              const options = JSON.parse(JSON.stringify(masterOptions(config, room.entity_id) || {}));
-              if (options.secondary_status) {
-                const secondary = {...options.secondary_status};
-                const entity = secondary.entities?.[room.entity_id] || secondary.entity;
-                delete secondary.entities;
-                if (typeof entity === "string" && entity) secondary.entity = entity;
-                else delete secondary.entity;
-                options.secondary_status = secondary;
-              }
-              if (Array.isArray(options.features)) {
-                options.features = configuredNativeFeatures(config, room.entity_id, room)
-                  .map(feature => featureForRoom(feature, room.entity_id));
-              }
-              roomOptions[room.entity_id] = options;
-            }
-            config.device_options = roomOptions;
-            delete config.master_options_by_type;
-          }
-          delete config.device_configuration;
-        }
-        this._config = config;
-        this._render();
-        this._dispatchConfig();
-      });
-      this._roomForm = document.createElement("ha-form");
-      this._roomForm.computeLabel = schema => {
-        const scope = ["color","icon_tap_action","icon_hold_action","icon_double_tap_action","hide_state","state_content"].includes(schema.name) ? "tile" : "generic";
-        return this._hass?.localize?.(`ui.panel.lovelace.editor.card.${scope}.${schema.name}`) || schema.label;
-      };
-      this._roomForm.addEventListener("value-changed", event => {
-        event.stopPropagation();
-        const value = event.detail.value;
-        const options = {};
-        for (const key of ["name", "icon", "color", "hide_state", "state_content", "temperature_focus", "show_temperatures", "show_next_schedule",
-          "tap_action", "icon_tap_action", "hold_action", "icon_hold_action", "double_tap_action", "icon_double_tap_action"]) {
-          if (Object.hasOwn(value, key)) options[key] = value[key];
-        }
-        Object.assign(options, this._secondaryStatusOptions(value));
-        this._setRoomOptions(options);
-      });
-      this._featureList = document.createElement("div");
-      // Match hui-tile-card-editor: native expansion panel, feature editor and
-      // features-position form. There is no standalone HA feature-section element.
-      this._featureList.innerHTML = '<ha-expansion-panel outlined><ha-icon slot="leading-icon" icon="mdi:list-box"></ha-icon><h3 slot="header"></h3><div class="content"></div></ha-expansion-panel>';
-      this._nativeEditor = document.createElement("hui-card-features-editor");
-      this._featurePositionForm = document.createElement("ha-form");
-      this._featurePositionForm.className = "features-form";
-      this._featurePositionForm.computeLabel = schema => schema.label;
-      this._featurePositionForm.addEventListener("value-changed", event => {
-        event.stopPropagation();
-        this._setRoomOptions({features_position:event.detail.value.features_position || "bottom"});
-      });
-      this._featureList.querySelector?.(".content")?.append(this._nativeEditor, this._featurePositionForm);
-      this._nativeEditor.addEventListener("features-changed", event => {
-        event.stopPropagation();
-        this._saveNativeFeatures(this._selectedRoom, event.detail.features, true);
-      });
-      this._nativeEditor.addEventListener("edit-detail-element", event => {
-        event.stopPropagation();
-        const id = this._selectedRoom;
-        const index = event.detail.subElementConfig.index;
-        const visibleFeatures = configuredNativeFeatures(this._config, id, this._hass.states[id]);
-        const config = visibleFeatures[index];
-        this.dispatchEvent(new CustomEvent("edit-sub-element", {bubbles:true, composed:true, detail:{
-          type:"feature", config, context:this._featureEditorContext(id),
-          saveConfig: newConfig => {
-            const list = [...visibleFeatures];
-            list[index] = newConfig;
-            this._saveNativeFeatures(id, list);
-          },
-        }}));
-      });
-      this._message = document.createElement("p");
-      this._message.style.cssText = "color:var(--secondary-text-color);font-size:14px";
-      this._version = document.createElement("div");
-      this._version.className = "version";
-      this._version.textContent = `Wiser Controls Card · ${CARD_VERSION}`;
-      this._tabs = document.createElement("div");
-      this._tabs.addEventListener("scroll", event => {
-        if (!event.target.matches?.(".room-tabs")) return;
-        this._updateTabOverflow(event.target);
-      }, true);
-      this._tabs.addEventListener("click", event => {
-        const button = event.target.closest("[data-room],[data-action],[data-tab-scroll]");
-        if (!button || button.disabled) return;
-        if (button.dataset.room) { this._selectRoom(button.dataset.room); }
-        else if (button.dataset.action) this._roomAction(button.dataset.action);
-        else if (button.dataset.tabScroll) this._scrollTabs(button, button.dataset.tabScroll);
-      });
-      this._tabs.addEventListener("keydown", event => {
-        if (!event.target.matches('[role="tab"]') || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-        event.preventDefault();
-        const rooms = this._tabRooms(this._editorRooms());
-        let index = rooms.findIndex(room => room.entity_id === this._selectedRoom);
-        index = event.key === "Home" ? 0 : event.key === "End" ? rooms.length - 1
-          : (index + (event.key === "ArrowLeft" ? -1 : 1) + rooms.length) % rooms.length;
-        this._selectRoom(rooms[index].entity_id, true);
-      });
-      const style = document.createElement("style");
-      style.textContent = `
-        [hidden]{display:none!important}
-        ha-form.hubs{display:block;margin-bottom:16px}
-        ha-form.settings::part(root){display:grid;grid-template-columns:minmax(0,1fr) 130px;column-gap:8px;align-items:start}
-        .editor-hub-tabs{display:flex;min-width:0;overflow-x:auto;border-bottom:1px solid var(--divider-color);margin:12px 0 4px;scrollbar-width:thin}
-        .editor-hub-tabs button{flex:0 0 auto;min-height:42px;padding:8px 16px;border:0;border-bottom:3px solid transparent;background:transparent;opacity:.65;white-space:nowrap}
-        .editor-hub-tabs button.active{color:var(--primary-color);border-bottom-color:var(--primary-color);opacity:1}
-        .show-filter{display:block;margin-top:16px}
-        ha-form.configuration-mode{display:block;margin-top:16px}
-        .show-label{display:block;margin:0 0 8px;font-size:14px;color:var(--primary-text-color)}
-        .show-options{display:flex;flex-wrap:wrap;gap:8px}
-        .show-options ha-button[appearance="filled"]::part(base){border-color:currentColor}
-        .show-options ha-button[appearance="outlined"]::part(base){color:var(--state-inactive-color);border-color:var(--state-inactive-color)}
-        .room-tab-bar {
-          display: flex;
-          flex-direction: row;
-          align-items: center;
-          gap: 6px;
-          border-bottom: 1px solid var(--divider-color);
-          padding-bottom: 2px;
-          margin: 20px 0 12px;
-        }
-        .room-tab-rows { margin: 20px 0 12px; }
-        .room-tab-rows .room-tab-bar { margin: 0; }
-        .room-tab-rows .room-tab-bar + .room-tab-bar { margin-top: 4px; }
-        .room-tabs-viewport {
-          display: flex;
-          flex: 1;
-          min-width: 0;
-        }
-        .room-tabs {
-          display: flex;
-          order: 2;
-          flex: 1;
-          flex-wrap: nowrap;
-          gap: 4px;
-          min-width: 0;
-          overflow-x: auto;
-          overscroll-behavior-x: contain;
-          scrollbar-width: thin;
-        }
-        .tab-overflow-indicator {
-          display: none;
-          flex: 0 0 26px;
-          width: 26px;
-          align-items: center;
-          justify-content: center;
-          color: var(--primary-text-color);
-          border: 0;
-          background: transparent;
-          cursor: pointer;
-        }
-        .tab-overflow-indicator.left {
-          order: 1;
-        }
-        .tab-overflow-indicator.right {
-          order: 3;
-        }
-        .room-tabs-viewport.can-scroll-left .tab-overflow-indicator.left,
-        .room-tabs-viewport.can-scroll-right .tab-overflow-indicator.right { display: flex; }
-        button{font:inherit;color:var(--primary-text-color);cursor:pointer}
-        button:focus-visible{outline:2px solid var(--primary-color);outline-offset:2px}
-        .room-tabs button{border:0;border-bottom:3px solid transparent;background:transparent;flex:0 0 40px;min-width:40px;min-height:40px;padding:6px 8px;opacity:.6;white-space:nowrap}
-        .room-tabs.named-tabs button {
-          flex-basis: auto;
-          min-width: max-content;
-          max-width: 180px;
-          overflow: hidden;
-          text-overflow: ellipsis;
-        }
-        .room-type-label {
-          align-self: center;
-          flex: 0 0 auto;
-          padding: 0 8px 0 0;
-          color: var(--secondary-text-color);
-          font-size: 14px;
-          font-weight: 600;
-          line-height: 40px;
-          white-space: nowrap;
-        }
-        .room-tabs button.active{color:var(--primary-color);opacity:1;border-bottom-color:var(--primary-color)}
-        .room-tabs.type-tabs button{flex-basis:auto;min-width:max-content}
-        .room-tabs button.hidden-room{text-decoration:line-through}
-        .room-tools{display:flex;flex-wrap:nowrap;gap:0;margin-left:2px;flex-shrink:0}
-        .room-tools ha-icon-button{--ha-icon-button-size:30px}
-        .room-tools ha-icon{--mdc-icon-size:18px}
-        button:disabled{opacity:.35;cursor:default}ha-icon{--mdc-icon-size:20px;pointer-events:none}
-        ha-form.room-options{display:block;margin-bottom:24px;--ha-space-6:var(--ha-space-1,4px)}
-        ha-expansion-panel{display:block;--expansion-panel-content-padding:0;border-radius:var(--ha-border-radius-md);--ha-card-border-radius:var(--ha-border-radius-md)}
-        ha-expansion-panel .content{padding:12px}
-        ha-expansion-panel>*[slot="header"]{margin:0;font-size:inherit;font-weight:inherit}
-        ha-expansion-panel ha-icon{color:var(--secondary-text-color)}
-        .features-form{display:block;margin-top:var(--ha-space-6);margin-bottom:0}
-        .version{margin-top:24px;color:var(--secondary-text-color);font-size:12px;text-align:right}
-      `;
-      this._roomForm.className = "room-options";
-      this.shadowRoot.append(style, this._hubForm, this._form, this._hubTabs, this._hubConfigHost, this._typeForm, this._modeForm, this._tabs, this._roomForm, this._featureList, this._message, this._version);
-      this._form.computeLabel = schema => schema.label || text(this._hass,"title");
-      this._form.addEventListener("value-changed", event => this._changed(event));
-    }
-    setConfig(config) {
-      const normalized = normalizeConfig(config);
-      const migrated = JSON.stringify(normalized) !== JSON.stringify(config);
-      this._config = normalized;
-      this._render();
-      if (migrated) this._dispatchConfig();
-    }
-    set hass(hass) {
-      this._hass = hass;
-      updateFeatureTranslations(hass);
-      if (!this._entries && !this._loading && !this._failed) this._discover();
-      this._render();
-    }
-    async _discover() {
-      this._loading = true;
-      try {
-        const entries = await entityRegistryEntries(this._hass);
-        let hubs = [];
-        if (!this.hideHubSelector) {
-          try {
-            hubs = await wiserConfigEntries(this._hass);
-          } catch (_) {}
-        }
-        this._entries = entries;
-        this._hubs = hubs;
-      } catch (_) {
-        this._failed = true;
-      } finally {
-        this._loading = false;
-        this._render();
-      }
-    }
-    _allRooms() {
-      if (!this._hass || !this._entries) return [];
-      return orderRooms(this._entries.filter(entry => isRoom(entry, this._hass.states[entry.entity_id]) && matchesHub(entry, this._config?.hubs))
-        .map(entry => this._hass.states[entry.entity_id]), this._config?.device_order || this._config?.entities);
-    }
-    _rooms() { return this._allRooms().filter(room => matchesType(room, selectedTypes(this._config))); }
-    _roomHubId(room) {
-      return this._entries?.find(entry => entry.entity_id === room?.entity_id)?.config_entry_id;
-    }
-    _selectedHubIds() {
-      const roomHubs = new Set(this._allRooms().map(room => this._roomHubId(room)).filter(Boolean));
-      const configured = this._config?.hubs?.length ? this._config.hubs : this._detectedHubs().map(hub => hub.value);
-      return configured.filter(id => roomHubs.has(id));
-    }
-    _editorHubIds() {
-      const namedHubs = new Set((this._hubs || []).map(hub => hub.entry_id));
-      return this._selectedHubIds().filter(id => namedHubs.has(id));
-    }
-    _editorRooms() {
-      const rooms = this._rooms();
-      const hubs = this._editorHubIds();
-      if (this.hideHubSelector || hubs.length < 2) return rooms;
-      if (!hubs.includes(this._editingHub)) this._editingHub = hubs[0];
-      return rooms.filter(room => this._roomHubId(room) === this._editingHub);
-    }
-    _renderHubTabs(hubs, selectedHubIds) {
-      const visible = !this.hideHubSelector && selectedHubIds.length > 1;
-      this._hubTabs.hidden = !visible;
-      if (!visible) {
-        this._hubTabs.innerHTML = "";
-        return;
-      }
-      const labels = new Map(hubs.map(hub => [hub.value, hub.label]));
-      const markup = selectedHubIds.map(id => {
-        const active = id === this._editingHub;
-        const label = labels.get(id) || id;
-        return `<button type="button" role="tab" data-editor-hub="${escape(id)}" aria-selected="${active}" tabindex="${active ? 0 : -1}" class="${active ? "active" : ""}">${escape(label)}</button>`;
-      }).join("");
-      if (markup !== this._hubTabsMarkup) {
-        this._hubTabs.innerHTML = markup;
-        this._hubTabsMarkup = markup;
-      }
-    }
-    _selectEditorHub(id, focusTab = false) {
-      const hubs = this._editorHubIds();
-      if (!hubs.includes(id) || id === this._editingHub) return;
-      this._selectedRoomByHub ||= new Map();
-      if (this._editingHub && this._selectedRoom) this._selectedRoomByHub.set(this._editingHub, this._selectedRoom);
-      this._editingHub = id;
-      const rooms = this._rooms().filter(room => this._roomHubId(room) === id);
-      const remembered = this._selectedRoomByHub.get(id);
-      this._selectedRoom = rooms.some(room => room.entity_id === remembered) ? remembered : rooms[0]?.entity_id;
-      this._render();
-      this._dispatchConfig();
-      if (focusTab) this._hubTabs.querySelector?.('[role="tab"][aria-selected="true"]')?.focus({preventScroll:true});
-    }
-    _detectedHubs() {
-      const titles = new Map((this._hubs || []).map(entry => [entry.entry_id, entry.title || entry.entry_id]));
-      return [...new Set((this._entries || []).filter(entry => entry.platform === "wiser" && entry.config_entry_id).map(entry => entry.config_entry_id))]
-        .map(id => ({value:id, label:titles.get(id) || id}));
-    }
-    _migrateHubConfigs() {
-      if (this.hideHubSelector || this._config.hub_configs || !this._entries?.length) return false;
-      const hubIds = this._selectedHubIds();
-      if (hubIds.length < 2 || !this._config.split_hubs && this._config.type !== "custom:wiser-controls-card") return false;
-      const source = Object.fromEntries(Object.entries(this._config)
-        .filter(([key]) => !SHARED_CARD_CONFIG_KEYS.has(key) && key !== "hubs"));
-      const entityHub = new Map(this._entries.map(entry => [entry.entity_id, entry.config_entry_id]));
-      const filterIds = (value, hubId) => Array.isArray(value) ? value.filter(id => entityHub.get(id) === hubId) : value;
-      const filterMap = (value, hubId) => value && typeof value === "object" && !Array.isArray(value)
-        ? Object.fromEntries(Object.entries(value).filter(([id]) => entityHub.get(id) === hubId)) : value;
-      const hubConfigs = hubIds.map(id => {
-        const config = JSON.parse(JSON.stringify(source));
-        for (const key of ["entities", "excluded_entities", "device_order"]) if (config[key]) config[key] = filterIds(config[key], id);
-        if (config.device_options) config.device_options = filterMap(config.device_options, id);
-        return {hub:id,...orderedCardConfig(config)};
-      });
-      const shared = Object.fromEntries(Object.entries(this._config)
-        .filter(([key]) => SHARED_CARD_CONFIG_KEYS.has(key) || key === "hubs"));
-      this._config = {...shared,hubs:hubIds,hub_configs:hubConfigs};
-      if (hubIds.length > 1) this._config.split_hubs = true;
-      else delete this._config.split_hubs;
-      this._dispatchConfig();
-      return true;
-    }
-    _renderHubConfigEditor(hubIds) {
-      if (!hubIds.length || !this._config.hub_configs) return false;
-      if (!hubIds.includes(this._editingHub)) this._editingHub = hubIds[0];
-      const id = this._editingHub;
-      const stored = this._config.hub_configs.find(config => config.hub === id) || {hub:id};
-      if (!this._hubConfigEditor) {
-        const editor = new WiserRoomsCardEditor();
-        editor.hideHubSelector = true;
-        editor.hideTitle = true;
-        editor.hideRoomColumns = true;
-        editor.hideVersion = true;
-        editor._version.hidden = true;
-        editor.addEventListener?.("config-changed", event => {
-          event.stopPropagation();
-          if (this._syncingHubConfig) return;
-          this._selectedRoom = editor._selectedRoom;
-          this._previewRoomsByHub.set(this._editingHub, event.detail.config[PREVIEW_ROOMS] || []);
-          const next = Object.fromEntries(Object.entries(event.detail.config || {})
-            .filter(([name]) => !SHARED_CARD_CONFIG_KEYS.has(name)));
-          delete next.hubs;
-          const hubConfigs = this._config.hub_configs.map(config => config.hub === this._editingHub
-            ? {hub:this._editingHub,...orderedCardConfig(next)} : config);
-          this._config = {...this._config,hub_configs:hubConfigs};
-          this._dispatchConfig();
-        });
-        this._hubConfigEditor = editor;
-        this._hubConfigHost.innerHTML = "";
-        this._hubConfigHost.append(editor);
-      }
-      this._hubConfigEditor._entries = this._entries;
-      this._hubConfigEditor._hubs = this._hubs;
-      this._hubConfigEditor.hass = this._hass;
-      this._hubConfigEditor._previewRooms = new Map((this._previewRoomsByHub.get(id) || []).flatMap(entityId => {
-        const state = this._hass?.states?.[entityId];
-        return state ? [[deviceType(state),entityId]] : [];
-      }));
-      const rememberedRoom = this._selectedRoomByHub?.get(id);
-      if (rememberedRoom && this._roomHubId(this._hass?.states?.[rememberedRoom]) === id) {
-        this._hubConfigEditor._selectedRoom = rememberedRoom;
-      }
-      this._syncingHubConfig = true;
-      const {hub,...options} = stored;
-      this._hubConfigEditor.setConfig({...options,hubs:[hub]});
-      this._syncingHubConfig = false;
-      const hadSelectedRoom = Boolean(this._selectedRoom);
-      if (this._hubConfigEditor._selectedRoom) this._selectedRoom = this._hubConfigEditor._selectedRoom;
-      this._hubConfigEditor._rememberPreviewRoom(this._hubConfigEditor._selectedRoom);
-      this._previewRoomsByHub.set(id, [...this._hubConfigEditor._previewRooms.values()]);
-      this._hubConfigHost.hidden = false;
-      for (const element of [this._typeForm,this._modeForm,this._tabs,this._roomForm,this._featureList,this._message]) element.hidden = true;
-      if (!hadSelectedRoom && this._selectedRoom) this._dispatchConfig();
-      return true;
-    }
-    _name(room) { return entityDisplayName(this._hass, room); }
-    _tabNames(rooms) {
-      const originalNames = new Map((this._entries || [])
-        .filter(entry => entry.original_name)
-        .map(entry => [entry.entity_id,entry.original_name]));
-      const details = rooms.map(room => {
-        const area = room.attributes.room || "";
-        const roomType = deviceType(room);
-        const entityName = roomType === "hot_water"
-          ? originalNames.get(room.entity_id) || String(room.attributes.name || this._name(room))
-            .replace(/^Wiser HeatHub\s*\([^)]*\)\s*/i, "").trim()
-          : room.attributes.name || this._name(room);
-        const name = roomType === "heating" ? area || entityName : entityName || area;
-        return {room, area, name};
-      });
-      const countNames = values => values.reduce((counts, value) => counts.set(value, (counts.get(value) || 0) + 1), new Map());
-      const baseCounts = countNames(details.map(detail => detail.name));
-      const labels = details.map(detail => baseCounts.get(detail.name) > 1 && detail.area && detail.area !== detail.name
-        ? `${detail.area} · ${detail.name}` : detail.name);
-      const labelCounts = countNames(labels);
-      const seen = new Map();
-      return new Map(details.map((detail, index) => {
-        const label = labels[index];
-        if (labelCounts.get(label) === 1) return [detail.room.entity_id, label];
-        const occurrence = (seen.get(label) || 0) + 1;
-        seen.set(label, occurrence);
-        return [detail.room.entity_id, `${label} ${occurrence}`];
-      }));
-    }
-    _shown(id) {
-      return !this._config.excluded_entities?.includes(id) &&
-        (!this._config.entities?.length || this._config.entities.includes(id));
-    }
-    _render() {
-      if (!this._config || !this._hass) return;
-      this._version.hidden = Boolean(this.hideVersion);
-      const hubs = this._detectedHubs();
-      this._hubForm.hass = this._hass;
-      const hubSchema = [{name:"hubs",label:text(this._hass,"hubs"),selector:{select:{multiple:true,mode:"dropdown",options:hubs}}}];
-      const hubSignature = JSON.stringify(hubSchema);
-      if (hubSignature !== this._hubSchemaSignature) { this._hubForm.schema = hubSchema; this._hubSchemaSignature = hubSignature; }
-      const hubData = {hubs:this._config.hubs || hubs.map(hub => hub.value)};
-      if (JSON.stringify(hubData) !== JSON.stringify(this._hubForm.data)) this._hubForm.data = hubData;
-      this._hubForm.hidden = this.hideHubSelector || !hubs.length;
-      this._form.hass = this._hass;
-      const selectedHubIds = this._selectedHubIds();
-      const hasMultipleHubs = !this.hideHubSelector && selectedHubIds.length > 1;
-      const editorHubIds = this._editorHubIds();
-      if (editorHubIds.length > 1 && !editorHubIds.includes(this._editingHub)) this._editingHub = editorHubIds[0];
-      const rooms = this._editorRooms();
-      this._renderHubTabs(hubs, editorHubIds);
-      if (this._migrateHubConfigs()) return this._render();
-      const hasMultipleHeatingChannels = heatingChannelGroups(this._allRooms())
-        .filter(group => group.key !== "unassigned").length > 1;
-      const appearanceSchema = [
-        ...(this.hideTitle ? [] : [{name: "title", selector: {text: {}}}]),
-        ...(this.hideRoomColumns ? [] : [{name: "device_columns", label: text(this._hass,"devices_per_row"), selector: {number: {min: 1, max: 6, step: 1, mode: "box"}}}]),
-        ...(hasMultipleHubs ? [{name:"split_hubs",label:text(this._hass,"split_hubs"),selector:{boolean:{}}}] : []),
-        ...(hasMultipleHeatingChannels ? [{name:"split_heating_channels",label:text(this._hass,"split_heating_channels"),selector:{boolean:{}}}] : []),
-      ];
-      const roomTypeSchema = {name: "device_types", label: text(this._hass,"show"), selector: {select: {mode: "box", options: [
-          {value: "all", label: text(this._hass,"all")},
-          ...sortedDeviceTypes(this._hass).map(value => ({value, label:text(this._hass,value)})),
-        ]}}};
-      const temperatureFocusSchema = {name:"temperature_focus",label:"",selector:{button_toggle:{options:[
-        {value:"current",label:text(this._hass,"current")},{value:"target",label:text(this._hass,"target")},
-      ]}}};
-      const schema = [
-        ...appearanceSchema,
-        roomTypeSchema,
-        temperatureFocusSchema,
-      ];
-      // Retain the form schema during state updates so edits keep their focus.
-      const signature = JSON.stringify(schema);
-      if (signature !== this._schemaSignature) {
-        this._form.schema = appearanceSchema;
-        this._typeForm.schema = [roomTypeSchema];
-
-        this._schemaSignature = signature;
-      }
-      this._form.style.maxWidth = this.hideTitle && !this.hideRoomColumns ? "130px" : "";
-      const data = {};
-      if (!this.hideRoomColumns) data.device_columns = this._config.device_columns ?? 1;
-      if (!this.hideTitle) data.title = this._config.title ?? text(this._hass,"wiser_controls");
-      if (hasMultipleHubs) data.split_hubs = this._config.split_hubs ?? false;
-      if (hasMultipleHeatingChannels) data.split_heating_channels = this._config.split_heating_channels ?? false;
-      if (JSON.stringify(data) !== JSON.stringify(this._form.data)) this._form.data = data;
-      this._form.hidden = !appearanceSchema.length;
-      if (this._renderHubConfigEditor(editorHubIds)) return;
-      this._hubConfigHost.hidden = true;
-      const activeTypes = selectedTypes(this._config);
-      this._typeForm.data = {device_types:activeTypes};
-      const typeOptions = roomTypeSchema.selector.select.options;
-      const typeMarkup = `<span class="show-label" id="show-label">${escape(text(this._hass,"show"))}</span><div class="show-options" role="group" aria-labelledby="show-label">${typeOptions.map(option => {
-        const active = option.value === "all" ? activeTypes.length === DEVICE_TYPES.length : activeTypes.includes(option.value);
-        return `<ha-button size="s" variant="${active ? "brand" : "neutral"}" appearance="${active ? "filled" : "outlined"}" data-room-type="${option.value}" aria-pressed="${active}">${option.label}</ha-button>`;
-      }).join("")}</div>`;
-      if (typeMarkup !== this._typeMarkup) { this._typeForm.innerHTML = typeMarkup; this._typeMarkup = typeMarkup; }
-      this._typeForm.hidden = this.hideDeviceTypes === true;
-      this._modeForm.hass = this._hass;
-      const modeSchema = [{name:"device_configuration",label:text(this._hass,"configuration_mode"),selector:{button_toggle:{size:"small",options:[
-        {value:"master",label:text(this._hass,"master")},{value:"individual",label:text(this._hass,"individual")},
-      ]}}}];
-      if (JSON.stringify(modeSchema) !== this._modeSchemaSignature) { this._modeForm.schema = modeSchema; this._modeSchemaSignature = JSON.stringify(modeSchema); }
-      const modeData = {device_configuration:masterMode(this._config) ? "master" : "individual"};
-      if (JSON.stringify(modeData) !== JSON.stringify(this._modeForm.data)) this._modeForm.data = modeData;
-      this._modeForm.hidden = !rooms.length;
-      this._modeForm.style.marginBottom = masterMode(this._config) ? "12px" : "";
-      const hadSelectedRoom = Boolean(this._selectedRoom);
-      this._renderTabs(rooms);
-      if (!hadSelectedRoom && this._selectedRoom) this._dispatchConfig();
-      const selectedOptions = roomConfig(this._config, this._selectedRoom);
-      const selectedState = this._hass.states[this._selectedRoom];
-      const secondaryStatus = this._secondaryStatusSource(this._selectedRoom);
-      const secondaryEntity = secondaryStatus?.entities?.[this._selectedRoom]
-        || secondaryStatus?.entity || this._selectedRoom;
-      const secondaryRooms = masterMode(this._config)
-        ? this._rooms().filter(room => deviceType(room) === typeForEntity(this._selectedRoom)) : [];
-      const selectedType = selectedState ? deviceType(selectedState) : "heating";
-      const shutter = selectedType === "shutters";
-      const heating = selectedType === "heating";
-      const temperatureDevice = heating || isOpenThermHotWater(selectedState) || isStoredHotWaterClimate(selectedState);
-      if (heating && selectedState) {
-        const states = {...this._hass.states,[this._selectedRoom]:withOverrideEnd(selectedState, this._hass)};
-        const secondaryState = states[secondaryEntity];
-        if (secondaryState) states[secondaryEntity] = {
-          ...secondaryState,
-          attributes:{...secondaryState.attributes,override_end_time:overrideEndValue(selectedState, this._hass)},
-        };
-        this._roomForm.hass = {...this._hass,states};
-      } else this._roomForm.hass = this._hass;
-      this._roomForm.hass = withNativeCurrentAction(this._roomForm.hass);
-      const metricLabel = text(this._hass,shutter ? "show_position" : selectedType === "lights" ? "show_brightness" : selectedType === "plugs" || isStoredHotWaterSwitch(selectedState) ? "show_status" : "show_temperatures");
-      const identitySchema = [
-        {name:"name", label:text(this._hass,"name"), selector:{entity_name:{}}, context:{entity:"entity"}},
-        {name:"", type:"grid", schema:[
-          {name:"icon", label:text(this._hass,"icon"), selector:{icon:{}}, context:{icon_entity:"entity"}},
-          {name:"color", label:text(this._hass,"color"), selector:{ui_color:{default_color:"state",include_state:true}}},
-        ]},
-      ];
-      const contentSchema = [
-        ...identitySchema,
-        {name:"",type:"grid",column_min_width:"180px",schema:[
-          {name:"show_temperatures",label:metricLabel,selector:{boolean:{}}},
-          ...(temperatureDevice ? [temperatureFocusSchema] : []),
-          {name:"show_next_schedule",label:text(this._hass,"show_next_schedule"),selector:{boolean:{}}},
-          {name:"hide_state",label:text(this._hass,"hide_state"),selector:{boolean:{}}},
-        ]},
-        {name:"state_content",label:text(this._hass,"state_content"),visible:{field:"hide_state",operator:"not_eq",value:true},selector:{ui_state_content:{allow_context:true}},context:{filter_entity:"entity"}},
-      ];
-      const actionSchema = [
-        {name:"tap_action",label:"Tap action",selector:{ui_action:{default_action:"more-info"}},context:{filter_entity:"entity"}},
-        {name:"",type:"divider"},
-        {name:"icon_tap_action",label:"Icon tap action",selector:{ui_action:{default_action:isLight(selectedState) || isPlug(selectedState) ? "toggle" : "more-info"}},context:{filter_entity:"entity"}},
-        {name:"",type:"optional_actions",flatten:true,schema:[
-          {name:"hold_action",label:"Hold action",selector:{ui_action:{default_action:"none"}},context:{filter_entity:"entity"}},
-          {name:"icon_hold_action",label:"Icon hold action",selector:{ui_action:{default_action:"none"}},context:{filter_entity:"entity"}},
-          {name:"double_tap_action",label:"Double-tap action",selector:{ui_action:{default_action:"none"}},context:{filter_entity:"entity"}},
-          {name:"icon_double_tap_action",label:"Icon double-tap action",selector:{ui_action:{default_action:"none"}},context:{filter_entity:"entity"}},
-        ]},
-      ];
-      const secondaryStatusSchema = [
-        ...(secondaryRooms.length
-          ? secondaryRooms.map((room, index) => ({name:`secondary_status_room_${index}`,label:this._name(room),selector:{entity:{}}}))
-          : [{name:"secondary_status_entity",label:this._hass.localize?.("ui.panel.lovelace.editor.card.generic.entity") || "Entity",selector:{entity:{}}}]),
-        {name:"secondary_status_content",label:this._hass.localize?.("ui.panel.lovelace.editor.card.tile.state_content") || text(this._hass,"state_content"),selector:{ui_state_content:{allow_context:true,entity_id:secondaryEntity || undefined}}},
-        {name:"secondary_status_show_labels",label:text(this._hass,"show_state_labels"),selector:{boolean:{}}},
-      ];
-      const roomSchema = [
-        {name:"content",label:text(this._hass,"content"),type:"expandable",flatten:true,icon:"mdi:text-short",schema:contentSchema},
-        {name:"secondary_status_section",label:text(this._hass,"secondary_status"),type:"expandable",flatten:true,icon:"mdi:list-status",schema:secondaryStatusSchema},
-        {name:"interactions",label:text(this._hass,"interactions"),type:"expandable",flatten:true,icon:"mdi:gesture-tap",schema:actionSchema},
-      ];
-      const roomSignature = JSON.stringify(roomSchema);
-      if (roomSignature !== this._roomSchema) { this._roomForm.schema = roomSchema; this._roomSchema = roomSignature; }
-      const roomData = {entity:this._selectedRoom,color:selectedOptions.color || "state",hide_state:selectedOptions.hide_state ?? false,state_content:selectedOptions.state_content ?? [heating ? "hvac_action" : "state"],temperature_focus:selectedOptions.temperature_focus ?? "current",show_temperatures:selectedOptions.show_temperatures ?? true,show_next_schedule:selectedOptions.show_next_schedule ?? true,
-        secondary_status_content:secondaryStatus
-          ? (selectedOptions.secondary_status ? normalizedSecondaryStateContent(secondaryStatus.state_content) : normalizedStateContent(secondaryStatus.state_content)) : [],
-        secondary_status_show_labels:secondaryStatus?.show_labels === true,
-        tap_action:selectedOptions.tap_action,icon_tap_action:selectedOptions.icon_tap_action,
-        hold_action:selectedOptions.hold_action,icon_hold_action:selectedOptions.icon_hold_action,
-        double_tap_action:selectedOptions.double_tap_action,icon_double_tap_action:selectedOptions.icon_double_tap_action};
-      roomData.name = selectedOptions.name ?? [{type:"area"}];
-      roomData.icon = selectedOptions.icon;
-      if (secondaryRooms.length) secondaryRooms.forEach((room, index) => {
-        roomData[`secondary_status_room_${index}`] = secondaryStatus?.entities?.[room.entity_id] || "";
-      });
-      else roomData.secondary_status_entity = secondaryStatus?.entity || "";
-      for (const key of Object.keys(roomData)) if (roomData[key] === undefined) delete roomData[key];
-      if (JSON.stringify(roomData) !== JSON.stringify(this._roomForm.data)) this._roomForm.data = roomData;
-      this._styleTemperatureFocus();
-      this._extendNamePicker();
-      this._roomForm.hidden = !this._selectedRoom;
-      this._featureList.hidden = !this._selectedRoom;
-      this._renderFeatures();
-      this._message.textContent = this._failed ? text(this._hass,"retry_editor")
-        : this._loading ? text(this._hass,"finding")
-        : !rooms.length ? text(this._hass,"no_devices")
-        : "";
-      this._message.hidden = !this._message.textContent;
-    }
-    async _styleTemperatureFocus() {
-      await this._roomForm?.updateComplete;
-      const content = [...(this._roomForm?.shadowRoot?.querySelectorAll("ha-form-expandable") || [])]
-        .find(item => item.schema?.name === "content");
-      await content?.updateComplete;
-      const form = content?.shadowRoot?.querySelector("ha-form");
-      await form?.updateComplete;
-      const grid = [...(form?.shadowRoot?.querySelectorAll("ha-form-grid") || [])]
-        .find(item => item.schema?.schema?.some(field => field.name === "temperature_focus"));
-      await grid?.updateComplete;
-      const index = grid?.schema?.schema?.findIndex(field => field.name === "temperature_focus") ?? -1;
-      const fields = [...(grid?.shadowRoot?.children || [])].filter(item => item.localName === "ha-form");
-      const field = fields[index];
-      if (!field) return;
-      field.style.justifySelf = "end";
-      field.style.alignSelf = "center";
-      field.style.setProperty("--ha-button-height", "32px");
-      const show = this._roomForm.data?.show_temperatures !== false;
-      field.style.visibility = show ? "" : "hidden";
-      field.inert = !show;
-      field.setAttribute("aria-hidden", String(!show));
-    }
-    _extendNamePicker() {
-      if (this._namePickerLookup) return this._namePickerLookup;
-      this._namePickerLookup = (async () => {
-        for (let attempt = 0; attempt <= 10; attempt += 1) {
-          await this._roomForm?.updateComplete;
-          const picker = findInShadowRoots(this._roomForm?.shadowRoot, "ha-entity-name-picker");
-          if (extendWiserNamePicker(picker) || !this.isConnected) return;
-          await new Promise(resolve => setTimeout(resolve, 50));
-        }
-      })().finally(() => { this._namePickerLookup = undefined; });
-      return this._namePickerLookup;
-    }
-    _secondaryStatusSource(id) {
-      if (!id) return undefined;
-      const options = roomConfig(this._config, id);
-      if (options.secondary_status && typeof options.secondary_status === "object" && !Array.isArray(options.secondary_status)) return options.secondary_status;
-      return undefined;
-    }
-    _secondaryStatusOptions(value) {
-      const id = this._selectedRoom;
-      const hasSecondaryValue = Object.keys(value).some(key => key === "secondary_status_entity" || key === "secondary_status_content"
-        || key === "secondary_status_show_labels" || key.startsWith("secondary_status_room_"));
-      if (!id || !hasSecondaryValue) return {};
-      const rawOptions = masterMode(this._config) ? masterOptions(this._config, id) || {} : this._config.device_options?.[id] || {};
-      const existingStatus = this._secondaryStatusSource(id) || {};
-      const result = {};
-      const status = {};
-      if (masterMode(this._config)) {
-        const entities = {};
-        this._rooms().filter(room => deviceType(room) === typeForEntity(id)).forEach((room, index) => {
-          const key = `secondary_status_room_${index}`;
-          const entity = Object.hasOwn(value, key) ? value[key] : existingStatus.entities?.[room.entity_id];
-          if (typeof entity === "string" && entity && entity !== room.entity_id) entities[room.entity_id] = entity;
-        });
-        if (Object.keys(entities).length) status.entities = entities;
-      } else {
-        const entity = Object.hasOwn(value, "secondary_status_entity") ? value.secondary_status_entity : existingStatus.entity;
-        if (typeof entity === "string" && entity && entity !== id) status.entity = entity;
-      }
-      status.state_content = Object.hasOwn(value, "secondary_status_content")
-        ? normalizedSecondaryStateContent(value.secondary_status_content)
-        : rawOptions.secondary_status
-          ? normalizedSecondaryStateContent(existingStatus.state_content)
-          : existingStatus.type ? normalizedStateContent(existingStatus.state_content) : [];
-      const showLabels = Object.hasOwn(value, "secondary_status_show_labels")
-        ? value.secondary_status_show_labels : existingStatus.show_labels;
-      if (showLabels) status.show_labels = true;
-      result.secondary_status = status.state_content.length || status.entity || status.entities || status.show_labels ? status : undefined;
-      return result;
-    }
-    _setRoomOptions(options) {
-      if (!this._selectedRoom) return;
-      const master = masterMode(this._config);
-      const current = {...(master ? masterOptions(this._config, this._selectedRoom) : this._config.device_options?.[this._selectedRoom])};
-      for (const [key, value] of Object.entries(options)) {
-        if (value === undefined) delete current[key];
-        else current[key] = value;
-      }
-      if (master) this._config = {...this._config,master_options_by_type:{
-        ...this._config.master_options_by_type,[typeForEntity(this._selectedRoom)]:current,
-      }};
-      else this._config = {...this._config,device_options:{...this._config.device_options,[this._selectedRoom]:current}};
-      this._render();
-      this._dispatchConfig();
-    }
-    _featureEditorContext(id) {
-      const context = {entity_id:id};
-      if (masterMode(this._config)) {
-        context.wiser_master = true;
-        const roomType = typeForEntity(id);
-        context.wiser_rooms = this._rooms().filter(room => deviceType(room) === roomType)
-          .map(room => ({entity_id:room.entity_id,name:this._name(room)}));
-      }
-      return context;
-    }
-    _saveNativeFeatures(id, list, editorOwnsList = false) {
-      if (!id || !validNativeFeatures(list)) return;
-      const existingOptions = masterMode(this._config) ? masterOptions(this._config, id) || {} : this._config.device_options?.[id] || {};
-      const features = uniqueNativeFeatures([...list]);
-      if (masterMode(this._config)) {
-        const currentOptions = existingOptions;
-        const roomType = typeForEntity(id);
-        const options = {...currentOptions,features};
-        this._config = {...this._config,master_options_by_type:{
-          ...this._config.master_options_by_type,
-          [roomType]:options,
-        }};
-      } else {
-        const options = {...existingOptions,features};
-        this._config = {...this._config,device_options:{...this._config.device_options,[id]:options}};
-      }
-      if (editorOwnsList && id === this._selectedRoom) {
-        this._nativeEditor.features = features;
-        this._nativeEditorSignature = id + JSON.stringify(features);
-      }
-      this._render();
-      this._dispatchConfig();
-    }
-    _renderFeatures() {
-      if (!this._selectedRoom) return;
-      const featureHeading = this._featureList.querySelector?.('[slot="header"]');
-      if (featureHeading) featureHeading.textContent = text(this._hass,"features");
-      this._nativeEditor.hass = this._hass;
-      this._featurePositionForm.hass = this._hass;
-      this._featurePositionForm.schema = [{name:"features_position",required:true,label:text(this._hass,"features_position"),selector:{select:{mode:"box",options:["bottom","inline"].map(value => ({
-        value,
-        label:text(this._hass,value),
-        description:this._hass.localize(`ui.panel.lovelace.editor.card.tile.features_position_options.${value}_description`),
-        image:{src:`/static/images/form/tile_features_position_${value}.svg`,src_dark:`/static/images/form/tile_features_position_${value}_dark.svg`,flip_rtl:true},
-      }))}}}];
-      this._nativeEditor.context = this._featureEditorContext(this._selectedRoom);
-      this._nativeEditor.stateObj = this._hass.states[this._selectedRoom];
-      const storedList = configuredNativeFeatures(this._config, this._selectedRoom, this._hass.states[this._selectedRoom]);
-      const list = storedList;
-      this._featurePositionForm.hidden = !list.length;
-      const signature = this._selectedRoom + JSON.stringify(list);
-      if (signature !== this._nativeEditorSignature) {
-        this._nativeEditor.features = list;
-        this._nativeEditorSignature = signature;
-      }
-      const positionData = {features_position:roomConfig(this._config, this._selectedRoom).features_position || "bottom"};
-      if (JSON.stringify(positionData) !== JSON.stringify(this._featurePositionForm.data)) this._featurePositionForm.data = positionData;
-    }
-    _tabRooms(rooms) {
-      if (!masterMode(this._config)) return DEVICE_TYPES.flatMap(roomType => rooms.filter(room => deviceType(room) === roomType));
-      const selected = selectedTypes(this._config);
-      return selected.map(roomType =>
-        rooms.find(room => deviceType(room) === roomType && this._shown(room.entity_id))
-          || rooms.find(room => deviceType(room) === roomType))
-        .filter(Boolean);
-    }
-    _updateTabOverflow(strip = this._tabs.querySelector?.(".room-tabs")) {
-      const viewport = strip?.parentElement;
-      if (!viewport?.classList) return;
-      const tolerance = 2;
-      const fullWidth = Math.max(strip.clientWidth, viewport.clientWidth || 0);
-      if (strip.scrollWidth <= fullWidth + tolerance) {
-        viewport.classList.toggle("can-scroll-left", false);
-        viewport.classList.toggle("can-scroll-right", false);
-        strip.scrollLeft = 0;
-        return;
-      }
-      viewport.classList.toggle("can-scroll-left", strip.scrollLeft > tolerance);
-      viewport.classList.toggle("can-scroll-right", strip.scrollLeft + strip.clientWidth < strip.scrollWidth - tolerance);
-    }
-    _scrollTabs(control, direction) {
-      const strip = control.parentElement?.querySelector?.(".room-tabs");
-      if (!strip) return;
-      const distance = Math.max(160, strip.clientWidth * 0.75);
-      strip.scrollBy({left:direction === "left" ? -distance : distance,behavior:"smooth"});
-    }
-    _tabScrollPositions() {
-      return new Map(Array.from(this._tabs.querySelectorAll?.(".room-tab-bar[data-device-type]") || [], row => [
-        row.dataset.deviceType,
-        row.querySelector(".room-tabs")?.scrollLeft || 0,
-      ]));
-    }
-    _restoreTabScrollPositions(positions) {
-      for (const row of this._tabs.querySelectorAll?.(".room-tab-bar[data-device-type]") || []) {
-        const strip = row.querySelector(".room-tabs");
-        if (strip && positions.has(row.dataset.deviceType)) strip.scrollLeft = positions.get(row.dataset.deviceType);
-      }
-    }
-    _revealSelectedTab() {
-      const active = this._tabs.querySelector?.('[role="tab"][aria-selected="true"]');
-      const strip = active?.closest?.(".room-tabs");
-      if (!strip?.getBoundingClientRect || !active.getBoundingClientRect) return;
-      const stripRect = strip.getBoundingClientRect();
-      const activeRect = active.getBoundingClientRect();
-      if (activeRect.left < stripRect.left) strip.scrollLeft -= stripRect.left - activeRect.left;
-      else if (activeRect.right > stripRect.right) strip.scrollLeft += activeRect.right - stripRect.right;
-    }
-    _scheduleTabOverflowUpdate() {
-      const update = () => {
-        const strips = this._tabs.querySelectorAll?.(".room-tabs") || [];
-        for (const strip of strips) this._updateTabOverflow(strip);
-      };
-      if (typeof requestAnimationFrame === "function") requestAnimationFrame(update);
-      else setTimeout(update, 0);
-    }
-    _syncIndividualTabSelection(tabRooms) {
-      const selected = tabRooms.find(room => room.entity_id === this._selectedRoom);
-      if (!selected) return;
-      for (const button of this._tabs.querySelectorAll?.(".room-tabs [data-room]") || []) {
-        const active = button.dataset.room === this._selectedRoom;
-        button.classList.toggle("active", active);
-        button.setAttribute("aria-selected", String(active));
-        button.tabIndex = active ? 0 : -1;
-      }
-      const row = this._tabs.querySelector?.(`.room-tab-bar[data-device-type="${deviceType(selected)}"]`);
-      const tools = this._tabs.querySelector?.(".room-tools");
-      if (!row || !tools) return;
-      row.append(tools);
-      tools.hidden = false;
-      const typeRooms = tabRooms.filter(room => deviceType(room) === deviceType(selected));
-      const index = typeRooms.findIndex(room => room.entity_id === this._selectedRoom);
-      const hide = tools.querySelector?.('[data-action="hide"]');
-      if (hide) {
-        const shown = this._shown(this._selectedRoom);
-        hide.setAttribute("label", shown ? "Hide device" : "Show device");
-        hide.querySelector?.("ha-icon")?.setAttribute("icon", `mdi:${shown ? "eye" : "eye-off"}`);
-      }
-      const left = tools.querySelector?.('[data-action="left"]');
-      const right = tools.querySelector?.('[data-action="right"]');
-      if (left) left.disabled = index === 0;
-      if (right) right.disabled = index === typeRooms.length - 1;
-    }
-    _renderTabs(rooms) {
-      if (!rooms.some(room => room.entity_id === this._selectedRoom)) this._selectedRoom = rooms[0]?.entity_id;
-      if (masterMode(this._config)) {
-        this._individualTabsSignature = "";
-        if (!this._shown(this._selectedRoom)) this._selectedRoom = rooms.find(room => this._shown(room.entity_id))?.entity_id || rooms[0]?.entity_id;
-        const typeRooms = this._tabRooms(rooms);
-        if (typeRooms.length <= 1) {
-          this._tabs.hidden = true;
-          this._tabs.innerHTML = "";
-          this._tabsMarkup = "";
-          return;
-        }
-        if (!typeRooms.some(room => room.entity_id === this._selectedRoom)) this._selectedRoom = typeRooms[0].entity_id;
-        this._tabs.hidden = false;
-        const markup = `<div class="room-tab-bar"><div class="room-tabs-viewport"><div class="room-tabs type-tabs" role="tablist" aria-label="${escape(text(this._hass,"configuration_mode"))}">${typeRooms.map(room => {
-          const roomType = deviceType(room);
-          const active = room.entity_id === this._selectedRoom;
-          return `<button type="button" role="tab" title="${escape(text(this._hass,roomType))}" data-room="${escape(room.entity_id)}" aria-selected="${active}" tabindex="${active ? 0 : -1}" class="${active ? "active" : ""}">${escape(text(this._hass,roomType))}</button>`;
-        }).join("")}</div><button type="button" class="tab-overflow-indicator left" data-tab-scroll="left" aria-label="Scroll tabs left"><ha-icon icon="mdi:chevron-left"></ha-icon></button><button type="button" class="tab-overflow-indicator right" data-tab-scroll="right" aria-label="Scroll tabs right"><ha-icon icon="mdi:chevron-right"></ha-icon></button></div></div>`;
-        if (markup !== this._tabsMarkup) { this._tabs.innerHTML = markup; this._tabsMarkup = markup; this._scheduleTabOverflowUpdate(); }
-        return;
-      }
-      this._tabs.hidden = false;
-      const tabRooms = this._tabRooms(rooms);
-      const selected = tabRooms.find(room => room.entity_id === this._selectedRoom);
-      const tabNames = this._tabNames(tabRooms);
-      const groups = DEVICE_TYPES.map(roomType => ({roomType, rooms:tabRooms.filter(room => deviceType(room) === roomType)}))
-        .filter(group => group.rooms.length);
-      const scrollPositions = this._tabScrollPositions();
-      const structureSignature = JSON.stringify([
-        this.hideVisibilityControl === true,
-        groups.map(group => [group.roomType, group.rooms.map(room => [
-          room.entity_id, tabNames.get(room.entity_id), this._shown(room.entity_id),
-        ])]),
-      ]);
-      const markup = !selected ? "" : `<div class="room-tab-rows">${groups.map(group => {
-        const typeLabel = groups.length > 1
-          ? `<span class="room-type-label">${escape(text(this._hass,group.roomType))}</span>`
-          : "";
-        return `<div class="room-tab-bar" data-device-type="${group.roomType}">${typeLabel}
-          <div class="room-tabs-viewport"><div class="room-tabs named-tabs" role="tablist" aria-label="${escape(text(this._hass,group.roomType))}">${group.rooms.map(room => {
-            const active = room.entity_id === this._selectedRoom;
-            const hidden = !this._shown(room.entity_id);
-            const name = tabNames.get(room.entity_id);
-            const label = `${name}${hidden ? " (hidden)" : ""}`;
-            return `<button type="button" role="tab" title="${escape(label)}" data-room="${escape(room.entity_id)}" aria-selected="${active}" tabindex="${active ? 0 : -1}" class="${active ? "active" : ""}${hidden ? " hidden-room" : ""}" aria-label="${escape(label)}">${escape(name)}</button>`;
-          }).join("")}</div><button type="button" class="tab-overflow-indicator left" data-tab-scroll="left" aria-label="Scroll tabs left"><ha-icon icon="mdi:chevron-left"></ha-icon></button><button type="button" class="tab-overflow-indicator right" data-tab-scroll="right" aria-label="Scroll tabs right"><ha-icon icon="mdi:chevron-right"></ha-icon></button></div></div>`;
-      }).join("")}<div class="room-tools" hidden>
-        ${this.hideVisibilityControl ? "" : '<ha-icon-button data-action="hide"><ha-icon></ha-icon></ha-icon-button>'}
-        <ha-icon-button data-action="left" label="Move left"><ha-icon icon="mdi:arrow-left"></ha-icon></ha-icon-button>
-        <ha-icon-button data-action="right" label="Move right"><ha-icon icon="mdi:arrow-right"></ha-icon></ha-icon-button>
-      </div></div>`;
-      const rebuilt = structureSignature !== this._individualTabsSignature;
-      if (rebuilt) {
-        this._tabs.innerHTML = markup; this._tabsMarkup = markup;
-        this._individualTabsSignature = structureSignature;
-        this._restoreTabScrollPositions(scrollPositions);
-        this._scheduleTabOverflowUpdate();
-      }
-      this._syncIndividualTabSelection(tabRooms);
-      if (rebuilt) this._revealSelectedTab();
-    }
-    _selectRoom(id, focusTab = false) {
-      this._selectedRoom = id;
-      this._rememberPreviewRoom(id);
-      this._render();
-      this._dispatchConfig();
-      if (focusTab) this._tabs.querySelector?.('[role="tab"][aria-selected="true"]')?.focus({preventScroll: true});
-    }
-    _dispatchConfig() {
-      // Symbols pass to the live preview but are omitted when the config is saved as JSON/YAML.
-      this._rememberPreviewRoom(this._selectedRoom);
-      const previewRooms = this._previewRoomsByHub.size
-        ? [...this._previewRoomsByHub.values()].flat()
-        : [...this._previewRooms.values()];
-      const config = {
-        ...orderedCardConfig(this._config),
-        [PREVIEW_ALL_TYPES]: true,
-        [PREVIEW_ROOM]: this._selectedRoom,
-        [PREVIEW_ROOMS]: previewRooms,
-      };
-      this.dispatchEvent(new CustomEvent("config-changed", {detail: {config}, bubbles: true, composed: true}));
-    }
-    _rememberPreviewRoom(id) {
-      const state = this._hass?.states?.[id];
-      if (state) this._previewRooms.set(deviceType(state), id);
-    }
-    _roomAction(action) {
-      const rooms = this._tabRooms(this._editorRooms());
-      const selected = rooms.find(room => room.entity_id === this._selectedRoom);
-      if (!selected) return;
-      const typeRooms = rooms.filter(room => deviceType(room) === deviceType(selected));
-      const index = typeRooms.findIndex(room => room.entity_id === this._selectedRoom);
-      const config = {...this._config};
-      const excluded = new Set(config.excluded_entities || []);
-      for (const room of rooms) if (!this._shown(room.entity_id)) excluded.add(room.entity_id);
-      const order = rooms.map(room => room.entity_id);
-      if (action === "hide") {
-        if (excluded.has(this._selectedRoom)) excluded.delete(this._selectedRoom);
-        else excluded.add(this._selectedRoom);
-      } else {
-        const target = index + (action === "left" ? -1 : action === "right" ? 1 : 0);
-        if (target === index || target < 0 || target >= typeRooms.length) return;
-        const sourceOrderIndex = order.indexOf(this._selectedRoom);
-        const targetOrderIndex = order.indexOf(typeRooms[target].entity_id);
-        [order[sourceOrderIndex], order[targetOrderIndex]] = [order[targetOrderIndex], order[sourceOrderIndex]];
-      }
-      delete config.entities;
-      config.excluded_entities = [...excluded];
-      config.device_order = [...order, ...(config.device_order || []).filter(id => !order.includes(id))];
-      this._config = config;
-      this._render();
-      this._dispatchConfig();
-    }
-    _changed(event) {
-      event.stopPropagation();
-      const data = event.detail.value;
-      const title = Object.hasOwn(data, "title") ? data.title ?? "" : this._config.title ?? text(this._hass,"wiser_controls");
-      const config = {...this._config, title};
-      if (!this.hideRoomColumns) config.device_columns = data.device_columns ?? 1;
-      if (Object.hasOwn(data, "split_hubs")) {
-        if (data.split_hubs) config.split_hubs = true;
-        else delete config.split_hubs;
-      }
-      if (Object.hasOwn(data, "split_heating_channels")) {
-        if (data.split_heating_channels) config.split_heating_channels = true;
-        else delete config.split_heating_channels;
-      }
-      this._config = config;
-      this._render();
-      this._dispatchConfig();
-    }
-  }
+  /* Editor source is included here by scripts/card-source.cjs. */
+  __WISER_CARD_EDITOR__
   if (!customElements.get("wiser-controls-card-editor")) customElements.define("wiser-controls-card-editor", WiserRoomsCardEditor);
   if (!customElements.get("wiser-rooms-card-editor")) customElements.define("wiser-rooms-card-editor", class extends WiserRoomsCardEditor {});
   if (!customElements.get("wiser-controls-card")) {

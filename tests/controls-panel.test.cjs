@@ -148,23 +148,29 @@ test("Devices tabs render and save independent settings per device type",async()
     card_configs:{Home:{
       default_view:"devices",
       device_columns:5,
+      admin_only_header_controls:true,
+      header_button_style:"icon_only",
       device_view_configs:{
         heating:{device_columns:2},
-        plugs:{device_columns:3},
+        plugs:{device_columns:3,admin_only_header_controls:false,header_button_style:"icon_text"},
       },
     }},
   }};
 
   assert.deepEqual(Array.from(panel._deviceCards[0].config.device_types),["heating"]);
   assert.equal(panel._deviceCards[0].config.device_columns,2);
+  assert.equal(panel._deviceCards[0].config.admin_only_header_controls,true);
+  assert.equal(panel._deviceCards[0].config.header_button_style,"icon_only");
   panel._selectDeviceType("plugs");
   assert.deepEqual(Array.from(panel._deviceCards[0].config.device_types),["plugs"]);
   assert.equal(panel._deviceCards[0].config.device_columns,3);
+  assert.equal(panel._deviceCards[0].config.header_button_style,"icon_only");
 
   await panel._openEditor();
   const entry=panel._editorEntries[0];
   assert.equal(entry.editor.hideDeviceTypes,true);
   assert.equal(entry.editor.hideVisibilityControl,true);
+  assert.equal(entry.editor.hideHeaderControlSettings,true);
   assert.deepEqual(Array.from(panel._drafts.Home.device_types),["plugs"]);
   entry.columns.listeners["value-changed"]({stopPropagation(){},detail:{value:{device_columns:4}}});
   await panel._saveEditor();

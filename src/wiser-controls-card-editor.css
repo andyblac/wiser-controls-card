@@ -1,0 +1,102 @@
+
+        [hidden]{display:none!important}
+        ha-form.hubs{display:block;margin-bottom:16px}
+        ha-form.settings::part(root){display:grid;grid-template-columns:minmax(0,1fr) 130px;column-gap:8px;align-items:start}
+        .editor-hub-tabs{display:flex;min-width:0;overflow-x:auto;border-bottom:1px solid var(--divider-color);margin:12px 0 4px;scrollbar-width:thin}
+        .editor-hub-tabs button{flex:0 0 auto;min-height:42px;padding:8px 16px;border:0;border-bottom:3px solid transparent;background:transparent;opacity:.65;white-space:nowrap}
+        .editor-hub-tabs button.active{color:var(--primary-color);border-bottom-color:var(--primary-color);opacity:1}
+        .show-filter{display:block;margin-top:16px}
+        ha-form.configuration-mode{display:block;margin-top:16px;--ha-space-6:var(--ha-space-1,4px)}
+        ha-form.configuration-mode::part(root) {
+          display:grid;
+          grid-template-columns:minmax(0,1fr);
+          grid-auto-rows:48px;
+          row-gap:4px;
+          align-items:center;
+        }
+        .show-label{display:block;margin:0 0 8px;font-size:14px;color:var(--primary-text-color)}
+        .show-options{display:flex;flex-wrap:wrap;gap:8px}
+        .show-options ha-button[appearance="filled"]::part(base){border-color:currentColor}
+        .show-options ha-button[appearance="outlined"]::part(base){color:var(--state-inactive-color);border-color:var(--state-inactive-color)}
+        .room-tab-bar {
+          display: flex;
+          flex-direction: row;
+          align-items: center;
+          gap: 6px;
+          border-bottom: 1px solid var(--divider-color);
+          padding-bottom: 2px;
+          margin: 20px 0 12px;
+        }
+        .room-tab-rows { margin: 20px 0 12px; }
+        .room-tab-rows .room-tab-bar { margin: 0; }
+        .room-tab-rows .room-tab-bar + .room-tab-bar { margin-top: 4px; }
+        .room-tabs-viewport {
+          display: flex;
+          flex: 1;
+          min-width: 0;
+        }
+        .room-tabs {
+          display: flex;
+          order: 2;
+          flex: 1;
+          flex-wrap: nowrap;
+          gap: 4px;
+          min-width: 0;
+          overflow-x: auto;
+          overscroll-behavior-x: contain;
+          scrollbar-width: thin;
+        }
+        .tab-overflow-indicator {
+          display: none;
+          flex: 0 0 26px;
+          width: 26px;
+          align-items: center;
+          justify-content: center;
+          color: var(--primary-text-color);
+          border: 0;
+          background: transparent;
+          cursor: pointer;
+        }
+        .tab-overflow-indicator.left {
+          order: 1;
+        }
+        .tab-overflow-indicator.right {
+          order: 3;
+        }
+        .room-tabs-viewport.can-scroll-left .tab-overflow-indicator.left,
+        .room-tabs-viewport.can-scroll-right .tab-overflow-indicator.right { display: flex; }
+        button{font:inherit;color:var(--primary-text-color);cursor:pointer}
+        button:focus-visible{outline:2px solid var(--primary-color);outline-offset:2px}
+        .room-tabs button{border:0;border-bottom:3px solid transparent;background:transparent;flex:0 0 40px;min-width:40px;min-height:40px;padding:6px 8px;opacity:.6;white-space:nowrap}
+        .room-tabs.named-tabs button {
+          flex-basis: auto;
+          min-width: max-content;
+          max-width: 180px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .room-type-label {
+          align-self: center;
+          flex: 0 0 auto;
+          padding: 0 8px 0 0;
+          color: var(--secondary-text-color);
+          font-size: 14px;
+          font-weight: 600;
+          line-height: 40px;
+          white-space: nowrap;
+        }
+        .room-tabs button.active{color:var(--primary-color);opacity:1;border-bottom-color:var(--primary-color)}
+        .room-tabs.type-tabs button{flex-basis:auto;min-width:max-content}
+        .room-tabs button.hidden-room{text-decoration:line-through}
+        .room-tools{display:flex;flex-wrap:nowrap;gap:0;margin-left:2px;flex-shrink:0}
+        .room-tools ha-icon-button{--ha-icon-button-size:30px}
+        .room-tools ha-icon{--mdc-icon-size:18px}
+        button:disabled{opacity:.35;cursor:default}ha-icon{--mdc-icon-size:20px;pointer-events:none}
+        ha-form.room-options{display:block;margin-bottom:24px;--ha-space-6:var(--ha-space-1,4px)}
+        ha-expansion-panel{display:block;--expansion-panel-content-padding:0;border-radius:var(--ha-border-radius-md);--ha-card-border-radius:var(--ha-border-radius-md)}
+        ha-expansion-panel .content{padding:12px}
+        ha-expansion-panel>*[slot="header"]{margin:0;font-size:inherit;font-weight:inherit}
+        ha-expansion-panel ha-icon{color:var(--secondary-text-color)}
+        .features-form{display:block;margin-top:var(--ha-space-6);margin-bottom:0}
+        .version{margin-top:24px;color:var(--secondary-text-color);font-size:12px;text-align:right}
+      
