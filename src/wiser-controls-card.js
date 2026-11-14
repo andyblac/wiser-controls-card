@@ -499,7 +499,7 @@
     const state = boostPresetState(feature);
     const minutes = boostMinutesRemaining(state);
     const mode = boostPresetWidthMode(feature.__wiserControlsBoostWidth || feature.clientWidth || 0);
-    if (!isControlsCardPresetFeature(feature) || !Number.isFinite(minutes) || mode === "icon") return options;
+    if (!isControlsCardPresetFeature(feature) || feature._config?.style === "icons" || !Number.isFinite(minutes) || mode === "icon") return options;
     const remaining = minutes > 0 ? `${minutes}m` : "<1m";
     const value = String(state.attributes.preset_mode || "Boost");
     const name = value.replace(/\s+<?\d+m$/i, "").trim() || "Boost";
@@ -520,16 +520,13 @@
     const show = isControlsCardPresetFeature(feature) && feature._config?.style === "icons"
       && feature._config.show_boost_remaining === true && available(state) && Number.isFinite(minutes);
     const count = control.options?.length || feature._getOptions?.().length || 0;
-    // Reserve 32px per icon, native gaps, and enough space for the active
-    // icon plus countdown. The outer inline row can then wrap this group.
-    const minimum = count * 32 + Math.max(0,count - 1) * 4 + 8 + (show ? 48 : 0);
+    // Preserve every preset icon and reserve additional space for the timer.
+    const minimum = count * 32 + Math.max(0,count - 1) * 4 + 8 + (show ? 84 : 0);
     boostPresetLayoutTarget(feature).style?.setProperty("--wiser-preset-min-width",`${minimum}px`);
-    const content = show ? root.querySelector(".option.selected .content") : undefined;
-    for (const icon of root.querySelectorAll?.(".wiser-boost-icon") || []) {
-      if (icon.parentElement !== content) icon.remove();
-    }
+    let countdown = root.querySelector(".wiser-preset-countdown");
     if (!show) {
       style?.remove();
+      countdown?.remove();
       control.style.removeProperty("--wiser-boost-remaining");
       return;
     }
@@ -537,30 +534,33 @@
       style = document.createElement("style");
       style.className = "wiser-boost-countdown";
       style.textContent = `
-        .container .option.selected {
-          order:1; flex:2 1 0; min-width:80px;
-          color:var(--secondary-text-color)!important;
-          background:transparent!important;
+        .wiser-preset-countdown {
+          position:relative; display:flex; align-items:center; justify-content:center;
+          gap:4px; flex:0 0 80px; color:var(--secondary-text-color);
+          background:transparent; pointer-events:none;
         }
-        .container .option.selected::before { opacity:0!important; }
-        .option.selected .content { flex-direction:row; gap:4px; }
-        .option.selected .content > :not(.wiser-boost-icon) { display:none; }
         .wiser-boost-icon { display:inline-flex; margin:0!important; --mdc-icon-size:20px; }
-        .option.selected .content::after {
+        .wiser-preset-countdown::after {
           content:var(--wiser-boost-remaining); white-space:nowrap;
           font-size:12px; font-variant-numeric:tabular-nums;
         }
       `;
       root.append(style);
     }
-    if (content && !content.querySelector(".wiser-boost-icon")) {
+    const container = root.querySelector(".container");
+    if (container && !countdown) {
+      countdown = document.createElement("span");
+      countdown.className = "wiser-preset-countdown";
       const icon = document.createElement("ha-icon");
       icon.className = "wiser-boost-icon";
       icon.icon = "mdi:timer-outline";
-      content.prepend(icon);
+      countdown.append(icon);
+      container.append(countdown);
     }
     const hass = feature.hass || controlsCardForPresetFeature(feature)?._hass;
     const label = text(hass,"minutes_short",{count:minutes});
+    countdown?.setAttribute?.("role","timer");
+    countdown?.setAttribute?.("aria-label",label);
     control.style.setProperty("--wiser-boost-remaining",JSON.stringify(label));
   };
   const syncBoostPresetFeature = feature => {
@@ -604,32 +604,68 @@
     feature.__wiserControlsBoostTimer = feature.__wiserControlsBoostLayoutFrame = feature.__wiserControlsBoostObserver = undefined;
   };
   let boostPresetPatchPromise;
+  const renderHotWaterPresetIcons = (feature,state) => {
+    const supported = hotWaterPresetModes(state);
+    const modes = (feature._config.preset_modes || supported).filter(mode => supported.includes(mode));
+    let control = feature._wiserIconControl;
+    if (!control) {
+      const style = document.createElement("style");
+      style.textContent = `
+        :host { display:block; height:var(--feature-height,42px); }
+        ha-control-select {
+          --control-select-thickness:var(--feature-height,42px);
+          --control-select-border-radius:var(--feature-border-radius,12px);
+          --control-select-color:var(--feature-color,var(--state-water_heater-active-color,var(--primary-color)));
+        }
+      `;
+      control = document.createElement("ha-control-select");
+      control.hideOptionLabel = true;
+      control.label = feature._hass?.localize?.("ui.card.climate.preset") || "Preset";
+      control.addEventListener("value-changed",feature._valueChanged);
+      feature._wiserIconControl = control;
+      feature._wiserIconSignature = undefined;
+      feature.shadowRoot.replaceChildren(style,control);
+    }
+    const signature = JSON.stringify(modes.map(mode => [mode,feature._presetIcon?.(mode,state)]));
+    if (signature !== feature._wiserIconSignature) {
+      control.options = modes.map(mode => {
+        const icon = document.createElement("ha-icon");
+        icon.icon = feature._presetIcon?.(mode,state) || "mdi:water";
+        return {value:mode,label:mode,ariaLabel:mode,icon};
+      });
+      feature._wiserIconSignature = signature;
+    }
+    control.value = modes.includes(state.state) ? state.state : undefined;
+    control.disabled = !available(state);
+    feature.style.display = modes.length ? "" : "none";
+    feature.style.gridRow = "";
+  };
   const patchHotWaterPresetFeature = async () => {
     if (typeof customElements.whenDefined !== "function") return;
     await customElements.whenDefined(HOT_WATER_PRESETS_FEATURE);
     const Feature = customElements.get(HOT_WATER_PRESETS_FEATURE);
     if (!Feature || Feature.prototype.__wiserPresetOptions) return;
     const prototype = Feature.prototype;
-    const originalGroups = prototype._modeGroups;
-    prototype._modeGroups = function (state) {
-      if (!isControlsCardPresetFeature(this) || !this._config?.style) return originalGroups.call(this,state);
-      const available = hotWaterPresetModes(state);
-      const modes = (this._config.preset_modes || available).filter(mode => available.includes(mode));
-      return modes.length ? [{style:this._config.style === "icons" ? "icons" : "list",modes}] : [];
+    const originalAvailableModes = prototype._availableModes;
+    prototype._availableModes = function (state) {
+      if (!isControlsCardPresetFeature(this) || !this._config?.style) return originalAvailableModes.call(this,state);
+      const supported = hotWaterPresetModes(state);
+      return (this._config.preset_modes || supported).filter(mode => supported.includes(mode));
     };
     const originalRender = prototype._render;
     prototype._render = function (...args) {
-      const result = originalRender.apply(this,args);
-      if (!isControlsCardPresetFeature(this)) return result;
-      for (const {element} of this._selects || []) {
-        if (element.localName !== "ha-control-select") continue;
-        element.options = element.options.map(option => {
-          if (typeof option.icon !== "string") return option;
-          const icon = document.createElement("ha-icon");
-          icon.icon = option.icon;
-          return {...option,icon};
-        });
+      const icons = isControlsCardPresetFeature(this) && this._config?.style === "icons" && this._stateObj;
+      let result;
+      if (icons) {
+        clearTimeout(this._boostCountdownTimer);
+        renderHotWaterPresetIcons(this,this._stateObj);
+      } else {
+        if (this._wiserIconControl) {
+          this._wiserIconControl = this._select = this._selects = this._renderSignature = undefined;
+        }
+        result = originalRender.apply(this,args);
       }
+      if (!isControlsCardPresetFeature(this)) return result;
       syncBoostPresetFeature(this);
       void styleBoostPresetIcons(this);
       return result;
@@ -784,7 +820,8 @@
     _scheduleStoredHotWaterBoostUpdate(rooms) {
       clearTimeout(this._storedHotWaterBoostTimer);
       if (!this.isConnected) return;
-      const delays = rooms.map(storedHotWaterBoostRemaining).filter(remaining => remaining > 0)
+      const delays = rooms.map(room => isHotWater(room) && available(room) && room.attributes.is_boosted
+        ? Date.parse(room.attributes.boost_end) - Date.now() : NaN).filter(remaining => remaining > 0)
         .map(remaining => remaining % 60_000 || 60_000);
       if (delays.length) this._storedHotWaterBoostTimer = setTimeout(() => this._render(), Math.min(...delays));
     }
@@ -1569,6 +1606,30 @@
       catch (error) { this._error = `Could not boost ${this._name(room)}: ${error.message || error}`; }
       finally { this._busy = false; this._render(); }
     }
+    _hotWaterBoostCancelTarget(room) {
+      if (!isHotWater(room) || !available(room) || !room.attributes.is_boosted) return null;
+      if (isOpenThermHotWater(room)) {
+        const mode = room.attributes.operation_list?.find(value => String(value).toLowerCase() === "auto");
+        return mode ? {room,domain:"water_heater",service:"set_operation_mode",data:{entity_id:room.entity_id,operation_mode:mode}} : null;
+      }
+      if (isStoredHotWaterSwitch(room)) {
+        const hub = this._entries?.find(entry => entry.entity_id === room.entity_id)?.config_entry_id;
+        return hub ? {room,domain:"wiser",service:"boost_hotwater",data:{hub,time_period:0}} : null;
+      }
+      return supportsPreset(room,"cancel_overrides") ? {room,domain:"climate",service:"set_preset_mode",
+        data:{entity_id:room.entity_id,preset_mode:presetMode(room,"cancel_overrides")}} : null;
+    }
+    async _cancelHotWaterBoosts() {
+      if (this._busy || !selectedTypes(this._config).includes("hot_water")) return;
+      const targets = this._rooms().map(room => this._hotWaterBoostCancelTarget(room)).filter(Boolean);
+      if (!targets.length) return;
+      this._hotWaterBoostMenuOpen = false;
+      this._busy = true; this._error = ""; this._render();
+      const results = await Promise.allSettled(targets.map(target => this._hass.callService(target.domain,target.service,target.data)));
+      const failed = targets.filter((_,index) => results[index].status === "rejected");
+      if (failed.length) this._error = `Could not cancel boosts: ${failed.map(target => this._name(target.room)).join(", ")}. Please retry.`;
+      this._busy = false; this._render();
+    }
     async _cancelAllBoosts() {
       if (this._busy || !selectedTypes(this._config).includes("heating")) return;
       const rooms = this._rooms().filter(room => deviceType(room) === "heating" && available(room)
@@ -1664,7 +1725,7 @@
       }
       const headerAction = button.dataset.action;
       if (!this._headerControlsAllowed() && ([
-        "hot-water-boost-menu", "hot-water-boost-option", "boost-menu", "boost-duration",
+        "hot-water-boost-menu", "hot-water-boost-option", "cancel-hot-water-boosts", "boost-menu", "boost-duration",
         "all-off", "cancel-overrides", "follow-schedule", "cancel-all-boosts", "all-close",
         "all-lights-off", "all-plugs-off", "all-hot_water-off",
       ].includes(headerAction) || headerAction?.startsWith("resume-"))) return;
@@ -1678,6 +1739,7 @@
         this._hotWaterBoostMenuOpen = false;
         return this._boostHotWater(button.dataset.entity, button.dataset.boostOption);
       }
+      if (button.dataset.action === "cancel-hot-water-boosts") return this._cancelHotWaterBoosts();
       if (button.dataset.action === "boost-menu") { this._boostMenuOpen = !this._boostMenuOpen; this._render(); return; }
       if (button.dataset.action === "all-off") { this._allOff(); return; }
       if (button.dataset.action === "cancel-overrides") { this._cancelAllOverrides(); return; }
@@ -1894,6 +1956,12 @@
         return `<ha-button class="off resume-schedules${section ? " section-action" : ""}" data-action="resume-${type}" size="m" appearance="filled" variant="brand" ${this._busy || !canResume(type) ? "disabled" : ""} title="${title}" aria-label="${title}"><ha-icon slot="start" icon="mdi:calendar-sync"></ha-icon><span class="action-label">${escape(text(this._hass,"resume_schedules"))}</span></ha-button>`;
       };
       const hotWaterBoostAction = section => {
+        const boosted = rooms.filter(room => isHotWater(room) && available(room) && room.attributes.is_boosted);
+        if (boosted.length) {
+          const remaining = boosted.map(boostMinutesRemaining).filter(Number.isFinite);
+          const countdown = remaining.length ? text(this._hass,"minutes_short",{count:Math.min(...remaining)}) : "";
+          return `<ha-button class="off cancel-all-boosts${section ? " section-action" : ""}" data-action="cancel-hot-water-boosts" size="m" appearance="filled" variant="brand" ${this._busy || !boosted.some(room => this._hotWaterBoostCancelTarget(room)) ? "disabled" : ""} title="${cancelBoostsTitle}" aria-label="${cancelBoostsTitle}"><ha-icon slot="start" icon="mdi:fire-off"></ha-icon><span class="action-label"><span>${escape(text(this._hass,"cancel_all"))}</span>${countdown ? `<small>${escape(countdown)}</small>` : ""}</span></ha-button>`;
+        }
         const targets = rooms.filter(room => isHotWater(room) && available(room))
           .map(room => ({room, options:this._hotWaterBoostOptions(room)}))
           .filter(target => target.options.length);

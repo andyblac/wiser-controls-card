@@ -8,7 +8,7 @@ function setup({presetFeature,hotWaterPresetFeature} = {}) {
   let Card, Editor;
   const elements = {};
   const context = {Intl, setTimeout, clearTimeout, window: {},
-    document: {createElement() { return {style:{}, listeners:{}, append(){}, addEventListener(name, listener) { this.listeners[name] = listener; }}; }},
+    document: {createElement(localName) { return {localName,style:{}, listeners:{}, append(){}, addEventListener(name, listener) { this.listeners[name] = listener; }}; }},
     CustomEvent: class { constructor(type, options) { this.type = type; Object.assign(this, options); } },
     HTMLElement: class {
     attachShadow() { this.shadowRoot = {addEventListener() {}, append() {}, innerHTML: ''}; }
@@ -72,6 +72,27 @@ function setup({presetFeature,hotWaterPresetFeature} = {}) {
   card._entries = Object.keys(states).map(entity_id => ({entity_id, platform:entity_id === 'climate.other' ? 'other' : 'wiser', config_entry_id:entity_id === 'climate.lounge' ? 'hub-b' : 'hub-a'}));
   return {card, calls, states, Editor, elements, window:context.window, context};
 }
+function presetSelectFixture(context) {
+  const createElement = context.document.createElement;
+  context.document.createElement = name => {
+    const node = createElement(name);
+    node.children = [];
+    node.append = (...children) => node.children.push(...children);
+    return node;
+  };
+  const properties = {};
+  let style, countdown;
+  const container = {append(node){countdown=node;node.remove=()=>{countdown=undefined;};}};
+  const control = {localName:'ha-control-select',
+    style:{setProperty:(key,value)=>{properties[key]=value;},removeProperty:key=>{delete properties[key];}},
+    shadowRoot:{
+      querySelector:selector => selector === '.container' ? container : selector === '.wiser-preset-countdown' ? countdown : style,
+      append(node){style=node;node.remove=()=>{style=undefined;};},
+    },
+  };
+  return {control,properties,stylesheet:()=>style,countdown:()=>countdown};
+}
+
 test('master off excludes hot water, other integrations, unavailable and already off rooms', async () => {
   const {card,calls,states} = setup();
   states['climate.lounge'].state = 'off';
@@ -2025,34 +2046,16 @@ test('preset icon countdown keeps the native preset feature without adding a Boo
   assert.doesNotMatch(card._nativeMarkup(states[id]),/custom:wiser-boost-feature/);
 });
 
-test('remaining boost time is attached to the selected preset icon only while enabled and boosted', async () => {
+test('remaining boost time follows the preset icons without replacing the active preset', async () => {
   class PresetFeature {
     _getOptions() { return [{value:'Boost 30m',label:'Boost 30m'}]; }
     requestUpdate() {}
   }
-  const {card,states} = setup({presetFeature:PresetFeature});
+  const {card,states,context} = setup({presetFeature:PresetFeature});
   await new Promise(resolve => setImmediate(resolve));
   const feature = new PresetFeature();
-  const properties = {};
+  const {control,properties,stylesheet,countdown} = presetSelectFixture(context);
   const hostProperties = {};
-  let injected;
-  let countdownIcon;
-  const selectedContent = {
-    querySelector:() => countdownIcon,
-    prepend(icon) {
-      countdownIcon = icon;
-      icon.parentElement = selectedContent;
-      icon.remove = () => {countdownIcon = undefined;};
-    },
-  };
-  const control = {
-    style:{setProperty:(key,value) => {properties[key] = value;},removeProperty:key => {delete properties[key];}},
-    shadowRoot:{
-      querySelector:selector => selector === '.option.selected .content' ? selectedContent : injected,
-      querySelectorAll:() => countdownIcon ? [countdownIcon] : [],
-      append(style){injected = style;style.remove = () => {injected = undefined;};},
-    },
-  };
   feature.shadowRoot = {querySelector:() => control};
   const host = {localName:'wiser-controls-card',_hass:card._hass,getBoundingClientRect:() => ({width:300}),
     style:{setProperty:(key,value) => {hostProperties[key] = value;}}};
@@ -2064,33 +2067,33 @@ test('remaining boost time is attached to the selected preset icon only while en
   try {
     await update();
     assert.equal(properties['--wiser-boost-remaining'],'"29 min"');
-    assert.equal(countdownIcon.icon,'mdi:timer-outline');
-    assert.match(injected.textContent,/\.option\.selected \.content::after/);
-    assert.match(injected.textContent,/min-width:80px/);
-    assert.match(injected.textContent,/order:1/);
-    assert.match(injected.textContent,/color:var\(--secondary-text-color\)/);
-    assert.match(injected.textContent,/\.container \.option\.selected::before \{ opacity:0!important; \}/);
+    assert.equal(countdown().children[0].icon,'mdi:timer-outline');
+    assert.match(stylesheet().textContent,/\.wiser-preset-countdown::after/);
+    assert.match(stylesheet().textContent,/flex:0 0 80px/);
+    assert.match(stylesheet().textContent,/color:var\(--secondary-text-color\)/);
+    assert.doesNotMatch(stylesheet().textContent,/\.option|display:none/);
+    assert.equal(feature._getOptions()[0].label,'Boost 30m');
     control.options = Array.from({length:7},(_,index) => ({value:String(index)}));
     await update();
-    assert.equal(hostProperties['--wiser-preset-min-width'],'304px');
+    assert.equal(hostProperties['--wiser-preset-min-width'],'340px');
     feature._stateObj.attributes.boost_time_remaining = 28;
     await update();
     assert.equal(properties['--wiser-boost-remaining'],'"28 min"');
     feature._stateObj.attributes.is_boosted = false;
     await update();
-    assert.equal(injected,undefined);
-    assert.equal(countdownIcon,undefined);
+    assert.equal(stylesheet(),undefined);
+    assert.equal(countdown(),undefined);
     assert.equal(properties['--wiser-boost-remaining'],undefined);
     assert.equal(hostProperties['--wiser-preset-min-width'],'256px');
     feature._stateObj.attributes.is_boosted = true;
     feature._config.show_boost_remaining = false;
     await update();
-    assert.equal(injected,undefined);
+    assert.equal(stylesheet(),undefined);
     feature._config = {style:'dropdown',show_boost_remaining:true};
     const options = feature._getOptions();
     assert.match(options[0].label,/29m|28m/);
     await update();
-    assert.equal(injected,undefined);
+    assert.equal(stylesheet(),undefined);
   } finally {
     feature.disconnectedCallback();
   }
@@ -2161,8 +2164,18 @@ test('hot-water preset editor supports styles, custom order and the icon-only co
 
 test('OpenTherm presets honour Wiser style and order without changing other cards or default settings', async () => {
   class HotWaterPresetFeature {
-    _modeGroups() { return [{style:'list',modes:['Shower']}]; }
-    _render() { this.groups = this._modeGroups(this._stateObj); }
+    constructor() {
+      this.style = {};
+      this.shadowRoot = {querySelector:() => this._wiserIconControl,replaceChildren:(style,control) => {this.renderedControl=control;}};
+      this._valueChanged = event => {this.chosenMode=event.detail.value;};
+    }
+    _availableModes() { return ['Shower']; }
+    // This deployed OpenTherm version always renders a dropdown and caches it.
+    _render() {
+      this.menuModes = this._availableModes(this._stateObj);
+      this._select ||= {localName:'ha-control-select-menu'};
+      this.renderedControl = this._select;
+    }
     requestUpdate() {}
   }
   const {card} = setup({hotWaterPresetFeature:HotWaterPresetFeature});
@@ -2177,20 +2190,24 @@ test('OpenTherm presets honour Wiser style and order without changing other card
   try {
     feature._config = {};
     feature._render();
-    assert.equal(feature.groups[0].style,'list');
-    assert.equal(feature.groups[0].modes.join(','),'Shower');
+    assert.equal(feature.renderedControl.localName,'ha-control-select-menu');
+    assert.equal(feature.menuModes.join(','),'Shower');
     feature._config = {style:'icons',preset_modes:['Comfort','Shower','Invalid'],show_boost_remaining:true};
     feature._render();
-    assert.equal(feature.groups[0].style,'icons');
-    assert.equal(feature.groups[0].modes.join(','),'Comfort,Shower');
+    assert.equal(feature.renderedControl.localName,'ha-control-select');
+    assert.equal(feature.renderedControl.options.map(option => option.value).join(','),'Comfort,Shower');
+    assert.equal(feature.renderedControl.hideOptionLabel,true);
+    feature.renderedControl.listeners['value-changed']({detail:{value:'Comfort'}});
+    assert.equal(feature.chosenMode,'Comfort');
     feature._config.style = 'dropdown';
     feature._render();
-    assert.equal(feature.groups[0].style,'list');
+    assert.equal(feature.renderedControl.localName,'ha-control-select-menu');
+    assert.equal(feature.menuModes.join(','),'Comfort,Shower');
     feature.getRootNode = () => ({host:{localName:'hui-tile-card'}});
     feature._config.style = 'icons';
     feature._render();
-    assert.equal(feature.groups[0].style,'list');
-    assert.equal(feature.groups[0].modes.join(','),'Shower');
+    assert.equal(feature.renderedControl.localName,'ha-control-select-menu');
+    assert.equal(feature.menuModes.join(','),'Shower');
     assert.equal(typeof HotWaterPresetFeature.getConfigElement,'function');
     card.setConfig({entities:[state.entity_id],device_options:{[state.entity_id]:{features_position:'inline',features:[
       {type:'custom:opentherm-hot-water-control-presets-feature',style:'icons',show_boost_remaining:true},
@@ -2203,24 +2220,20 @@ test('OpenTherm presets honour Wiser style and order without changing other card
 
 test('hot-water preset icons reuse the neutral stopwatch countdown and clear it after boosting', async () => {
   class HotWaterPresetFeature {
-    _modeGroups() { return []; }
+    _availableModes() { return ['Shower']; }
+    _presetIcon() { return 'mdi:shower'; }
     _render() {}
     requestUpdate() {}
   }
-  const {card} = setup({hotWaterPresetFeature:HotWaterPresetFeature});
-  const state = addHotWater(card,{is_boosted:true,boost_time_remaining:18});
+  const {card,context} = setup({hotWaterPresetFeature:HotWaterPresetFeature});
+  const state = addHotWater(card,{is_boosted:true,boost_time_remaining:18,
+    operation_list:['Auto','Shower'],opentherm_presets:[{name:'Shower',duration_minutes:30}]});
   state.state = 'Shower';
   await new Promise(resolve => setImmediate(resolve));
   const feature = new HotWaterPresetFeature();
-  const properties = {};
-  let injected, icon;
-  const content = {querySelector:() => icon,prepend(value){icon=value;icon.parentElement=content;icon.remove=()=>{icon=undefined;};}};
-  const select = {localName:'ha-control-select',options:[{value:'Shower',label:'Shower',icon:'mdi:shower'}],
-    style:{setProperty:(key,value)=>{properties[key]=value;},removeProperty:key=>{delete properties[key];}},
-    shadowRoot:{querySelector:selector=>selector === '.option.selected .content' ? content : injected,
-      querySelectorAll:()=>icon?[icon]:[],append(style){injected=style;style.remove=()=>{injected=undefined;};}},
-  };
-  feature._selects = [{element:select,modes:['Shower']}];
+  const {control:select,properties,stylesheet,countdown} = presetSelectFixture(context);
+  feature.style = {};
+  feature._wiserIconControl = select;
   feature.shadowRoot = {querySelector:() => select};
   feature.getRootNode = () => ({host:{localName:'wiser-controls-card',_hass:card._hass,getBoundingClientRect:() => ({width:300})}});
   feature._stateObj = state;
@@ -2229,14 +2242,15 @@ test('hot-water preset icons reuse the neutral stopwatch countdown and clear it 
     feature._render();
     await Promise.resolve();
     assert.equal(properties['--wiser-boost-remaining'],'"18 min"');
-    assert.equal(icon.icon,'mdi:timer-outline');
+    assert.equal(countdown().children[0].icon,'mdi:timer-outline');
     assert.equal(select.options[0].icon.icon,'mdi:shower');
-    assert.match(injected.textContent,/opacity:0!important/);
+    assert.equal(select.options[0].value,'Shower');
+    assert.doesNotMatch(stylesheet().textContent,/\.option|display:none/);
     state.attributes.is_boosted = false;
     feature._render();
     await Promise.resolve();
-    assert.equal(injected,undefined);
-    assert.equal(icon,undefined);
+    assert.equal(stylesheet(),undefined);
+    assert.equal(countdown(),undefined);
     assert.equal(properties['--wiser-boost-remaining'],undefined);
   } finally { feature.disconnectedCallback(); }
 });
@@ -2829,6 +2843,54 @@ test('Stored hot water shows the hub boost countdown beside the switch state', (
   stored.attributes.boost_end = new Date(Date.now() - 60_000).toISOString();
   card._render();
   assert.doesNotMatch(card.shadowRoot.innerHTML, /class="status-item">Boost/);
+});
+
+test('hot-water header changes from Boost to Cancel all with the reported countdown and restores after cancellation', async () => {
+  const {card,calls} = setup();
+  const water = addHotWater(card,{opentherm_presets:[{name:'Boost 30 Mins',duration_minutes:30,temperature:55}]});
+  card.setConfig({device_types:['hot_water']});
+  assert.match(card.shadowRoot.innerHTML,/data-action="hot-water-boost-menu"[^>]*variant="danger"/);
+  Object.assign(water.attributes,{is_boosted:true,boost_time_remaining:15,boost_end:new Date(Date.now()+14.5*60000).toISOString()});
+  water.state = 'Boost 30 Mins';
+  card._render();
+  assert.match(card.shadowRoot.innerHTML,/data-action="cancel-hot-water-boosts"[^>]*variant="brand"/);
+  assert.match(card.shadowRoot.innerHTML,/<span>Cancel all<\/span><small>15 min<\/small>/);
+  assert.doesNotMatch(card.shadowRoot.innerHTML,/data-action="hot-water-boost-menu"/);
+  water.attributes.boost_time_remaining = 14;
+  card._render();
+  assert.match(card.shadowRoot.innerHTML,/<small>14 min<\/small>/);
+  await card._click({target:{closest:()=>({dataset:{action:'cancel-hot-water-boosts'}})}});
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)),[['water_heater','set_operation_mode',{entity_id:water.entity_id,operation_mode:'Auto'}]]);
+  water.attributes.is_boosted = false;
+  water.state = 'Auto';
+  card._render();
+  assert.match(card.shadowRoot.innerHTML,/data-action="hot-water-boost-menu"[^>]*variant="danger"/);
+  assert.doesNotMatch(card.shadowRoot.innerHTML,/data-action="cancel-hot-water-boosts"/);
+});
+
+test('cancel hot-water boosts targets each active device and hub without touching heating or idle devices', async () => {
+  const {card,calls,states} = setup();
+  const water = addHotWater(card,{is_boosted:true,boost_time_remaining:18});
+  addHotWater(card,{is_boosted:false},'water_heater.idle');
+  const offline = addHotWater(card,{is_boosted:true},'water_heater.offline');
+  offline.state = 'unavailable';
+  const stored = addStoredHotWaterSwitch(card,{is_boosted:true,boost_time_remaining:12});
+  card._entries.find(entry=>entry.entity_id===stored.entity_id).config_entry_id='hub-b';
+  const climate = addStoredHotWaterClimate(card,{is_boosted:true,boost_time_remaining:20});
+  states['climate.bedroom'].attributes.is_boosted = true;
+  card.setConfig({device_types:['heating','hot_water']});
+  assert.match(card.shadowRoot.innerHTML,/<span>Cancel all<\/span><small>12 min<\/small>/);
+  await card._cancelHotWaterBoosts();
+  const actual = JSON.parse(JSON.stringify(calls)).sort((a,b)=>a[0].localeCompare(b[0]));
+  assert.deepEqual(actual,[
+    ['climate','set_preset_mode',{entity_id:climate.entity_id,preset_mode:'Cancel Overrides'}],
+    ['water_heater','set_operation_mode',{entity_id:water.entity_id,operation_mode:'Auto'}],
+    ['wiser','boost_hotwater',{hub:'hub-b',time_period:0}],
+  ]);
+  card.setConfig({device_types:['hot_water'],admin_only_header_controls:true});
+  card._hass.user = {is_admin:false};
+  await card._click({target:{closest:()=>({dataset:{action:'cancel-hot-water-boosts'}})}});
+  assert.equal(calls.length,3);
 });
 
 test('Hot Water boost menu routes a duration to the selected stored hot-water hub', async () => {
