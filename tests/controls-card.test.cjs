@@ -61,7 +61,7 @@ function setup() {
   card.setConfig({});
   card._hass = {states, language:'en', config:{unit_system:{temperature:'°C'}}, localize:key => nativeText[key] || key, callService:async (...args) => calls.push(args)};
   card._entries = Object.keys(states).map(entity_id => ({entity_id, platform:entity_id === 'climate.other' ? 'other' : 'wiser', config_entry_id:entity_id === 'climate.lounge' ? 'hub-b' : 'hub-a'}));
-  return {card, calls, states, Editor, elements, window:context.window};
+  return {card, calls, states, Editor, elements, window:context.window, context};
 }
 test('master off excludes hot water, other integrations, unavailable and already off rooms', async () => {
   const {card,calls,states} = setup();
@@ -2537,8 +2537,8 @@ test('card uses native Home Assistant entity icons and action buttons', () => {
 
 test('mobile headers use compact icon-only native bulk actions', () => {
   const source = loadCardSource();
-  assert.match(source, /header\.stacked-summary \{[\s\S]*?display:grid;[\s\S]*?grid-template-columns:minmax\(0,1fr\) auto/);
-  assert.match(source, /header\.stacked-summary>div:first-child \{[\s\S]*?display:contents[\s\S]*?header\.stacked-summary p \{[\s\S]*?grid-column:1 \/ -1;[\s\S]*?grid-row:2;[\s\S]*?text-align:right/);
+  assert.match(source, /:is\(header,\.section-title\)\.stacked-summary \{[\s\S]*?display:grid;[\s\S]*?grid-template-columns:minmax\(0,1fr\) auto/);
+  assert.match(source, /:is\(header,\.section-title\)\.stacked-summary>div:first-child \{[\s\S]*?display:contents[\s\S]*?:is\(header,\.section-title\)\.stacked-summary p \{[\s\S]*?grid-column:1 \/ -1;[\s\S]*?grid-row:2;[\s\S]*?text-align:right/);
   assert.match(source, /@container \(max-width: 480px\)[\s\S]*?header \.bulk-actions,\.section-title \.bulk-actions \{[\s\S]*?width:auto;[\s\S]*?justify-content:flex-end/);
   assert.match(source, /header \.bulk-actions \.off,\.section-title \.bulk-actions \.off \{[\s\S]*?--ha-button-height:40px;[\s\S]*?flex:0 0 44px;[\s\S]*?position:relative/);
   assert.match(source, /\.bulk-actions \.action-label \{[\s\S]*?display:none/);
@@ -2554,6 +2554,35 @@ test('heating summaries stack only when their rendered content does not fit', ()
   const source = loadCardSource();
   assert.match(source, /summaryWidth \+ actionsWidth \+ headerGap > available/);
   assert.match(source, /classList\.toggle\("stacked-summary"/);
+});
+
+test('header actions switch to icons when labels overlap the title and restore on widening', () => {
+  const {card,context} = setup();
+  const classes = new Set();
+  const title = {textContent:'Heating'};
+  const summary = {children:[title,{textContent:'3 of 5 rooms heating · 1 override · next ends in 20m'}],
+    querySelector:() => title};
+  const actions = {children:[110,150,180,96].map(width => ({
+    getBoundingClientRect:() => ({width:classes.has('compact-actions') ? 44 : width}),
+  }))};
+  const header = {clientWidth:500,firstElementChild:summary,
+    querySelector:() => actions,append(){},
+    classList:{remove:name => classes.delete(name),toggle(name,on){if(on) classes.add(name); else classes.delete(name);}},
+  };
+  context.getComputedStyle = () => ({columnGap:'4',paddingLeft:'16',paddingRight:'16',font:'14px sans-serif'});
+  context.document.createElement = () => ({style:{},getBoundingClientRect(){return {width:this.textContent.length * 7};},remove(){}});
+  card.shadowRoot.querySelectorAll = selector => selector === 'header[data-key="header"], .section-title' ? [header] : [];
+  card._layoutHeaders();
+  assert.equal(classes.has('compact-actions'),true);
+  assert.equal(classes.has('stacked-summary'),true);
+  header.clientWidth = 750;
+  card._layoutHeaders();
+  assert.equal(classes.has('compact-actions'),false);
+  assert.equal(classes.has('stacked-summary'),true);
+  header.clientWidth = 1100;
+  card._layoutHeaders();
+  assert.equal(classes.has('compact-actions'),false);
+  assert.equal(classes.has('stacked-summary'),false);
 });
 
 test('localization follows the other Wiser cards and prefers Home Assistant text', () => {

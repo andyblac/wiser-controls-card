@@ -698,13 +698,16 @@
         header.classList.toggle("inline-readings", needed <= header.clientWidth);
       }
       this._observedHeaders = headers;
-      const bulkHeaders = new Set(this.shadowRoot.querySelectorAll?.('header[data-key="header"]') || []);
+      const bulkHeaders = new Set(this.shadowRoot.querySelectorAll?.('header[data-key="header"], .section-title') || []);
       for (const header of this._observedBulkHeaders) if (!bulkHeaders.has(header)) this._headerObserver?.unobserve(header);
       for (const header of bulkHeaders) {
         if (!this._observedBulkHeaders.has(header)) this._headerObserver?.observe(header);
         const summary = header.firstElementChild;
         const actions = header.querySelector(".bulk-actions");
         if (!summary || !actions) continue;
+        // Measure the labelled controls first so widening the card restores
+        // their text instead of keeping a previously compact header.
+        header.classList.remove("compact-actions");
         const measureText = node => {
           if (!node?.textContent) return 0;
           const probe = document.createElement("span");
@@ -719,11 +722,14 @@
         const summaryWidth = Math.max(0, ...Array.from(summary.children).map(measureText));
         const actionItems = Array.from(actions.children);
         const actionGap = parseFloat(getComputedStyle(actions).columnGap) || 0;
-        const actionsWidth = actionItems.reduce((width, item) => width + item.getBoundingClientRect().width, 0)
+        const measureActions = () => actionItems.reduce((width, item) => width + item.getBoundingClientRect().width, 0)
           + Math.max(0, actionItems.length - 1) * actionGap;
         const headerStyle = getComputedStyle(header);
         const available = header.clientWidth - (parseFloat(headerStyle.paddingLeft) || 0) - (parseFloat(headerStyle.paddingRight) || 0);
         const headerGap = parseFloat(headerStyle.columnGap) || 0;
+        const titleWidth = measureText(summary.querySelector("h2, h3"));
+        header.classList.toggle("compact-actions", titleWidth + measureActions() + headerGap > available);
+        const actionsWidth = measureActions();
         header.classList.toggle("stacked-summary", summaryWidth + actionsWidth + headerGap > available);
       }
       this._observedBulkHeaders = bulkHeaders;
@@ -2271,37 +2277,39 @@
         .error {
           color:var(--error-color)
         }
-        header.stacked-summary {
+        :is(header,.section-title).stacked-summary {
           display:grid;
           grid-template-columns:minmax(0,1fr) auto;
           align-items:start;
           gap:8px
         }
-        header.stacked-summary>div:first-child {
+        :is(header,.section-title).stacked-summary>div:first-child {
           display:contents
         }
-        header.stacked-summary h2 {
+        :is(header,.section-title).stacked-summary :is(h2,h3) {
           grid-column:1;
           grid-row:1;
           align-self:center;
           white-space:nowrap
         }
-        header.stacked-summary p {
+        :is(header,.section-title).stacked-summary p {
           grid-column:1 / -1;
           grid-row:2;
           min-width:0;
           text-align:right
         }
-        header.stacked-summary .bulk-actions {
+        :is(header,.section-title).stacked-summary .bulk-actions {
           width:auto;
           flex-wrap:nowrap;
           justify-content:flex-end;
           grid-column:2;
           grid-row:1
         }
+        :is(header,.section-title).compact-actions .bulk-actions .action-label,
         ha-card.header-controls-icon-only .bulk-actions .action-label {
           display:none
         }
+        :is(header,.section-title).compact-actions .bulk-actions .off,
         ha-card.header-controls-icon-only header .bulk-actions .off,
         ha-card.header-controls-icon-only .section-title .bulk-actions .off {
           --ha-button-height:40px;
@@ -2310,6 +2318,7 @@
           min-width:44px;
           position:relative
         }
+        :is(header,.section-title).compact-actions .bulk-actions .off ha-icon,
         ha-card.header-controls-icon-only header .bulk-actions .off ha-icon,
         ha-card.header-controls-icon-only .section-title .bulk-actions .off ha-icon {
           position:absolute;
