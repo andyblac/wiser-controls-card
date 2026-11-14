@@ -7,7 +7,7 @@
   "cancel_overrides": "Felülbírálások megszüntetése",
   "follow_schedule": "Ütemezés követése",
   "boost": "Gyorsfelfűtés",
-  "cancel_boost": "Rásegítés megszakítása",
+  "show_boost_remaining": "Hátralévő rásegítési idő megjelenítése",
   "boost_hot_water": "Meleg víz gyorsfelfűtése",
   "boost_all": "Összes gyorsfelfűtése",
   "cancel_all": "Összes megszüntetése",

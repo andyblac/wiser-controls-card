@@ -7,7 +7,7 @@
   "cancel_overrides": "Peruuta ohitukset",
   "follow_schedule": "Noudata aikataulua",
   "boost": "Tehosta",
-  "cancel_boost": "Peruuta tehostus",
+  "show_boost_remaining": "Näytä tehostuksen jäljellä oleva aika",
   "boost_hot_water": "Tehosta käyttöveden lämmitystä",
   "boost_all": "Tehosta kaikkea",
   "cancel_all": "Peruuta kaikki",

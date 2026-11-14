@@ -7,7 +7,7 @@
   "cancel_overrides": "Avbryt åsidosättningar",
   "follow_schedule": "Följ schemat",
   "boost": "Öka",
-  "cancel_boost": "Avbryt boost",
+  "show_boost_remaining": "Visa återstående boosttid",
   "boost_hot_water": "Öka varmvattenuppvärmningen",
   "boost_all": "Öka alla",
   "cancel_all": "Avbryt alla",

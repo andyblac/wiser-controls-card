@@ -1,6 +1,77 @@
   const EDITOR_SETTINGS_ROW_HEIGHT = "48px";
   const EDITOR_SETTINGS_ROW_GAP = "var(--ha-space-1,4px)";
 
+  class WiserHotWaterPresetsEditor extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({mode:"open"});
+      this._form = document.createElement("ha-form");
+      this._form.computeLabel = schema => schema.label || "";
+      this._form.addEventListener("value-changed", event => {
+        event.stopPropagation();
+        const {customize_modes:customize, ...value} = event.detail.value;
+        const config = {...this._config,...value};
+        if (!customize) delete config.preset_modes;
+        else if (!Array.isArray(config.preset_modes)) config.preset_modes = hotWaterPresetModes(this._state());
+        if (!config.show_boost_remaining) delete config.show_boost_remaining;
+        this.setConfig(config);
+        this.dispatchEvent(new CustomEvent("config-changed",{bubbles:true,composed:true,detail:{config}}));
+      });
+      this.shadowRoot.append(this._form);
+    }
+    setConfig(config) { this._config = {...config}; this._render(); }
+    set hass(value) { this._hass = value; this._render(); }
+    get hass() { return this._hass; }
+    set context(value) { this._context = value; this._render(); }
+    get context() { return this._context; }
+    _state() { return this._hass?.states[this._context?.entity_id]; }
+    _render() {
+      if (!this._hass || !this._config) return;
+      const native = (key,fallback) => {
+        const path = `ui.panel.lovelace.editor.features.types.climate-preset-modes.${key}`;
+        const label = this._hass.localize?.(path);
+        return label && label !== path ? label : fallback;
+      };
+      const style = this._config.style || "dropdown";
+      const customize = {name:"customize_modes",label:native("customize_modes","Customise preset modes"),selector:{boolean:{}}};
+      this._form.hass = this._hass;
+      this._form.schema = [
+        {name:"style",label:native("style","Style"),selector:{select:{mode:"list",options:[
+          {value:"dropdown",label:native("style_list.dropdown","Dropdown")},
+          {value:"icons",label:native("style_list.icons","Icons")},
+        ]}}},
+        ...(style === "icons" ? [{name:"",type:"grid",schema:[customize,
+          {name:"show_boost_remaining",label:text(this._hass,"show_boost_remaining"),selector:{boolean:{}}},
+        ]}] : [customize]),
+        {name:"preset_modes",label:native("preset_modes","Preset modes"),visible:{field:"customize_modes",value:true},
+          selector:{select:{multiple:true,reorder:true,options:hotWaterPresetModes(this._state()).map(value => ({value,label:value}))}}},
+      ];
+      this._form.data = {style,...this._config,customize_modes:Array.isArray(this._config.preset_modes)};
+    }
+  }
+
+  // Add the icon-only option to the native form beside preset customisation.
+  function extendBoostPresetEditor(editor) {
+    if (!editor || editor.__wiserBoostOption || typeof editor._schema !== "function") return editor;
+    editor.__wiserBoostOption = true;
+    const originalSchema = editor._schema;
+    const originalLabel = editor._computeLabelCallback;
+    editor._schema = function (...args) {
+      const schema = originalSchema.apply(this,args);
+      if (!this.context?.wiser_controls || this._config?.style !== "icons") return schema;
+      return schema.map(field => field.name === "customize_modes" ? {
+        type:"grid", name:"", schema:[field,
+          {name:"show_boost_remaining",selector:{boolean:{}}},
+        ],
+      } : field);
+    };
+    editor._computeLabelCallback = schema => {
+      return schema.name === "show_boost_remaining"
+        ? text(editor.hass,"show_boost_remaining") : originalLabel?.call(editor,schema) || "";
+    };
+    return editor;
+  }
+
   class WiserRoomsCardEditor extends HTMLElement {
     constructor() {
       super();
@@ -1387,7 +1458,7 @@
       this._dispatchConfig();
     }
     _featureEditorContext(id) {
-      const context = { entity_id: id };
+      const context = { entity_id: id, wiser_controls: true };
       if (masterMode(this._config)) {
         context.wiser_master = true;
         const roomType = typeForEntity(id);

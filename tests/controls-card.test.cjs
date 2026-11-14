@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 const {loadCardSource} = require('../scripts/card-source.cjs');
-function setup() {
+function setup({presetFeature,hotWaterPresetFeature} = {}) {
   let Card, Editor;
   const elements = {};
   const context = {Intl, setTimeout, clearTimeout, window: {},
@@ -13,7 +13,16 @@ function setup() {
     HTMLElement: class {
     attachShadow() { this.shadowRoot = {addEventListener() {}, append() {}, innerHTML: ''}; }
     dispatchEvent(event) { this.lastEvent = event; }
-  }, customElements: {get() {}, define(name, cls) { elements[name] = cls; if (name === "wiser-controls-card") Card = cls; else if (name === "wiser-controls-card-editor") Editor = cls; }}};
+  }, customElements: {
+    ...(presetFeature || hotWaterPresetFeature ? {whenDefined:name =>
+      (name === 'hui-climate-preset-modes-card-feature' && presetFeature) || (name === 'opentherm-hot-water-control-presets-feature' && hotWaterPresetFeature)
+        ? Promise.resolve() : new Promise(() => {})} : {}),
+    get(name) {
+      return name === 'hui-climate-preset-modes-card-feature' ? presetFeature
+        : name === 'opentherm-hot-water-control-presets-feature' ? hotWaterPresetFeature : undefined;
+    },
+    define(name, cls) { elements[name] = cls; if (name === "wiser-controls-card") Card = cls; else if (name === "wiser-controls-card-editor") Editor = cls; }
+  }};
   const languages = Object.fromEntries(['da','de','en-GB','en-US','es','fi','fr','hu','nb','nl','pt','sv'].map(language => [language,
     JSON.parse(fs.readFileSync(path.join(__dirname, `../src/localize/languages/${language}.json`), 'utf8'))]));
   const localize = fs.readFileSync(path.join(__dirname, '../src/localize/localize.js'), 'utf8')
@@ -1902,7 +1911,7 @@ test('inline passive range temperatures retain enough width for both target cont
   const {card,states} = setup();
   Object.assign(states['climate.bedroom'].attributes, {is_passive:true,target_temp_low:18,target_temp_high:22});
   const options = {features_position:'inline',features:[
-    {type:'target-temperature'}, {type:'custom:wiser-boost-feature'},
+    {type:'target-temperature'}, {type:'climate-hvac-modes'},
   ]};
   card.setConfig({entities:['climate.bedroom'],device_options:{'climate.bedroom':options}});
   assert.match(card.shadowRoot.innerHTML,/class="features-inline feature-range"[^>]*data-feature-index="0"/);
@@ -1985,158 +1994,271 @@ test('Override end time migrates from Features into Secondary status', () => {
   assert.notEqual(displays[1].stateObj.attributes.override_end_time, 'No override');
 });
 
-test('Boost opens supported duration options and cancels an active boost', async () => {
-  const {card, calls, elements, states, window} = setup();
-  Object.assign(states['climate.bedroom'].attributes, {
-    is_boosted:true, boost_end:new Date(Date.now() + 25 * 60000).toISOString(),
-    preset_modes:['Boost 30m','Boost 1h','Cancel Overrides'],
-  });
-  const Feature = elements['wiser-boost-feature'];
-  const feature = new Feature();
-  feature.setConfig(Feature.getStubConfig());
-  feature.context = {entity_id:'climate.bedroom'};
-  feature.hass = card._hass;
-  assert.equal(feature._icon.icon,'mdi:timer-outline');
-  assert.equal(feature._label.textContent,'25 min');
-  assert.equal(feature._button.disabled,false);
-  feature._button.listeners.click({stopPropagation(){}});
-  assert.equal(feature._menu.hidden,false);
-  assert.match(feature._menu.innerHTML,/30 minutes/);
-  assert.match(feature._menu.innerHTML,/Cancel boost/);
-  await feature._selectBoost('boost_1h');
-  assert.equal(calls[0][1],'set_preset_mode');
-  assert.equal(calls[0][2].preset_mode,'Boost 1h');
-  await feature._selectBoost('cancel');
-  assert.equal(calls[1][2].preset_mode,'Cancel Overrides');
-  const entry = window.customCardFeatures.find(item => item.type === 'wiser-boost-feature');
-  assert.equal(entry.name,'Boost');
-  assert.equal(entry.isSupported(card._hass,{entity_id:'climate.bedroom'}),true);
-  assert.equal(entry.isSupported(card._hass,{entity_id:'climate.other'}),false);
-  card.setConfig({entities:['climate.bedroom'],device_options:{'climate.bedroom':{
-    features:[{type:'custom:wiser-boost-feature'}],
-  }}});
-  assert.match(card.shadowRoot.innerHTML,/data-room-features="climate.bedroom"/);
-  assert.doesNotMatch(card.shadowRoot.innerHTML,/<hui-card-features class="[^"]*feature-icon-only/);
-  states['climate.bedroom'].attributes.is_boosted = false;
-  feature.hass = card._hass;
-  assert.equal(feature._label.textContent,'0 min');
-  assert.equal(feature._button.disabled,false);
-  feature._button.listeners.click({stopPropagation(){}});
-  assert.doesNotMatch(feature._menu.innerHTML,/Cancel boost/);
-  assert.equal(window.customCardFeatures.some(item => item.type === 'wiser-boost-remaining-feature'),false);
+
+test('preset icon countdown keeps the native preset feature without adding a Boost feature', () => {
+  const {card,states} = setup();
+  const id = 'climate.bedroom';
+  const preset = {type:'climate-preset-modes',style:'icons',show_boost_remaining:true,preset_modes:['Boost 30m','Cancel Overrides']};
+  const configure = features => card.setConfig({entities:[id],device_options:{[id]:{features,features_position:'inline'}}});
+  configure([preset]);
+  assert.match(card._nativeMarkup(states[id]),/features-inline feature-preset-icons/);
+  assert.doesNotMatch(card._nativeMarkup(states[id]),/custom:wiser-boost-feature/);
+  Object.assign(states[id].attributes,{is_boosted:true,boost_time_remaining:12});
+  card._render();
+  assert.doesNotMatch(card._nativeMarkup(states[id]),/custom:wiser-boost-feature/);
+  assert.equal(card._config.device_options[id].features.length,1);
+  const host = {dataset:{roomFeatures:id,featureIndex:'0'}};
+  card.shadowRoot.querySelectorAll = selector => selector === 'hui-card-features' ? [host] : [];
+  card._syncNativeFeatures();
+  assert.equal(host.features[0].type,'climate-preset-modes');
+  assert.equal(host.features[0].show_boost_remaining,true);
+  configure([{...preset,style:'dropdown'}]);
+  assert.doesNotMatch(card._nativeMarkup(states[id]),/custom:wiser-boost-feature/);
+  configure([{...preset,show_boost_remaining:false}]);
+  assert.doesNotMatch(card._nativeMarkup(states[id]),/custom:wiser-boost-feature/);
+  configure([preset]);
+  states[id].attributes.is_boosted = false;
+  card._render();
+  assert.doesNotMatch(card._nativeMarkup(states[id]),/custom:wiser-boost-feature/);
+  states[id].attributes.is_boosted = true;
+  states[id].state = 'unavailable';
+  assert.doesNotMatch(card._nativeMarkup(states[id]),/custom:wiser-boost-feature/);
 });
 
-test('Boost and the header agree when reported minutes differ from the end time', () => {
-  const {card, elements, states} = setup();
+test('remaining boost time is attached to the selected preset icon only while enabled and boosted', async () => {
+  class PresetFeature {
+    _getOptions() { return [{value:'Boost 30m',label:'Boost 30m'}]; }
+    requestUpdate() {}
+  }
+  const {card,states} = setup({presetFeature:PresetFeature});
+  await new Promise(resolve => setImmediate(resolve));
+  const feature = new PresetFeature();
+  const properties = {};
+  const hostProperties = {};
+  let injected;
+  let countdownIcon;
+  const selectedContent = {
+    querySelector:() => countdownIcon,
+    prepend(icon) {
+      countdownIcon = icon;
+      icon.parentElement = selectedContent;
+      icon.remove = () => {countdownIcon = undefined;};
+    },
+  };
+  const control = {
+    style:{setProperty:(key,value) => {properties[key] = value;},removeProperty:key => {delete properties[key];}},
+    shadowRoot:{
+      querySelector:selector => selector === '.option.selected .content' ? selectedContent : injected,
+      querySelectorAll:() => countdownIcon ? [countdownIcon] : [],
+      append(style){injected = style;style.remove = () => {injected = undefined;};},
+    },
+  };
+  feature.shadowRoot = {querySelector:() => control};
+  const host = {localName:'wiser-controls-card',_hass:card._hass,getBoundingClientRect:() => ({width:300}),
+    style:{setProperty:(key,value) => {hostProperties[key] = value;}}};
+  feature.getRootNode = () => ({host});
+  feature._config = {style:'icons',show_boost_remaining:true};
+  feature._stateObj = states['climate.bedroom'];
+  Object.assign(feature._stateObj.attributes,{is_boosted:true,boost_time_remaining:29,preset_mode:'Boost 30m'});
+  const update = async () => {feature.updated();await Promise.resolve();};
+  try {
+    await update();
+    assert.equal(properties['--wiser-boost-remaining'],'"29 min"');
+    assert.equal(countdownIcon.icon,'mdi:timer-outline');
+    assert.match(injected.textContent,/\.option\.selected \.content::after/);
+    assert.match(injected.textContent,/min-width:80px/);
+    assert.match(injected.textContent,/order:1/);
+    assert.match(injected.textContent,/color:var\(--secondary-text-color\)/);
+    assert.match(injected.textContent,/\.container \.option\.selected::before \{ opacity:0!important; \}/);
+    control.options = Array.from({length:7},(_,index) => ({value:String(index)}));
+    await update();
+    assert.equal(hostProperties['--wiser-preset-min-width'],'304px');
+    feature._stateObj.attributes.boost_time_remaining = 28;
+    await update();
+    assert.equal(properties['--wiser-boost-remaining'],'"28 min"');
+    feature._stateObj.attributes.is_boosted = false;
+    await update();
+    assert.equal(injected,undefined);
+    assert.equal(countdownIcon,undefined);
+    assert.equal(properties['--wiser-boost-remaining'],undefined);
+    assert.equal(hostProperties['--wiser-preset-min-width'],'256px');
+    feature._stateObj.attributes.is_boosted = true;
+    feature._config.show_boost_remaining = false;
+    await update();
+    assert.equal(injected,undefined);
+    feature._config = {style:'dropdown',show_boost_remaining:true};
+    const options = feature._getOptions();
+    assert.match(options[0].label,/29m|28m/);
+    await update();
+    assert.equal(injected,undefined);
+  } finally {
+    feature.disconnectedCallback();
+  }
+});
+
+test('preset editor offers the countdown only for Wiser icon mode and preserves native settings', async () => {
+  class PresetFeature {
+    static async getConfigElement() {
+      return {
+        setConfig(config){this._config = config;},
+        _schema:() => [{name:'style'},{name:'customize_modes',selector:{boolean:{}}},{name:'preset_modes'}],
+        _computeLabelCallback:schema => `Native ${schema.name}`,
+      };
+    }
+    _getOptions() { return []; }
+  }
+  const {card} = setup({presetFeature:PresetFeature});
+  // Wait for the native feature registration hook.
+  await new Promise(resolve => setImmediate(resolve));
+  const editor = await PresetFeature.getConfigElement();
+  editor.hass = card._hass;
+  editor.context = {entity_id:'climate.bedroom',wiser_controls:true};
+  const config = {type:'climate-preset-modes',style:'icons',preset_modes:['Boost 30m']};
+  editor.setConfig(config);
+  const schema = editor._schema();
+  assert.equal(schema[1].type,'grid');
+  assert.equal(schema[1].schema.map(field => field.name).join(','),'customize_modes,show_boost_remaining');
+  assert.equal(schema[2].name,'preset_modes');
+  assert.equal(editor._computeLabelCallback({name:'show_boost_remaining'}),'Show remaining boost time');
+  const labelCallback = editor._computeLabelCallback;
+  assert.equal(labelCallback({name:'customize_modes'}),'Native customize_modes');
+  assert.equal(editor._config.preset_modes[0],'Boost 30m');
+  editor.setConfig({...editor._config,style:'dropdown'});
+  assert.equal(editor._schema().map(field => field.name).join(','),'style,customize_modes,preset_modes');
+  const nativeEditor = await PresetFeature.getConfigElement();
+  nativeEditor.hass = card._hass;
+  nativeEditor.context = {entity_id:'climate.bedroom'};
+  nativeEditor.setConfig(config);
+  assert.equal(nativeEditor._schema().map(field => field.name).join(','),'style,customize_modes,preset_modes');
+});
+
+test('hot-water preset editor supports styles, custom order and the icon-only countdown option', () => {
+  const {card,elements} = setup();
+  const state = addHotWater(card,{
+    operation_list:['off','Auto','Shower','Comfort'],
+    opentherm_presets:[{name:'Shower',duration_minutes:30},{name:'Comfort',duration_minutes:60}],
+  });
+  const editor = new elements['wiser-hot-water-presets-editor']();
+  editor.hass = card._hass;
+  editor.context = {entity_id:state.entity_id};
+  editor.setConfig({type:'custom:opentherm-hot-water-control-presets-feature'});
+  assert.equal(editor._form.data.style,'dropdown');
+  assert.equal(editor._form.schema[1].name,'customize_modes');
+  const change = value => editor._form.listeners['value-changed']({stopPropagation(){},detail:{value}});
+  change({style:'icons',customize_modes:true,show_boost_remaining:true});
+  assert.equal(editor._form.schema[1].schema.map(field => field.name).join(','),'customize_modes,show_boost_remaining');
+  assert.equal(editor.lastEvent.detail.config.show_boost_remaining,true);
+  assert.equal(editor.lastEvent.detail.config.preset_modes.join(','),'Shower,Comfort');
+  change({style:'icons',customize_modes:true,preset_modes:['Comfort','Shower'],show_boost_remaining:true});
+  assert.equal(editor.lastEvent.detail.config.preset_modes.join(','),'Comfort,Shower');
+  change({style:'dropdown',customize_modes:true,preset_modes:['Comfort']});
+  assert.equal(editor._form.schema[1].name,'customize_modes');
+  assert.equal(editor.lastEvent.detail.config.preset_modes.join(','),'Comfort');
+  change({style:'icons',customize_modes:false,show_boost_remaining:false});
+  assert.equal(editor.lastEvent.detail.config.preset_modes,undefined);
+  assert.equal(editor.lastEvent.detail.config.show_boost_remaining,undefined);
+});
+
+test('OpenTherm presets honour Wiser style and order without changing other cards or default settings', async () => {
+  class HotWaterPresetFeature {
+    _modeGroups() { return [{style:'list',modes:['Shower']}]; }
+    _render() { this.groups = this._modeGroups(this._stateObj); }
+    requestUpdate() {}
+  }
+  const {card} = setup({hotWaterPresetFeature:HotWaterPresetFeature});
+  const state = addHotWater(card,{
+    operation_list:['off','Auto','Shower','Comfort'],
+    opentherm_presets:[{name:'Shower',duration_minutes:30},{name:'Comfort',duration_minutes:60}],
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  const feature = new HotWaterPresetFeature();
+  feature.getRootNode = () => ({host:{localName:'wiser-controls-card',getBoundingClientRect:() => ({width:300})}});
+  feature._stateObj = state;
+  try {
+    feature._config = {};
+    feature._render();
+    assert.equal(feature.groups[0].style,'list');
+    assert.equal(feature.groups[0].modes.join(','),'Shower');
+    feature._config = {style:'icons',preset_modes:['Comfort','Shower','Invalid'],show_boost_remaining:true};
+    feature._render();
+    assert.equal(feature.groups[0].style,'icons');
+    assert.equal(feature.groups[0].modes.join(','),'Comfort,Shower');
+    feature._config.style = 'dropdown';
+    feature._render();
+    assert.equal(feature.groups[0].style,'list');
+    feature.getRootNode = () => ({host:{localName:'hui-tile-card'}});
+    feature._config.style = 'icons';
+    feature._render();
+    assert.equal(feature.groups[0].style,'list');
+    assert.equal(feature.groups[0].modes.join(','),'Shower');
+    assert.equal(typeof HotWaterPresetFeature.getConfigElement,'function');
+    card.setConfig({entities:[state.entity_id],device_options:{[state.entity_id]:{features_position:'inline',features:[
+      {type:'custom:opentherm-hot-water-control-presets-feature',style:'icons',show_boost_remaining:true},
+    ]}}});
+    assert.match(card._nativeMarkup(state),/features-inline feature-preset-icons/);
+  } finally {
+    feature.disconnectedCallback();
+  }
+});
+
+test('hot-water preset icons reuse the neutral stopwatch countdown and clear it after boosting', async () => {
+  class HotWaterPresetFeature {
+    _modeGroups() { return []; }
+    _render() {}
+    requestUpdate() {}
+  }
+  const {card} = setup({hotWaterPresetFeature:HotWaterPresetFeature});
+  const state = addHotWater(card,{is_boosted:true,boost_time_remaining:18});
+  state.state = 'Shower';
+  await new Promise(resolve => setImmediate(resolve));
+  const feature = new HotWaterPresetFeature();
+  const properties = {};
+  let injected, icon;
+  const content = {querySelector:() => icon,prepend(value){icon=value;icon.parentElement=content;icon.remove=()=>{icon=undefined;};}};
+  const select = {localName:'ha-control-select',options:[{value:'Shower',label:'Shower',icon:'mdi:shower'}],
+    style:{setProperty:(key,value)=>{properties[key]=value;},removeProperty:key=>{delete properties[key];}},
+    shadowRoot:{querySelector:selector=>selector === '.option.selected .content' ? content : injected,
+      querySelectorAll:()=>icon?[icon]:[],append(style){injected=style;style.remove=()=>{injected=undefined;};}},
+  };
+  feature._selects = [{element:select,modes:['Shower']}];
+  feature.shadowRoot = {querySelector:() => select};
+  feature.getRootNode = () => ({host:{localName:'wiser-controls-card',_hass:card._hass,getBoundingClientRect:() => ({width:300})}});
+  feature._stateObj = state;
+  feature._config = {style:'icons',show_boost_remaining:true};
+  try {
+    feature._render();
+    await Promise.resolve();
+    assert.equal(properties['--wiser-boost-remaining'],'"18 min"');
+    assert.equal(icon.icon,'mdi:timer-outline');
+    assert.equal(select.options[0].icon.icon,'mdi:shower');
+    assert.match(injected.textContent,/opacity:0!important/);
+    state.attributes.is_boosted = false;
+    feature._render();
+    await Promise.resolve();
+    assert.equal(injected,undefined);
+    assert.equal(icon,undefined);
+    assert.equal(properties['--wiser-boost-remaining'],undefined);
+  } finally { feature.disconnectedCallback(); }
+});
+
+test('the header uses hub-reported boost minutes rather than rounding the end time', () => {
+  const {card, states, elements, window} = setup();
   Object.assign(states['climate.bedroom'].attributes, {
     is_boosted:true, boost_time_remaining:28,
     boost_end:new Date(Date.now() + 28.5 * 60000).toISOString(),
     preset_modes:['Boost 30m','Cancel Overrides'],
   });
   card.setConfig({entities:['climate.bedroom']});
-  const feature = new elements['wiser-boost-feature']();
-  feature.setConfig({type:'custom:wiser-boost-feature',entity:'climate.bedroom'});
-  feature.hass = card._hass;
-  assert.equal(feature._label.textContent,'28 min');
+  assert.equal(elements['wiser-boost-feature'],undefined);
+  assert.equal(window.customCardFeatures.some(feature => feature.type === 'wiser-boost-feature'),false);
   assert.match(card.shadowRoot.innerHTML,/next ends in 28m/);
   assert.match(card.shadowRoot.innerHTML,/<small>28 min<\/small>/);
   assert.doesNotMatch(card.shadowRoot.innerHTML,/29 min|29m/);
 });
 
-test('Boost counts down the end time and releases its timer on disconnect', () => {
-  const {card, elements, states} = setup();
-  Object.assign(states['climate.bedroom'].attributes, {is_boosted:true,boost_end:new Date(Date.now() + 30 * 60000).toISOString()});
-  const feature = new elements['wiser-boost-feature']();
-  feature.setConfig({type:'custom:wiser-boost-feature',entity:'climate.bedroom'});
-  feature.hass = card._hass;
-  feature._menu.hidePopover = () => { throw new Error('Popover is disconnected'); };
-  feature.isConnected = true;
-  try {
-    feature.connectedCallback();
-    assert.equal(feature._label.textContent,'30 min');
-    assert.ok(feature._countdownTimer);
-    states['climate.bedroom'].attributes.boost_end = new Date(Date.now() + 2 * 60000).toISOString();
-    feature._render();
-    assert.equal(feature._label.textContent,'2 min');
-    states['climate.bedroom'].attributes.boost_end = new Date(Date.now() - 1).toISOString();
-    feature._render();
-    assert.equal(feature._label.textContent,'0 min');
-    assert.equal(feature._countdownTimer,undefined);
-    states['climate.bedroom'].attributes.boost_time_remaining = 15;
-    feature.hass = card._hass;
-    assert.equal(feature._label.textContent,'15 min');
-    assert.equal(feature._countdownTimer,undefined);
-  } finally {
-    feature.disconnectedCallback();
-  }
-  assert.equal(feature._countdownTimer,undefined);
-  assert.equal(feature._menu.hidden,true);
-  states['climate.bedroom'].state = 'unavailable';
-  feature.hass = card._hass;
-  assert.equal(feature._button.disabled,true);
-});
 
-test('OpenTherm boost always uses the stopwatch icon', () => {
-  const {card, elements, window} = setup();
-  const hotWater = addHotWater(card, {is_boosted:true,boost_time_remaining:20});
-  const feature = new elements['wiser-boost-feature']();
-  feature.setConfig({type:'custom:wiser-boost-feature',entity:hotWater.entity_id});
-  feature.hass = card._hass;
-  assert.equal(feature._icon.icon,'mdi:timer-outline');
-  assert.equal(feature._label.textContent,'20 min');
-  const entry = window.customCardFeatures.find(item => item.type === 'wiser-boost-feature');
-  assert.equal(entry.isSupported(card._hass,{entity_id:hotWater.entity_id}),true);
-  hotWater.attributes.icon = 'mdi:water-boiler';
-  feature.hass = card._hass;
-  assert.equal(feature._icon.icon,'mdi:timer-outline');
-  card._hass.entities = {[hotWater.entity_id]:{icon:'mdi:water-boiler'}};
-  feature.hass = card._hass;
-  assert.equal(feature._icon.icon,'mdi:timer-outline');
-  feature.setConfig({type:'custom:wiser-boost-feature',entity:hotWater.entity_id,icon:'mdi:fire'});
-  assert.equal(feature._icon.icon,'mdi:timer-outline');
-});
 
-test('OpenTherm Boost offers timed presets and returns to Auto when cancelled', async () => {
-  const {card,calls,elements} = setup();
-  const state = addHotWater(card, {is_boosted:true,opentherm_presets:[
-    {name:'Shower',duration_minutes:30,temperature:50},
-    {name:'Normal',duration_minutes:0,temperature:45},
-  ],operation_list:['off','Auto','Shower','Normal','Boost 30 Mins']});
-  const feature = new elements['wiser-boost-feature']();
-  feature.setConfig({type:'custom:wiser-boost-feature',entity:state.entity_id});
-  feature.hass = card._hass;
-  feature._button.listeners.click({stopPropagation(){}});
-  assert.match(feature._menu.innerHTML,/Shower/);
-  assert.match(feature._menu.innerHTML,/Cancel boost/);
-  assert.doesNotMatch(feature._menu.innerHTML,/>Normal</);
-  await feature._selectBoost('Shower');
-  assert.equal(calls[0][0],'water_heater');
-  assert.equal(calls[0][2].operation_mode,'Shower');
-  await feature._selectBoost('cancel');
-  assert.equal(calls[1][2].operation_mode,'Auto');
-  state.attributes.operation_list.push('Cancel Boost');
-  await feature._selectBoost('cancel');
-  assert.equal(calls[2][2].operation_mode,'Cancel Boost');
-});
 
-test('Boost rejects stale selections and exposes service failures without getting stuck', async () => {
-  const {card,elements,states} = setup();
-  states['climate.bedroom'].attributes.preset_modes = ['Boost 30m'];
-  const feature = new elements['wiser-boost-feature']();
-  feature.setConfig({type:'custom:wiser-boost-feature',entity:'climate.bedroom'});
-  feature.hass = card._hass;
-  card._hass.callService = async () => { throw new Error('Hub unavailable'); };
-  feature._openBoostMenu();
-  await feature._selectBoost('boost_30m');
-  assert.equal(feature._busy,false);
-  assert.equal(feature._button.disabled,false);
-  assert.match(feature._menu.innerHTML,/role="alert">Hub unavailable/);
-  states['climate.bedroom'].state = 'unavailable';
-  let called = false;
-  card._hass.callService = async () => { called = true; };
-  await feature._selectBoost('boost_30m');
-  assert.equal(called,false);
-});
 
 test('Next schedule is an icon feature that advances the schedule', () => {
   const {card, calls, elements, states, window} = setup();

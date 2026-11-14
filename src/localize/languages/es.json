@@ -7,7 +7,7 @@
   "cancel_overrides": "Cancelar anulaciones",
   "follow_schedule": "Seguir horario",
   "boost": "Impulsar",
-  "cancel_boost": "Cancelar refuerzo",
+  "show_boost_remaining": "Mostrar tiempo de refuerzo restante",
   "boost_hot_water": "Impulsar agua caliente",
   "boost_all": "Impulsar todo",
   "cancel_all": "Cancelar todo",
