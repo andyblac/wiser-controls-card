@@ -338,6 +338,51 @@ test('passive temperature focus emphasizes the selected current or target readin
   assert.match(compact, /\.passive-header\.target-focus\.temps\{[^}]*font-size:18px/);
   assert.match(compact, /\.passive-header\.target-focus\.passive-range\{[^}]*font-size:22px/);
 });
+test('temperature status supports current only, current, target and none for climate and hot water', () => {
+  const {card,states} = setup();
+  const water = addHotWater(card);
+  const readings = html => html.match(/<div class="temps"[^>]*>([\s\S]*?)<\/div>/)?.[1];
+  for (const state of [states['climate.bedroom'],water]) {
+    const id = state.entity_id;
+    for (const mode of ['current_only','current','target','none']) {
+      card.setConfig({entities:[id],device_options:{[id]:{temperature_focus:mode}}});
+      const reading = readings(card.shadowRoot.innerHTML);
+      if (mode === 'current_only') {
+        assert.equal(reading,`${state.attributes.current_temperature}°C`);
+        assert.doesNotMatch(reading,/<small>/);
+      } else if (mode === 'current') assert.match(reading,/°C<small> /);
+      else if (mode === 'target') assert.match(reading,/^<small>/);
+      else assert.match(card.shadowRoot.innerHTML,/class="top[^\"]*hide-temps/);
+    }
+  }
+  Object.assign(states['climate.bedroom'].attributes,{is_passive:true,target_temp_low:18,target_temp_high:22});
+  card.setConfig({entities:['climate.bedroom'],temperature_focus:'current_only'});
+  assert.match(card.shadowRoot.innerHTML,/passive-header[^\"]*current-only/);
+  assert.match(loadCardSource(),/\.top\.hide-temps \.temps,\.top\.hide-temps \.passive-range,\.top\.current-only \.passive-range \{\s*visibility:hidden/);
+  assert.match(loadCardSource(),/\.secondary-heading-line \{\s*align-items:center;\s*min-height:24px/);
+  assert.match(loadCardSource(),/\.passive-header \.secondary-primary-line \{\s*align-items:center;\s*min-height:24px/);
+  card.setConfig({entities:['climate.bedroom'],temperature_focus:'none'});
+  assert.match(card.shadowRoot.innerHTML,/passive-header[^\"]*hide-temps/);
+});
+
+test('temperature status editor preserves hidden legacy readings and removes the old visibility setting when changed', () => {
+  const {card,Editor} = setup();
+  const editor = new Editor();
+  editor._hass = card._hass;
+  editor._entries = card._entries;
+  editor.setConfig({device_options:{'climate.bedroom':{show_temperatures:false,temperature_focus:'target'}}});
+  editor._selectRoom('climate.bedroom');
+  assert.equal(editor._roomForm.data.temperature_focus,'none');
+  const schema = JSON.stringify(editor._roomForm.schema[0]);
+  assert.doesNotMatch(schema,/"name":"show_temperatures"/);
+  editor._roomForm.listeners['value-changed']({stopPropagation(){},detail:{value:{...editor._roomForm.data,temperature_focus:'current_only'}}});
+  const options = editor.lastEvent.detail.config.device_options['climate.bedroom'];
+  assert.equal(options.temperature_focus,'current_only');
+  assert.equal(options.show_temperatures,undefined);
+  card.setConfig(editor.lastEvent.detail.config);
+  assert.doesNotMatch(card._contentClass(options),/hide-temps/);
+});
+
 test('target controls use the manual colour and keep passive overrides independent', async () => {
   const {card,states} = setup();
   const room = states['climate.bedroom'];
@@ -585,23 +630,6 @@ test('closing the editor cancels stale layout retries', async () => {
   assert.equal(editor._contentLayoutTimer, undefined);
 });
 
-test('temperature alignment uses visible native control centres without accumulating offsets', async () => {
-  const {Editor} = setup();
-  const editor = new Editor();
-  const toggle = {getBoundingClientRect:() => ({top:20,height:48})};
-  const pill = {getBoundingClientRect:() => ({top:50,height:32})};
-  const grid = {shadowRoot:{querySelector:() => toggle}};
-  const field = {style:{},shadowRoot:{querySelector:() => pill}};
-  assert.equal(await editor._alignTemperatureControls(grid,field),true);
-  assert.equal(field.style.transform,'translateY(-22px)');
-  await editor._alignTemperatureControls(grid,field);
-  assert.equal(field.style.transform,'translateY(-22px)');
-  pill.getBoundingClientRect = () => ({top:28,height:32});
-  await editor._alignTemperatureControls(grid,field);
-  assert.equal(field.style.transform,'');
-  pill.getBoundingClientRect = () => ({top:0,height:0});
-  assert.equal(await editor._alignTemperatureControls(grid,field),false);
-});
 
 test('small native pills support both Home Assistant size APIs', async () => {
   const {Editor} = setup();
@@ -2400,18 +2428,19 @@ test('Content options persist per room and change header rendering', () => {
   const {card, Editor} = setup();
   const editor = new Editor(); editor._hass = card._hass; editor._entries = card._entries;
   editor.setConfig({}); editor._selectRoom('climate.bedroom');
-  editor._roomForm.listeners['value-changed']({stopPropagation(){}, detail:{value:{...editor._roomForm.data,name:'Bedroom custom',icon:'mdi:bed',color:'blue',hide_state:true,show_temperatures:false,show_next_schedule:false,show_heating_glow:true,state_content:['current_temperature']}}});
+  editor._roomForm.listeners['value-changed']({stopPropagation(){}, detail:{value:{...editor._roomForm.data,name:'Bedroom custom',icon:'mdi:bed',color:'blue',hide_state:true,temperature_focus:'none',show_next_schedule:false,show_heating_glow:true,state_content:['current_temperature']}}});
   const config = editor.lastEvent.detail.config;
   card.setConfig(config);
   assert.match(card.shadowRoot.innerHTML, /Bedroom custom/);
   assert.match(card.shadowRoot.innerHTML, /icon="mdi:bed"/);
-  assert.match(card.shadowRoot.innerHTML, /hide-status hide-temps hide-next/);
+  assert.match(card.shadowRoot.innerHTML, /hide-status hide-temps\s+hide-next/);
   assert.match(card.shadowRoot.innerHTML, /class="room heating heating-glow/);
   assert.match(card.shadowRoot.innerHTML, /--room-native-state-color:var\(--state-climate-auto-color/);
   assert.match(card.shadowRoot.innerHTML, /--room-state-color:var\(--blue-color\)/);
   editor._selectRoom('climate.lounge');
   assert.equal(editor._roomForm.data.hide_state, false);
-  assert.equal(editor._roomForm.data.show_temperatures, true);
+  assert.equal(editor._roomForm.data.temperature_focus, 'current');
+  assert.equal(editor._roomForm.data.show_temperatures, undefined);
   assert.equal(JSON.stringify(editor._roomForm.data.name), JSON.stringify([{type:'area'}]));
   editor._selectRoom('climate.bedroom');
   assert.equal(editor._roomForm.data.name, 'Bedroom custom');
@@ -2508,13 +2537,14 @@ test('Content supports native composed names and omits the entity-picture option
   const displayGroupIndex = contentSchema.findIndex(item => item.column_min_width === '180px');
   const displayGroups = contentSchema.slice(displayGroupIndex,-1);
   assert.equal(displayGroupIndex, iconColorIndex + 1);
-  assert.equal(displayGroups.map(group => group.schema.map(item => item.name).join(',')).join('|'), 'show_temperatures,temperature_focus|show_next_schedule,hide_state|show_heating_glow');
-  assert.equal(displayGroups[2].schema[0].label,'Show heating background glow');
-  const temperatureFocus = displayGroups[0].schema[1];
+  assert.equal(displayGroups.map(group => group.schema.map(item => item.name).join(',')).join('|'), 'temperature_focus|show_next_schedule,show_heating_glow|hide_state');
+  assert.equal(displayGroups[1].schema[1].label,'Show heating background glow');
+  assert.equal(displayGroups[2].schema[0].label,'Hide state');
+  const temperatureFocus = displayGroups[0].schema[0];
   assert.equal(Object.keys(temperatureFocus.selector)[0], 'button_toggle');
-  assert.equal(temperatureFocus.label, '');
+  assert.equal(temperatureFocus.label, 'Show temperature status');
   assert.equal(temperatureFocus.visible, undefined);
-  assert.equal(temperatureFocus.selector.button_toggle.options.map(option => option.label).join(','), 'Current,Target');
+  assert.equal(temperatureFocus.selector.button_toggle.options.map(option => option.label).join(','), 'Current only,Current,Target,None');
   assert.equal(contentSchema.at(-1).name, 'state_content');
   assert.match(loadCardSource(), /ha-form\.room-options\{[^}]*--ha-space-6:var\(--ha-space-1,4px\)/);
 });

@@ -249,6 +249,7 @@
       // click so layout is reapplied after their hidden content becomes visible.
       this._roomForm.addEventListener("click", () => this._scheduleContentLayout(), true);
       this._roomForm.computeLabel = (schema) => {
+        if (schema.name === "temperature_focus") return schema.label;
         const scope = [
           "color",
           "icon_tap_action",
@@ -286,6 +287,9 @@
           "icon_double_tap_action",
         ]) {
           if (Object.hasOwn(value, key)) options[key] = value[key];
+        }
+        if (Object.hasOwn(value,"temperature_focus") && /^(climate|water_heater)\./.test(this._selectedRoom || "")) {
+          options.show_temperatures = undefined;
         }
         Object.assign(options, this._secondaryStatusOptions(value));
         this._setRoomOptions(options);
@@ -770,12 +774,14 @@
       };
       const temperatureFocusSchema = {
         name: "temperature_focus",
-        label: "",
+        label: text(this._hass,"temperature_status"),
         selector: {
           button_toggle: {
             options: [
-              { value: "current", label: text(this._hass, "current") },
+              { value: "current_only", label: text(this._hass, "current_only") },
+              { value: "current", label: text(this._hass, "temperature_current") },
               { value: "target", label: text(this._hass, "target") },
+              { value: "none", label: text(this._hass, "temperature_none") },
             ],
           },
         },
@@ -955,20 +961,18 @@
           ],
         },
       ];
-      // Content row 1: temperature visibility switch and Current / Target pill.
-      const primaryContentFields = [
+      const primaryContentFields = temperatureDevice ? [temperatureFocusSchema] : [
         {
           name: "show_temperatures",
           label: metricLabel,
           selector: { boolean: {} },
         },
-        ...(temperatureDevice ? [temperatureFocusSchema] : []),
       ];
 
       const contentRows = [
         primaryContentFields,
 
-        // Content row 2: schedule visibility and state visibility switches.
+        // Keep the heating glow beside schedule visibility.
         [
           {
             name: "show_next_schedule",
@@ -976,19 +980,19 @@
             selector: { boolean: {} },
           },
           {
-            name: "hide_state",
-            label: text(this._hass, "hide_state"),
+            name: heating ? "show_heating_glow" : "hide_state",
+            label: text(this._hass, heating ? "show_heating_glow" : "hide_state"),
             selector: { boolean: {} },
           },
         ],
 
-        // Content row 3: glow switch, shown for heating devices only.
+        // Place state visibility immediately above the state-content picker.
         ...(heating
           ? [
               [
                 {
-                  name: "show_heating_glow",
-                  label: text(this._hass, "show_heating_glow"),
+                  name: "hide_state",
+                  label: text(this._hass, "hide_state"),
                   selector: { boolean: {} },
                 },
               ],
@@ -1130,8 +1134,8 @@
         color: selectedOptions.color || "state",
         hide_state: selectedOptions.hide_state ?? false,
         state_content: selectedOptions.state_content ?? [heating ? "hvac_action" : "state"],
-        temperature_focus: selectedOptions.temperature_focus ?? "current",
-        show_temperatures: selectedOptions.show_temperatures ?? true,
+        temperature_focus: temperatureStatus(selectedOptions),
+        ...(temperatureDevice ? {} : {show_temperatures:selectedOptions.show_temperatures ?? true}),
         show_next_schedule: selectedOptions.show_next_schedule ?? true,
         secondary_status_content: secondaryStatus
           ? selectedOptions.secondary_status
@@ -1245,7 +1249,6 @@
     async _styleTemperatureFocus() {
       // Content layout settings.
       const gapBetweenRows = EDITOR_SETTINGS_ROW_GAP;
-      const pillHeight = "32px";
 
       await this._roomForm?.updateComplete;
       const content = [
@@ -1256,12 +1259,14 @@
       await form?.updateComplete;
       const grids = [...(form?.shadowRoot?.querySelectorAll("ha-form-grid") || [])];
       // Native ha-form adds a fixed 24px bottom margin to each grid.
-      // Keep consecutive Content rows compact, including the standalone glow row.
+      // Keep consecutive Content rows compact, including state visibility.
       for (const row of grids) {
         row.style.marginBottom = gapBetweenRows;
-        row.style.gridTemplateColumns = `repeat(${row.schema.schema.length},minmax(0,1fr))`;
+        const fields = row.schema.schema;
+        const columns = fields.length === 1 && fields[0].name === "hide_state" ? 2 : fields.length;
+        row.style.gridTemplateColumns = `repeat(${columns},minmax(0,1fr))`;
         row.style.alignItems = "center";
-        if (row.schema.schema.some(field => field.selector?.boolean)) {
+        if (row.schema.schema.some(field => field.selector?.boolean || field.name === "temperature_focus")) {
           await this._centreContentRow(row);
         }
       }
@@ -1271,37 +1276,12 @@
       await grid?.updateComplete;
       if (!grid) return false;
 
-      // Let the switch use the available space and give the pill only its
-      // natural width. This anchors the pill to the right edge of the row.
-      grid.style.gridTemplateColumns = "repeat(2,minmax(0,1fr))";
-      grid.style.alignItems = "center";
-      const index =
-        grid?.schema?.schema?.findIndex((field) => field.name === "temperature_focus") ?? -1;
-      const fields = [...(grid?.shadowRoot?.querySelectorAll("ha-form") || [])];
-      const field = fields[index] || [...(grid.shadowRoot?.children || [])]
-        .filter(element => element.localName !== "style")[index];
+      const fields = [...(grid.shadowRoot?.querySelectorAll("ha-form") || [])];
+      const field = fields[0] || [...(grid.shadowRoot?.children || [])]
+        .find(element => element.localName !== "style");
       if (!field) return false;
-
-      field.style.width = "max-content";
-      field.style.maxWidth = "100%";
-      field.style.marginInlineStart = "auto";
-      field.style.justifySelf = "end";
-      field.style.alignSelf = "center";
-      field.style.setProperty("--ha-button-height", pillHeight);
-      await field.updateComplete;
-      const root = field.shadowRoot?.querySelector('[part~="root"], .root, #root');
-      if (root) {
-        // Horizontal pill alignment and vertical centring.
-        root.style.display = "flex";
-        root.style.justifyContent = "flex-end";
-        root.style.alignItems = "center";
-      }
       await this._useSmallNativePill(field);
-      const show = this._roomForm.data?.show_temperatures !== false;
-      field.style.visibility = show ? "" : "hidden";
-      field.inert = !show;
-      field.setAttribute("aria-hidden", String(!show));
-      return !show || this._alignTemperatureControls(grid, field);
+      return Boolean(findInShadowRoots(field.shadowRoot,"ha-button-toggle-group"));
     }
     async _centreContentRow(row) {
       // Use the same row height for temperature, schedule/state and glow.
@@ -1333,24 +1313,6 @@
           }
         }
       }
-    }
-    async _alignTemperatureControls(grid, field) {
-      // Align the visible native controls rather than their differently sized
-      // form wrappers. Reset first so repeated updates never accumulate offsets.
-      const toggle = findInShadowRoots(grid.shadowRoot, "ha-switch");
-      const pill = findInShadowRoots(field.shadowRoot, "ha-button-toggle-group");
-      if (!toggle || !pill) return false;
-      await pill.updateComplete;
-      field.style.transform = "";
-      const visibleToggle = findInShadowRoots(toggle.shadowRoot, '[part~="control"]') || toggle;
-      const toggleBounds = visibleToggle.getBoundingClientRect();
-      const pillBounds = pill.getBoundingClientRect();
-      if (!toggleBounds.height || !pillBounds.height) return false;
-      const toggleCentre = toggleBounds.top + toggleBounds.height / 2;
-      const pillCentre = pillBounds.top + pillBounds.height / 2;
-      const offset = toggleCentre - pillCentre;
-      if (Math.abs(offset) > 0.5) field.style.transform = `translateY(${offset}px)`;
-      return true;
     }
     _extendNamePicker() {
       if (this._namePickerLookup) return this._namePickerLookup;

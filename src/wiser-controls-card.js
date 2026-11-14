@@ -167,6 +167,7 @@
   const typeForEntity = id => id?.startsWith("water_heater.") ? "hot_water" : id?.startsWith("cover.") ? "shutters" : id?.startsWith("light.") ? "lights" : id?.startsWith("switch.") ? "plugs" : "heating";
   const masterOptions = (config, id) => config.master_options_by_type?.[typeForEntity(id)];
   const roomConfig = (config, id) => ({...config, ...(masterMode(config) ? masterOptions(config, id) : config.device_options?.[id])});
+  const temperatureStatus = options => options.show_temperatures === false ? "none" : options.temperature_focus || "current";
   const isNativeFeatureList = value => Array.isArray(value) && value.every(feature => feature && typeof feature === "object" && !Array.isArray(feature));
   const uniqueNativeFeatures = list => list.filter((feature, index) =>
     list.findIndex(item => item.type === feature.type) === index);
@@ -957,7 +958,7 @@
       }
       if (config.device_types !== undefined && (!Array.isArray(config.device_types) || !config.device_types.length || new Set(config.device_types).size !== config.device_types.length || config.device_types.some(type => !DEVICE_TYPES.includes(type)))) throw new Error("device_types must contain one or more unique supported device types");
       if (config.split_heating_channels !== undefined && typeof config.split_heating_channels !== "boolean") throw new Error("split_heating_channels must be true or false");
-      if (config.temperature_focus !== undefined && !["current", "target"].includes(config.temperature_focus)) throw new Error("temperature_focus must be current or target");
+      if (config.temperature_focus !== undefined && !["current_only", "current", "target", "none"].includes(config.temperature_focus)) throw new Error("Invalid temperature status");
       if (config.features !== undefined && !validNativeFeatures(config.features)) throw new Error("features must contain native feature objects");
       if (config.device_options !== undefined) {
         if (!config.device_options || typeof config.device_options !== "object" || Array.isArray(config.device_options)) throw new Error("device_options must be an entity settings map");
@@ -965,7 +966,7 @@
           if (!/^(climate|cover|light|switch|water_heater)\./.test(id) || !options || typeof options !== "object" || Array.isArray(options)) throw new Error("Invalid room options");
           if (options.features !== undefined && !validNativeFeatures(options.features)) throw new Error("Invalid room features");
           if (options.features_position !== undefined && !["bottom", "inline"].includes(options.features_position)) throw new Error("Invalid room features_position");
-          if (options.temperature_focus !== undefined && !["current", "target"].includes(options.temperature_focus)) throw new Error("Invalid room temperature emphasis");
+          if (options.temperature_focus !== undefined && !["current_only", "current", "target", "none"].includes(options.temperature_focus)) throw new Error("Invalid room temperature status");
           for (const key of ["tap_action","icon_tap_action","hold_action","icon_hold_action","double_tap_action","icon_double_tap_action"]) if (options[key] !== undefined && !validAction(options[key])) throw new Error(`Invalid room ${key}`);
         }
       }
@@ -1102,7 +1103,8 @@
       return entityDisplayName(this._hass, room, name ?? [{type:"area"}]);
     }
     _contentClass(options) {
-      return `${options.hide_state ? "hide-status" : ""} ${options.show_temperatures === false ? "hide-temps" : ""} ${options.show_next_schedule === false ? "hide-next" : ""}`;
+      const status = temperatureStatus(options);
+      return `${options.hide_state ? "hide-status" : ""} ${status === "none" ? "hide-temps" : ""} ${status === "current_only" ? "current-only" : ""} ${options.show_next_schedule === false ? "hide-next" : ""}`;
     }
     _contentIcon(room, fallback) {
       const options = roomConfig(this._config, room.entity_id);
@@ -1476,7 +1478,7 @@
       const status = !available(state) ? text(this._hass,"unavailable") : state.state === "off" ? text(this._hass,"off") : state.state;
       const target = this._temperature(a.temperature);
       const current = this._temperature(a.current_temperature);
-      const reading = options.temperature_focus === "target"
+      const reading = temperatureStatus(options) === "current_only" ? escape(current) : options.temperature_focus === "target"
         ? `<small>${escape(current)}</small> ${escape(target)}`
         : `${escape(current)}<small> ${escape(target)}</small>`;
       const nextDate = a.next_schedule_event ? new Date(a.next_schedule_event) : null;
@@ -2606,6 +2608,14 @@
           gap:10px;
           min-width:0
         }
+        .secondary-heading-line {
+          align-items:center;
+          min-height:24px
+        }
+        .passive-header .secondary-primary-line {
+          align-items:center;
+          min-height:24px
+        }
         .secondary-heading-line .name {
           min-width:0;
           line-height:20px
@@ -2781,8 +2791,12 @@
           width:auto;
           min-width:min(100%,var(--wiser-preset-min-width,280px))
         }
-        .top.hide-status .status,.top.hide-temps .temps,.top.hide-temps .passive-range,.top.hide-next .next {
+        .top.hide-status .status,.top.hide-next .next {
           display:none
+        }
+        .top.hide-temps .temps,.top.hide-temps .passive-range,.top.current-only .passive-range {
+          visibility:hidden;
+          pointer-events:none
         }
         .passive-header.hide-status .secondary-primary-line>.status {
           display:block;
@@ -2861,7 +2875,7 @@
         const nextMarkup = nextDetail ? `<ha-icon icon="mdi:calendar-clock"></ha-icon><span>${escape(nextDetail)}</span>` : escape(next);
         const stateColor = this._nativeStateColor(room);
         const secondary = this._secondaryMarkup(room);
-        const temperatureMarkup = options.temperature_focus === "target"
+        const temperatureMarkup = temperatureStatus(options) === "current_only" ? escape(this._temperature(a.current_temperature)) : options.temperature_focus === "target"
           ? `<small>${escape(this._temperature(a.current_temperature))}</small> ${escape(target)}`
           : `${escape(this._temperature(a.current_temperature))}<small> ${escape(target)}</small>`;
         const passiveTemperatureMarkup = escape(this._temperature(a.current_temperature));
