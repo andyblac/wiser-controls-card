@@ -80,6 +80,8 @@
   "show_temperatures": "Näytä nykyinen / tavoitelämpötila",
   "show_next_schedule": "Näytä seuraava aikataulu",
   "show_heating_glow": "Näytä taustan hehku lämmityksen aikana",
+  "glow_low": "Matala",
+  "glow_high": "Korkea",
   "configuration_mode": "Konfigurointitila",
   "master": "Mestari",
   "individual": "Yksilöllinen",

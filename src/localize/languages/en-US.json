@@ -80,6 +80,8 @@
   "show_temperatures": "Show current / target temperature",
   "show_next_schedule": "Show next schedule",
   "show_heating_glow": "Show heating background glow",
+  "glow_low": "Low",
+  "glow_high": "High",
   "configuration_mode": "Configuration mode",
   "master": "Master",
   "individual": "Individual",

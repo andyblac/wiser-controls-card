@@ -80,6 +80,8 @@
   "show_temperatures": "Aktuális / célhőmérséklet megjelenítése",
   "show_next_schedule": "Következő ütemezés megjelenítése",
   "show_heating_glow": "Háttérfény megjelenítése fűtés közben",
+  "glow_low": "Alacsony",
+  "glow_high": "Magas",
   "configuration_mode": "Konfigurációs mód",
   "master": "Központi",
   "individual": "Egyéni",

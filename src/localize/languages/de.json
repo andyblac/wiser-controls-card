@@ -80,6 +80,8 @@
   "show_temperatures": "Aktuelle / Zieltemperatur anzeigen",
   "show_next_schedule": "Nächsten Zeitplan anzeigen",
   "show_heating_glow": "Hintergrundglühen beim Heizen anzeigen",
+  "glow_low": "Niedrig",
+  "glow_high": "Hoch",
   "configuration_mode": "Konfigurationsmodus",
   "master": "Master",
   "individual": "Individuell",

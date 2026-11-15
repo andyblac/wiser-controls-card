@@ -584,6 +584,33 @@ test('optional heating glow appears only while a configured room is actively hea
   assert.doesNotMatch(rendered.get('climate.bedroom'),/heating-glow/);
 });
 
+test('heating glow levels preserve existing settings and save the three-way selector', () => {
+  const {card, Editor} = setup();
+  const id = 'climate.bedroom';
+  const editor = new Editor();
+  editor._hass = card._hass;
+  editor._entries = card._entries;
+  for (const [value, expected] of [[true,'low'],[false,'off'],['off','off'],['low','low'],['high','high']]) {
+    const config = {entities:[id],device_options:{[id]:{show_heating_glow:value}}};
+    card.setConfig(config);
+    const classes = card.shadowRoot.innerHTML.match(/data-entity="climate.bedroom" class="([^"]*)"/)[1];
+    assert.equal(classes.includes('heating-glow'),expected !== 'off');
+    assert.equal(classes.includes('heating-glow-high'),expected === 'high');
+    editor.setConfig(config);
+    editor._selectRoom(id);
+    assert.equal(editor._roomForm.data.show_heating_glow,expected);
+  }
+  const schema = editor._roomForm.schema[0].schema.flatMap(row => row.schema || []);
+  const glow = schema.find(field => field.name === 'show_heating_glow');
+  assert.equal(glow.selector.button_toggle.options.map(option => option.label).join(','),'Off,Low,High');
+  for (const level of ['low','high','off']) {
+    editor._roomForm.listeners['value-changed']({stopPropagation(){},detail:{value:{...editor._roomForm.data,show_heating_glow:level}}});
+    const config = editor.lastEvent.detail.config;
+    card.setConfig(config);
+    assert.equal(config.device_options[id]?.show_heating_glow,level === 'off' ? undefined : level);
+  }
+});
+
 test('card editors share entity discovery and hidden hub selectors skip config entry discovery', async () => {
   const {card, Editor} = setup();
   let entityRegistryCalls = 0;
@@ -2445,7 +2472,7 @@ test('Content options persist per room and change header rendering', () => {
   editor._selectRoom('climate.bedroom');
   assert.equal(editor._roomForm.data.name, 'Bedroom custom');
   assert.equal(editor._roomForm.data.show_next_schedule, false);
-  assert.equal(editor._roomForm.data.show_heating_glow, true);
+  assert.equal(editor._roomForm.data.show_heating_glow, 'low');
   const display = {dataset:{roomStatus:'climate.bedroom',statusContent:'current_temperature'}};
   card.shadowRoot.querySelectorAll = selector => selector === 'state-display[data-room-status]' ? [display] : [];
   card._syncNativeFeatures();
@@ -2537,9 +2564,9 @@ test('Content supports native composed names and omits the entity-picture option
   const displayGroupIndex = contentSchema.findIndex(item => item.column_min_width === '180px');
   const displayGroups = contentSchema.slice(displayGroupIndex,-1);
   assert.equal(displayGroupIndex, iconColorIndex + 1);
-  assert.equal(displayGroups.map(group => group.schema.map(item => item.name).join(',')).join('|'), 'temperature_focus|show_next_schedule,show_heating_glow|hide_state');
-  assert.equal(displayGroups[1].schema[1].label,'Show heating background glow');
-  assert.equal(displayGroups[2].schema[0].label,'Hide state');
+  assert.equal(displayGroups.map(group => group.schema.map(item => item.name).join(',')).join('|'), 'temperature_focus|show_next_schedule|show_heating_glow|hide_state');
+  assert.equal(displayGroups[2].schema[0].label,'Show heating background glow');
+  assert.equal(displayGroups[3].schema[0].label,'Hide state');
   const temperatureFocus = displayGroups[0].schema[0];
   assert.equal(Object.keys(temperatureFocus.selector)[0], 'button_toggle');
   assert.equal(temperatureFocus.label, 'Show temperature status');

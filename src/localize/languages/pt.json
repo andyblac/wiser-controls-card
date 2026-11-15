@@ -80,6 +80,8 @@
   "show_temperatures": "Mostrar temperatura atual/alvo",
   "show_next_schedule": "Mostrar próxima programação",
   "show_heating_glow": "Mostrar brilho de fundo durante o aquecimento",
+  "glow_low": "Baixo",
+  "glow_high": "Alto",
   "configuration_mode": "Modo de configuração",
   "master": "Mestre",
   "individual": "Individual",

@@ -80,6 +80,8 @@
   "show_temperatures": "Mostrar temperatura actual/objetivo",
   "show_next_schedule": "Mostrar el siguiente horario",
   "show_heating_glow": "Mostrar resplandor de fondo durante la calefacción",
+  "glow_low": "Bajo",
+  "glow_high": "Alto",
   "configuration_mode": "Modo de configuración",
   "master": "Maestro",
   "individual": "individuo",

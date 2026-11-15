@@ -80,6 +80,8 @@
   "show_temperatures": "Toon huidige/doeltemperatuur",
   "show_next_schedule": "Toon volgend schema",
   "show_heating_glow": "Achtergrondgloed tonen tijdens verwarmen",
+  "glow_low": "Laag",
+  "glow_high": "Hoog",
   "configuration_mode": "Configuratiemodus",
   "master": "Meester",
   "individual": "Individueel",

@@ -80,6 +80,8 @@
   "show_temperatures": "Afficher la température actuelle / cible",
   "show_next_schedule": "Afficher le prochain programme",
   "show_heating_glow": "Afficher la lueur d’arrière-plan pendant le chauffage",
+  "glow_low": "Faible",
+  "glow_high": "Forte",
   "configuration_mode": "Mode de configuration",
   "master": "Principal",
   "individual": "Individuel",

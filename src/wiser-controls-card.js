@@ -168,6 +168,7 @@
   const masterOptions = (config, id) => config.master_options_by_type?.[typeForEntity(id)];
   const roomConfig = (config, id) => ({...config, ...(masterMode(config) ? masterOptions(config, id) : config.device_options?.[id])});
   const temperatureStatus = options => options.show_temperatures === false ? "none" : options.temperature_focus || "current";
+  const heatingGlow = options => options.show_heating_glow === true ? "low" : ["low", "high"].includes(options.show_heating_glow) ? options.show_heating_glow : "off";
   const isNativeFeatureList = value => Array.isArray(value) && value.every(feature => feature && typeof feature === "object" && !Array.isArray(feature));
   const uniqueNativeFeatures = list => list.filter((feature, index) =>
     list.findIndex(item => item.type === feature.type) === index);
@@ -217,7 +218,7 @@
     if (compact.temperature_focus === "current") delete compact.temperature_focus;
     if (compact.show_temperatures === true) delete compact.show_temperatures;
     if (compact.show_next_schedule === true) delete compact.show_next_schedule;
-    if (compact.show_heating_glow === false) delete compact.show_heating_glow;
+    if (compact.show_heating_glow === false || compact.show_heating_glow === "off") delete compact.show_heating_glow;
     if (compact.features_position === "bottom") delete compact.features_position;
     return compact;
   };
@@ -2265,7 +2266,11 @@
           border-top:1px solid var(--divider-color)
         }
         .room.heating-glow {
-          background:radial-gradient(ellipse at 50% 42%,color-mix(in srgb,var(--state-climate-heat-color,var(--orange-color,#ff6d00)) 20%,transparent) 0%,color-mix(in srgb,var(--state-climate-heat-color,var(--orange-color,#ff6d00)) 9%,transparent) 48%,transparent 78%)
+          background:radial-gradient(ellipse at 50% 42%,color-mix(in srgb,var(--state-climate-heat-color,var(--orange-color,#ff6d00)) var(--wiser-glow-centre,20%),transparent) 0%,color-mix(in srgb,var(--state-climate-heat-color,var(--orange-color,#ff6d00)) var(--wiser-glow-edge,9%),transparent) 48%,transparent 78%)
+        }
+        .room.heating-glow-high {
+          --wiser-glow-centre:40%;
+          --wiser-glow-edge:20%
         }
         .top {
           display:grid;
@@ -2891,7 +2896,8 @@
           : `<div class="top aligned-header ${this._contentClass(options)}"><button class="state-icon" data-entity="${id}" data-interaction="icon" title="${escape(status)} — open room controls" aria-label="${escape(this._name(room))}: ${status}">${this._contentIcon(room, icon)}</button>
           <div class="secondary-layout"><div class="secondary-heading-line"><button class="name" data-entity="${id}" data-interaction="card" title="Open room controls"><strong>${escape(this._name(room))}</strong></button><div class="temps" title="Current ${escape(unit)} → target ${escape(unit)}" aria-label="Current ${escape(this._temperature(a.current_temperature))}; Target ${escape(target)}">${temperatureMarkup}</div></div>
           <div class="secondary-primary-line"><span class="status">${statusMarkup}</span><div class="next schedule-next" title="${escape(next)}" aria-label="${escape(next)}">${nextMarkup}</div></div></div></div>`;
-        return `<section data-key="${id}" data-entity="${id}" class="room ${heating ? "heating" : cooling ? "cooling" : ""}${heating && options.show_heating_glow ? " heating-glow" : ""} ${this._previewClasses(room, preview, highlightedPreviewRoom)}" style="--room-native-state-color:${stateColor};--room-state-color:${this._contentColor(room, stateColor)};${featureOrder(options)}"><div class="room-content">
+        const glow = heating ? heatingGlow(options) : "off";
+        return `<section data-key="${id}" data-entity="${id}" class="room ${heating ? "heating" : cooling ? "cooling" : ""}${glow !== "off" ? " heating-glow" : ""}${glow === "high" ? " heating-glow-high" : ""} ${this._previewClasses(room, preview, highlightedPreviewRoom)}" style="--room-native-state-color:${stateColor};--room-state-color:${this._contentColor(room, stateColor)};${featureOrder(options)}"><div class="room-content">
           ${headerMarkup}
           ${this._nativeReady || options.features !== undefined ? this._nativeMarkup(room) : fallbackFeatures(options).length ? `<div class="controls">${fallbackFeatures(options).includes("modes") ? `<div class="modes" role="group" aria-label="${escape(this._name(room))} mode">${["auto", "heat", "cool", "off"].filter(mode => a.hvac_modes?.includes(mode)).map(mode => {
             const label = text(this._hass,{auto:"schedule",heat:"manual",cool:"cool",off:"off"}[mode]);

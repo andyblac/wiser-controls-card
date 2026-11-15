@@ -972,23 +972,33 @@
       const contentRows = [
         primaryContentFields,
 
-        // Keep the heating glow beside schedule visibility.
         [
           {
             name: "show_next_schedule",
             label: text(this._hass, "show_next_schedule"),
             selector: { boolean: {} },
           },
-          {
-            name: heating ? "show_heating_glow" : "hide_state",
-            label: text(this._hass, heating ? "show_heating_glow" : "hide_state"),
+          ...(!heating ? [{
+            name: "hide_state",
+            label: text(this._hass, "hide_state"),
             selector: { boolean: {} },
-          },
+          }] : []),
         ],
 
-        // Place state visibility immediately above the state-content picker.
+        // Give heating glow its own row, followed by state visibility.
         ...(heating
           ? [
+              [
+                {
+                  name: "show_heating_glow",
+                  label: text(this._hass, "show_heating_glow"),
+                  selector: {button_toggle: {options: [
+                    {value: "off", label: text(this._hass, "off")},
+                    {value: "low", label: text(this._hass, "glow_low")},
+                    {value: "high", label: text(this._hass, "glow_high")},
+                  ]}},
+                },
+              ],
               [
                 {
                   name: "hide_state",
@@ -1152,7 +1162,7 @@
       };
       roomData.name = selectedOptions.name ?? [{ type: "area" }];
       roomData.icon = selectedOptions.icon;
-      if (heating) roomData.show_heating_glow = selectedOptions.show_heating_glow ?? false;
+      if (heating) roomData.show_heating_glow = heatingGlow(selectedOptions);
       if (secondaryRooms.length)
         secondaryRooms.forEach((room, index) => {
           roomData[`secondary_status_room_${index}`] =
@@ -1266,7 +1276,7 @@
         const columns = fields.length === 1 && fields[0].name === "hide_state" ? 2 : fields.length;
         row.style.gridTemplateColumns = `repeat(${columns},minmax(0,1fr))`;
         row.style.alignItems = "center";
-        if (row.schema.schema.some(field => field.selector?.boolean || field.name === "temperature_focus")) {
+        if (fields.some(field => field.selector?.boolean || field.selector?.button_toggle)) {
           await this._centreContentRow(row);
         }
       }
@@ -1290,6 +1300,7 @@
       row.style.minHeight = rowHeight;
       for (const cell of row.shadowRoot?.querySelectorAll("ha-form") || []) {
         await cell.updateComplete;
+        await this._useSmallNativePill(cell);
         const toggle = findInShadowRoots(cell.shadowRoot, "ha-switch");
         if (toggle) {
           // Centre the visible 24px switch, not HA's padded 56px host.

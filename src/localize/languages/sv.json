@@ -80,6 +80,8 @@
   "show_temperatures": "Visa aktuell/måltemperatur",
   "show_next_schedule": "Visa nästa schema",
   "show_heating_glow": "Visa bakgrundsglöd under uppvärmning",
+  "glow_low": "Låg",
+  "glow_high": "Hög",
   "configuration_mode": "Konfigurationsläge",
   "master": "Mästare",
   "individual": "Individuell",
